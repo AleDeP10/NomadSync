@@ -119,18 +119,15 @@ public class GitService {
         // Merge stderr into stdout for unified output
         pb.redirectErrorStream(true);
 
-        try (Process process = pb.start()) {
-
-            // Stream output line by line while the process runs
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    logService.info("[git] " + line);
-                }
+        // Stream output line by line while the process runs
+        Process process = pb.start();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                logService.info("[git] " + line);
             }
-
-            return process.waitFor();
         }
+        return process.waitFor();
     }
 }
