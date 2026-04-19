@@ -1,0 +1,23 @@
+# ── Environment ──────────────────────────────────────────
+env=dev
+
+# ── Paths ────────────────────────────────────────────────
+# Local Obsidian vault to sync
+vault.path=C:/Users/YOURUSER/Obsidian
+
+# ── Git ──────────────────────────────────────────────────
+git.executable=C:/Program Files/Git/bin/git.exe
+git.remote=origin
+git.branch=main
+
+# GitHub credentials
+git.username=YOURUSERNAME
+git.token=ghp_YOURDEVTOKENHERE
+
+# ── Autosave ─────────────────────────────────────────────
+# Interval in minutes between differential autosave checks
+autosave.interval.minutes=15
+
+# ── Logging ──────────────────────────────────────────────
+log.path=C:/Users/YOURUSER/IdeaProjects/ObsidianSync/logs/obsidiansync.log
+log.level=DEBUG
