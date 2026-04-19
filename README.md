@@ -1,215 +1,77 @@
-# ObsidianSync
+# 📓 Obsidian Portfolio Vault
 
-> Automated Git-based synchronization of an Obsidian vault across multiple Windows machines.
-> Pull on logon, push on logoff, differential autosave in between — fully unattended.
+This repository is the **public knowledge base** of an ongoing learning and development journey,
+built around [ObsidianSync](https://github.com/AleDeP10/ObsidianSync) — a self-built Java CLI tool
+that automates Git-based synchronization of an Obsidian vault across multiple Windows machines.
 
----
-
-## The problem
-
-Obsidian stores notes as plain markdown files on disk. Cloud sync tools like OneDrive modify
-files asynchronously and concurrently, causing corruption and conflicts while Obsidian is open.
-
-ObsidianSync solves this by replacing cloud sync with **atomic Git operations** — pull before
-you open, push after you close, autosave every N minutes in between. No external process ever
-touches your files while Obsidian is running.
+The vault documents the full lifecycle of the project: architecture decisions, sprint planning,
+milestone retrospectives, and scored self-assessments — structured as a real-world Agile workflow.
 
 ---
 
-## Features
+## Why this exists
 
-- **Logon pull** — fetches the latest vault version from remote before the session starts
-- **Logoff push** — commits and pushes all changes when the session ends
-- **Differential autosave** — commits locally only when `git diff` detects actual changes
-- **Conflict resolution** — `git pull -X theirs` with full audit logging; remote is source of truth
-- **Exponential backoff retry** — up to 3 retries on network failure (30s → 60s → 120s)
-- **Event-driven orchestration** — prioritized queue prevents Git concurrency issues
-- **Multi-vault support** — run multiple instances with separate config files
-- **Notification hook** — extensible interface for user-facing alerts (default: log file)
-- **Task Scheduler integration** — triggers on Windows logon/logoff events, no admin rights required
-- **Fat JAR deployment** — single artifact, copy `target/` and run
+Most portfolios show the final product. This one shows **the process**.
+
+Every decision has a reason. Every obstacle has a post-mortem. Every sprint has a score.
+The goal is to demonstrate not just what was built, but *how* — the thinking, the trade-offs,
+and the growth across iterations.
 
 ---
 
-## Architecture
+## Repository structure
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                        Main                         │
-│         parses args, loads config, publishes        │
-│              PULL_LOGON / PUSH_LOGOFF               │
-└──────────────────────┬──────────────────────────────┘
-                       │ publishes SyncEvent
-┌──────────────────────▼──────────────────────────────┐
-│                  SyncEventQueue                     │
-│    priority queue · latest-wins deduplication       │
-│         PULL(1) > PUSH_MANUAL(2) >                  │
-│              PUSH_LOGOFF(3) > AUTOSAVE(4)           │
-└──────────────────────┬──────────────────────────────┘
-                       │ consumes serially
-┌──────────────────────▼──────────────────────────────┐
-│                 SyncOrchestrator                    │
-│   worker loop · switch on EventType · retry with   │
-│            exponential backoff · NotificationHook  │
-└──────────────────────┬──────────────────────────────┘
-                       │ executes single git commands
-┌──────────────────────▼──────────────────────────────┐
-│                   GitService                        │
-│   add · commit · push · pull · stash · diff        │
-│       commitLocal() separated from push()          │
-└─────────────────────────────────────────────────────┘
-```
-
-**Supporting classes**: `LogService` (levelled, thread-safe, append-only),
-`AutosaveScheduler` (ScheduledExecutorService, publishes AUTOSAVE events),
-`NotificationHook` (interface — default implementation writes to log).
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Language | Java 21 |
-| Build | Maven · maven-assembly-plugin (fat JAR) |
-| Git integration | ProcessBuilder (CLI wrapping) |
-| Scheduling | ScheduledExecutorService |
-| Concurrency | PriorityBlockingQueue · synchronized |
-| OS integration | Windows Task Scheduler · Batch scripts |
-| Logging | Custom LogService (slf4j-ready) |
-| Testing | JUnit 5 |
-
----
-
-## Project structure
-
-```
-ObsidianSync/
-├── pom.xml
-├── ObsidianSync.bat              ← generic launcher (pull / push / autosave)
-├── ObsidianSyncPush.bat          ← one-click push shortcut for taskbar
-├── config.properties.template   ← committed reference — copy and fill credentials
-│
-└── src/main/java/io/aledep10/obsidiansync/
-    ├── Main.java
-    ├── hook/
-    │   └── NotificationHook.java
-    ├── orchestrator/
-    │   ├── EventType.java
-    │   ├── SyncEvent.java
-    │   ├── SyncEventQueue.java
-    │   └── SyncOrchestrator.java
-    ├── scheduler/
-    │   └── AutosaveScheduler.java
-    └── service/
-        ├── GitService.java
-        └── LogService.java
+obsidian-portfolio/
+└── ObsidianSync Diary/
+    ├── Decisions/          ← Architecture Decision Records (ADR-style)
+    │   └── DEC_Milestone_1.md
+    ├── Groomings/          ← Sprint planning sessions with risk analysis and know-how preparation
+    │   └── GRM_Milestone_2.md
+    ├── Milestones/         ← Sprint retrospectives: objectives, problems, cheat-sheets acquired
+    │   └── MILESTONE_1.md
+    └── Scores/             ← Recruiter-style assessments and personal trainer evaluations
+        └── SCR_Milestone_2.md
 ```
 
 ---
 
-## Getting started
+## The project: ObsidianSync
 
-### Prerequisites
+> A lightweight Java CLI tool that automates Git-based sync of an Obsidian vault across
+> Windows machines. Triggered on logon/logoff via Task Scheduler, it handles pull/push
+> workflows, differential autosave, and conflict resolution with audit logging.
 
-- Java 21+
-- Git installed and available on PATH (or set `git.executable` to the full path)
-- A GitHub repository for your vault
+**Tech stack**: Java 21 · Maven · Git CLI via ProcessBuilder · Task Scheduler · Windows Batch
 
-### Setup
+**Source code**: [github.com/AleDeP10/ObsidianSync](https://github.com/AleDeP10/ObsidianSync)
 
-**1. Clone or download**
-```bash
-git clone https://github.com/AleDeP10/ObsidianSync.git
-cd ObsidianSync
-```
+### Architecture highlights
 
-**2. Build**
-```bash
-mvn package
-```
-
-**3. Configure**
-```bash
-cp target/config.properties.template target/config.properties
-# edit config.properties with your vault path, repo URL and GitHub token
-```
-
-**4. Run manually**
-```bash
-cd target
-ObsidianSync.bat pull
-ObsidianSync.bat push
-ObsidianSync.bat autosave
-```
-
-### Task Scheduler setup
-
-Create three tasks in `taskschd.msc`:
-
-| Task | Trigger | Action |
-|---|---|---|
-| ObsidianSync-Pull | At logon | `ObsidianSync.bat pull` |
-| ObsidianSync-Push | At logoff | `ObsidianSync.bat push` |
-| ObsidianSync-Autosave | Every 15 min (while logged on) | `ObsidianSync.bat autosave` |
+- **Event-driven orchestration** — operations are published as prioritized events to a queue;
+  the orchestrator consumes them serially, preventing Git concurrency issues
+- **Exponential backoff retry** — network failures trigger up to 3 retries with progressive delays
+- **Differential autosave** — commits only when `git diff` detects actual changes
+- **Conflict resolution strategy** — `git pull -X theirs` with full audit logging
+- **Dependency inversion** — `NotificationHook` interface decouples the orchestrator
+  from any future notification implementation (tray icon, toast, etc.)
 
 ---
 
-## Configuration reference
+## How to read this vault
 
-```properties
-# Environment
-env=prod
+Start with **`DEC_Milestone_1.md`** to understand the architectural choices made before
+writing a single line of code.
 
-# Paths
-vault.path=C:/Users/YourUser/Obsidian/YourVault
+Then read **`MILESTONE_1.md`** for the retrospective: what was built, what broke,
+and what was learned.
 
-# Git
-git.executable=C:/Program Files/Git/bin/git.exe
-git.remote=origin
-git.branch=main
-git.username=your-github-username
-git.token=ghp_yourPersonalAccessTokenHere
-
-# Autosave
-autosave.interval.minutes=15
-
-# Logging
-log.path=C:/Users/YourUser/ObsidianSync/logs/obsidiansync.log
-log.level=INFO
-```
-
-> ⚠️ `config.properties` is excluded from version control. Never commit your GitHub token.
-
----
-
-## Design decisions
-
-All architectural decisions are documented ADR-style in the companion vault:
-
-👉 [obsidian-portfolio — ObsidianSync Diary](https://github.com/AleDeP10/obsidian-portfolio)
-
-Key decisions include: Git over OneDrive, `theirs` conflict strategy, event-driven
-orchestration over direct calls, `commitLocal()` separated from `push()`, and
-dependency inversion for the notification layer.
-
----
-
-## Roadmap
-
-- [ ] System tray icon with manual push button
-- [ ] Multi-vault configuration (single config, multiple vault profiles)
-- [ ] Toast notifications via `NotificationHook`
-- [ ] Unit test coverage for `GitService` and `SyncOrchestrator`
-- [ ] GitHub Actions CI pipeline
+Follow with **`GRM_Milestone_2.md`** to see how the next sprint was planned — risks
+identified, priorities set, unknowns acknowledged.
 
 ---
 
 ## About
 
-Built by **Alessandro De Prato**, Full Stack Developer.
-
-This project exists both as a practical tool and as a learning exercise in
-Java, concurrency, process automation, and Agile delivery — documented end-to-end.
-
-[GitHub](https://github.com/AleDeP10) · [Portfolio](https://aledep10.github.io) · [Portfolio Vault](https://github.com/AleDeP10/obsidian-portfolio) · [LinkedIn](https://www.linkedin.com/in/alessandro-de-prato)
+Alessandro De Prato · FullStack Developer  
+[Portfolio](https://aledep10.github.io) · [Portfolio Vault](https://github.com/AleDeP10/obsidian-portfolio) · [GitHub](https://github.com/AleDeP10) · [LinkedIn](https://www.linkedin.com/in/alessandro-de-prato)
