@@ -48,19 +48,11 @@ public class GitService {
      * and the push is skipped.</p>
      */
     public void push() throws IOException, InterruptedException {
-        runCommand(List.of(gitExecutable, "add", "-A"));
-
-        int commitExit = runCommand(List.of(
-                gitExecutable, "commit", "-m",
-                "push " + java.time.LocalDateTime.now()
-        ));
-
-        if (commitExit == 1) {
-            logService.info("Nothing to commit, skipping push.");
-            return;
-        }
-
         runCommand(List.of(gitExecutable, "push"));
+    }
+
+    public void stash() throws IOException, InterruptedException {
+        runCommand(List.of(gitExecutable, "stash"));
     }
 
     /**
@@ -74,9 +66,20 @@ public class GitService {
      * </ol>
      */
     public void pull() throws IOException, InterruptedException {
-        runCommand(List.of(gitExecutable, "stash"));
         runCommand(List.of(gitExecutable, "pull", "-X", "theirs"));
+    }
+
+    public void stashPop() throws IOException, InterruptedException {
         runCommand(List.of(gitExecutable, "stash", "pop"));
+    }
+
+    public int commitLocal(String message) throws IOException, InterruptedException {
+        runCommand(List.of(gitExecutable, "add", "-A"));
+
+        return runCommand(List.of(
+                gitExecutable, "commit", "-m",
+                message
+        ));
     }
 
     /**
@@ -85,20 +88,16 @@ public class GitService {
      * <p>Uses {@code git diff --quiet} to check for modifications.
      * Exit code 0 means no changes; exit code 1 means changes are present.</p>
      */
-    public void autosave() throws IOException, InterruptedException {
-        int diffExit = runCommand(List.of(gitExecutable, "diff", "--quiet"));
+    public boolean hasChanges() throws IOException, InterruptedException {
+        return runCommand(List.of(gitExecutable, "diff", "--quiet")) != 0;
+    }
 
-        if (diffExit == 0) {
-            logService.info("No changes detected, skipping autosave.");
-            return;
-        }
-
-        runCommand(List.of(gitExecutable, "add", "-A"));
-        runCommand(List.of(
-                gitExecutable, "commit", "-m",
-                "autosave " + java.time.LocalDateTime.now()
-        ));
-        runCommand(List.of(gitExecutable, "push"));
+    public boolean hasUncommittedChanges() throws IOException, InterruptedException {
+        // --porcelain: output stabile e machine-readable
+        // output vuoto = working tree pulita
+        // output non vuoto = modifiche presenti (staged o unstaged)
+        return !runCommandWithOutput(List.of(gitExecutable, "status", "--porcelain"))
+                .isEmpty();
     }
 
     /**
@@ -129,5 +128,25 @@ public class GitService {
             }
         }
         return process.waitFor();
+    }
+
+    private String runCommandWithOutput(List<String> command) throws IOException, InterruptedException {
+        StringBuilder output = new StringBuilder();
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.directory(vaultPath);
+
+        // Merge stderr into stdout for unified output
+        pb.redirectErrorStream(true);
+
+        // Stream output line by line while the process runs
+        Process process = pb.start();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line);
+            }
+        }
+        return output.toString();
     }
 }
