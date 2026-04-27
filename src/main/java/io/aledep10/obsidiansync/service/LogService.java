@@ -45,6 +45,7 @@ public class LogService {
     public void info(String message)  { log(LogLevel.INFO,  message); }
     public void warn(String message)  { log(LogLevel.WARN,  message); }
     public void error(String message) { log(LogLevel.ERROR, message); }
+    public void error(String message, Throwable cause) { log(LogLevel.ERROR, message, cause); }
 
     /**
      * Core logging method. Filters by level, formats the entry,
@@ -56,6 +57,9 @@ public class LogService {
      * @param message log message
      */
     private synchronized void log(LogLevel level, String message) {
+        log(level, message, null);
+    }
+    private synchronized void log(LogLevel level, String message, Throwable cause) {
         if (level.compareTo(minLevel) < 0) {
             return;
         }
@@ -74,10 +78,15 @@ public class LogService {
         }
 
         // Write to console
-        if (level == LogLevel.WARN || level == LogLevel.ERROR) {
-            System.err.println(line);
-        } else {
-            System.out.println(line);
+        switch (level) {
+            case WARN -> System.err.println(line);
+            case ERROR -> {
+                System.err.println(line);
+                if (cause != null) {
+                    cause.printStackTrace(System.err);
+                }
+            }
+            default -> System.out.println(line);
         }
     }
 }

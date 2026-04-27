@@ -11,6 +11,8 @@ git.remote=origin
 git.branch=main
 
 # GitHub credentials
+git.name=YOURREALNAME
+git.email=YOUREMAIL
 git.username=YOURUSERNAME
 git.token=ghp_YOURDEVTOKENHERE
 

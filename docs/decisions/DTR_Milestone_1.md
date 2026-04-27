@@ -125,12 +125,12 @@ should concurrency increase.
 
 ---
 
-## [M1] `SyncOrchestrator` as intermediate layer between `Main` and `GitService`
+## [M1] `SyncOrchestrator` as intermediate layer between `io.aledep10.obsidiansync.io.aledep10.obsidiansync.Main` and `GitService`
 
 **Context**: the logic for coordinating operations (e.g. stash before pull, exit code
-handling) belongs neither to `Main` nor to `GitService`.
+handling) belongs neither to `io.aledep10.obsidiansync.io.aledep10.obsidiansync.Main` nor to `GitService`.
 
-**Decision**: introduce `SyncOrchestrator` as a dedicated layer. `Main` calls the
+**Decision**: introduce `SyncOrchestrator` as a dedicated layer. `io.aledep10.obsidiansync.io.aledep10.obsidiansync.Main` calls the
 orchestrator; `GitService` executes only individual Git commands.
 
 **Motivation**: separation of concerns; `GitService` remains independently testable;
