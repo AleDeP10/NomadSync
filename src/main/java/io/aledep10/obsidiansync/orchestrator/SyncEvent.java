@@ -34,6 +34,28 @@ public class SyncEvent implements Comparable<SyncEvent> {
     }
 
     /**
+     * Package-private constructor for testing purposes only.
+     *
+     * <p>Allows tests to create {@link SyncEvent} instances with a controlled
+     * timestamp, enabling deterministic latest-wins scenarios in
+     * {@link io.aledep10.obsidiansync.orchestrator.SyncEventQueueTest}
+     * without exposing timestamp mutability to production code.</p>
+     *
+     * <p>Prefer this constructor over {@link #setTimestamp(long)} — it keeps
+     * the timestamp immutable after construction and removes the need for
+     * {@link Thread#sleep} to guarantee distinct timestamps.</p>
+     *
+     * @param type      the type of synchronization operation
+     * @param timestamp epoch milliseconds to assign as the event timestamp
+     */
+    SyncEvent(EventType type, long timestamp) {
+        this.type      = type;
+        this.timestamp = timestamp;
+        this.retryCount = 0;
+        this.retryDelay = INITIAL_RETRY_DELAY_MS;
+    }
+
+    /**
      * Increments the retry counter and doubles the retry delay (exponential backoff).
      *
      * <p>Delay progression: 30s → 60s → 120s.</p>
