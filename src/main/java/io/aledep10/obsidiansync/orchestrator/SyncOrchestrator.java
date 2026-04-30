@@ -31,8 +31,8 @@ public class SyncOrchestrator {
      * Constructs the orchestrator and prepares the worker thread.
      * The worker is not started until {@link #start()} is called.
      */
-    public SyncOrchestrator(SyncEventQueue queue, GitService gitService,
-                            NotificationHook notificationHook, LogService logService) {
+    public SyncOrchestrator(GitService gitService, LogService logService,
+                            SyncEventQueue queue, NotificationHook notificationHook) {
         this.queue            = queue;
         this.gitService       = gitService;
         this.notificationHook = notificationHook;

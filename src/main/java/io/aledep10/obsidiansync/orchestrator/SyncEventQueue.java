@@ -69,6 +69,18 @@ public class SyncEventQueue {
     }
 
     /**
+     * Returns the number of events currently in the queue.
+     *
+     * <p>Synchronized to ensure a consistent read when called concurrently
+     * with {@link #publish(SyncEvent)}.</p>
+     *
+     * @return current queue size
+     */
+    public synchronized int size() {
+        return queue.size();
+    }
+
+    /**
      * Retrieves and removes the highest-priority event from the queue,
      * blocking until one becomes available.
      *

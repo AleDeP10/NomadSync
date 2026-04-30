@@ -13,48 +13,64 @@ import java.util.concurrent.TimeUnit;
 /**
  * Periodically publishes {@link EventType#AUTOSAVE} events to the {@link SyncEventQueue}.
  *
- * <p>Acts exclusively as a publisher — never interacts with {@link io.aledep10.obsidiansync.service.GitService}
- * directly. Sequencing and execution are delegated to {@link io.aledep10.obsidiansync.orchestrator.SyncOrchestrator}.</p>
+ * <p>Acts exclusively as a publisher — never interacts with GitService directly.
+ * Sequencing and execution are delegated to SyncOrchestrator.</p>
  *
- * <p>Uses {@link java.util.concurrent.ScheduledExecutorService#scheduleAtFixedRate} to model
- * autosave as a fixed-interval clock — the interval is measured from the start of each
- * execution, not from its end.</p>
+ * <p>Uses {@link ScheduledExecutorService#scheduleAtFixedRate} to model autosave
+ * as a fixed-interval clock.</p>
  */
 public class AutosaveScheduler {
 
     private final SyncEventQueue queue;
     private final LogService logService;
-    private final long intervalMinutes;
+    private final long interval;
+    private final TimeUnit timeUnit;
     private final ScheduledExecutorService executor;
 
     private ScheduledFuture<?> scheduledTask;
 
     /**
-     * Constructs the scheduler. Does not start the timer.
+     * Production constructor. Interval is expressed in minutes.
      *
      * @param queue           the queue on which AUTOSAVE events are published
      * @param logService      shared logging service
      * @param intervalMinutes interval between autosave events in minutes
      */
     public AutosaveScheduler(SyncEventQueue queue, LogService logService, long intervalMinutes) {
-        this.queue           = queue;
-        this.logService      = logService;
-        this.intervalMinutes = intervalMinutes;
-        this.executor        = Executors.newSingleThreadScheduledExecutor();
+        this(queue, logService, intervalMinutes, TimeUnit.MINUTES);
+    }
+
+    /**
+     * Package-private constructor for testing purposes only.
+     *
+     * <p>Allows tests to use short intervals (e.g. milliseconds) without
+     * changing the public interface used by {@link io.aledep10.obsidiansync.Main}.</p>
+     *
+     * @param queue      the queue on which AUTOSAVE events are published
+     * @param logService shared logging service
+     * @param interval   interval value
+     * @param timeUnit   time unit for the interval
+     */
+    AutosaveScheduler(SyncEventQueue queue, LogService logService, long interval, TimeUnit timeUnit) {
+        this.queue     = queue;
+        this.logService = logService;
+        this.interval  = interval;
+        this.timeUnit  = timeUnit;
+        this.executor  = Executors.newSingleThreadScheduledExecutor();
     }
 
     /**
      * Starts the autosave timer.
      *
-     * <p>The first execution is delayed by one full interval — at logon,
-     * a {@code PULL_LOGON} event is already published by {@link io.aledep10.obsidiansync.Main}.
+     * <p>The first execution is delayed by one full interval — at logon a
+     * {@code PULL_LOGON} event is already published by Main.
      * An immediate autosave would be redundant.</p>
      *
-     * <p>The task is wrapped in a try/catch to prevent unchecked exceptions from
-     * silently cancelling the schedule — a known behaviour of {@code scheduleAtFixedRate}.</p>
+     * <p>The task is wrapped in try/catch to prevent unchecked exceptions
+     * from silently cancelling the schedule.</p>
      */
     public void start() {
-        logService.info("AutosaveScheduler: starting, interval = " + intervalMinutes + " min");
+        logService.info("AutosaveScheduler: starting, interval = " + interval + " " + TimeUnit.MINUTES);
 
         scheduledTask = executor.scheduleAtFixedRate(() -> {
             try {
@@ -64,21 +80,20 @@ public class AutosaveScheduler {
             } catch (Exception e) {
                 logService.error("AutosaveScheduler: unexpected error during publish: " + e.getMessage());
             }
-        }, intervalMinutes, intervalMinutes, TimeUnit.MINUTES);
+        }, interval, interval, timeUnit);
     }
 
     /**
      * Stops the autosave timer gracefully.
      *
-     * <p>Cancels the scheduled task, shuts down the executor, and waits up to 5 seconds
-     * for termination. Should be called before {@link io.aledep10.obsidiansync.orchestrator.SyncOrchestrator#stop()}
+     * <p>Should be called before {@link io.aledep10.obsidiansync.orchestrator.SyncOrchestrator#stop()}
      * to avoid publishing events onto an unattended queue.</p>
      */
     public void stop() {
         logService.info("AutosaveScheduler: shutdown requested.");
 
         if (scheduledTask != null) {
-            scheduledTask.cancel(false);    // false = do not interrupt if running
+            scheduledTask.cancel(false);
         }
 
         executor.shutdown();
