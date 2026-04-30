@@ -65,7 +65,7 @@ class LogServiceTest {
 
         logService.info("anything");
 
-        String timestampRegex = "\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\]";
+        String timestampRegex = "\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}]";
         assertThat(readLogFile(logFile)).containsPattern(timestampRegex);
     }
 

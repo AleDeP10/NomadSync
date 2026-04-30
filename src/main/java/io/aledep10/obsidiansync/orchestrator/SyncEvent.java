@@ -38,10 +38,10 @@ public class SyncEvent implements Comparable<SyncEvent> {
      *
      * <p>Allows tests to create {@link SyncEvent} instances with a controlled
      * timestamp, enabling deterministic latest-wins scenarios in
-     * {@link io.aledep10.obsidiansync.orchestrator.SyncEventQueueTest}
+     * io.aledep10.obsidiansync.orchestrator.SyncEventQueueTest
      * without exposing timestamp mutability to production code.</p>
      *
-     * <p>Prefer this constructor over {@link #setTimestamp(long)} — it keeps
+     * <p>Prefer this constructor over setTimestamp(long) — it keeps
      * the timestamp immutable after construction and removes the need for
      * {@link Thread#sleep} to guarantee distinct timestamps.</p>
      *
