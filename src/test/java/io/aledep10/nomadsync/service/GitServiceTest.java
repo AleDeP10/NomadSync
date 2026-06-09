@@ -1,6 +1,6 @@
-package io.aledep10.obsidiansync.service;
+package io.aledep10.nomadSync.service;
 
-import io.aledep10.obsidiansync.util.CommandUtil;
+import io.aledep10.nomadSync.util.CommandUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +40,7 @@ class GitServiceTest {
     @BeforeAll
     static void prepareLogService() throws IOException {
         Properties properties = new Properties();
-        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/obsidiansync-test.log");
+        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/nomadSync-test.log");
         properties.setProperty("log.level", "DEBUG");
         logService = new LogService(properties);
     }
@@ -49,7 +49,7 @@ class GitServiceTest {
 
     @BeforeEach
     void setUp() throws IOException, InterruptedException {
-        tempDir = Files.createTempDirectory("obsidiansync-test-").toFile();
+        tempDir = Files.createTempDirectory("nomadSync-test-").toFile();
 
         CommandUtil.runCommand(tempDir, List.of(GIT_EXECUTABLE, "init"));
         CommandUtil.runCommand(tempDir, List.of(GIT_EXECUTABLE, "config", "user.name",  "Test User"));

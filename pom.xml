@@ -7,7 +7,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.aledep10</groupId>
-    <artifactId>ObsidianSync</artifactId>
+    <artifactId>NomadSync</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
@@ -73,13 +73,13 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>io.aledep10.obsidiansync.Main</mainClass>
+                            <mainClass>io.aledep10.nomadSync.Main</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
                         <descriptorRef>jar-with-dependencies</descriptorRef>
                     </descriptorRefs>
-                    <finalName>ObsidianSync</finalName>
+                    <finalName>NomadSync</finalName>
                     <appendAssemblyId>false</appendAssemblyId>
                 </configuration>
                 <executions>
@@ -116,8 +116,8 @@
                                 <resource>
                                     <directory>src/main/resources</directory>
                                     <includes>
-                                        <include>ObsidianSync.bat</include>
-                                        <include>ObsidianSyncPush.bat</include>
+                                        <include>NomadSync.bat</include>
+                                        <include>NomadSyncPush.bat</include>
                                         <include>config.dev.properties</include>
                                         <include>config.prod.properties</include>
                                     </includes>

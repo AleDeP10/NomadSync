@@ -86,7 +86,7 @@ machines — copying the `target/` folder is sufficient.
 
 ## [M1] Resources copied to `target/` via `maven-resources-plugin`
 
-**Context**: `ObsidianSync.bat` and `config.properties` must be placed alongside the JAR
+**Context**: `NomadSync.bat` and `config.properties` must be placed alongside the JAR
 to be resolved via relative paths.
 
 **Decision**: `maven-resources-plugin` copies files from `src/main/resources/` to `target/`
@@ -125,12 +125,12 @@ should concurrency increase.
 
 ---
 
-## [M1] `SyncOrchestrator` as intermediate layer between `io.aledep10.obsidiansync.io.aledep10.obsidiansync.Main` and `GitService`
+## [M1] `SyncOrchestrator` as intermediate layer between `io.aledep10.nomadSync.io.aledep10.nomadSync.Main` and `GitService`
 
 **Context**: the logic for coordinating operations (e.g. stash before pull, exit code
-handling) belongs neither to `io.aledep10.obsidiansync.io.aledep10.obsidiansync.Main` nor to `GitService`.
+handling) belongs neither to `io.aledep10.nomadSync.io.aledep10.nomadSync.Main` nor to `GitService`.
 
-**Decision**: introduce `SyncOrchestrator` as a dedicated layer. `io.aledep10.obsidiansync.io.aledep10.obsidiansync.Main` calls the
+**Decision**: introduce `SyncOrchestrator` as a dedicated layer. `io.aledep10.nomadSync.io.aledep10.nomadSync.Main` calls the
 orchestrator; `GitService` executes only individual Git commands.
 
 **Motivation**: separation of concerns; `GitService` remains independently testable;

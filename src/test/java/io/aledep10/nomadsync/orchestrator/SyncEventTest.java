@@ -1,4 +1,4 @@
-package io.aledep10.obsidiansync.orchestrator;
+package io.aledep10.nomadSync.orchestrator;
 
 import org.junit.jupiter.api.Test;
 

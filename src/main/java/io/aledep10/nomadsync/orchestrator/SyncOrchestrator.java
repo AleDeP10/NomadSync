@@ -1,8 +1,8 @@
-package io.aledep10.obsidiansync.orchestrator;
+package io.aledep10.nomadSync.orchestrator;
 
-import io.aledep10.obsidiansync.hook.NotificationHook;
-import io.aledep10.obsidiansync.service.GitService;
-import io.aledep10.obsidiansync.service.LogService;
+import io.aledep10.nomadSync.hook.NotificationHook;
+import io.aledep10.nomadSync.service.GitService;
+import io.aledep10.nomadSync.service.LogService;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -50,7 +50,7 @@ public class SyncOrchestrator {
                     break;
                 }
             }
-        }, "obsidiansync-worker");
+        }, "nomadSync-worker");
     }
 
     /**

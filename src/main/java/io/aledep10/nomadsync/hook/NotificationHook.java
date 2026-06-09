@@ -1,6 +1,6 @@
-package io.aledep10.obsidiansync.hook;
+package io.aledep10.nomadSync.hook;
 
-import io.aledep10.obsidiansync.orchestrator.SyncEvent;
+import io.aledep10.nomadSync.orchestrator.SyncEvent;
 
 /**
  * Abstraction for user-facing failure notifications.

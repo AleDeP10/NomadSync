@@ -1,6 +1,6 @@
-package io.aledep10.obsidiansync.service;
+package io.aledep10.nomadSync.service;
 
-import io.aledep10.obsidiansync.util.CommandUtil;
+import io.aledep10.nomadSync.util.CommandUtil;
 
 import java.io.File;
 import java.io.IOException;
@@ -12,7 +12,7 @@ import java.util.Properties;
  *
  * <p>Each public method maps to a single Git command or a minimal guard check.
  * Sequencing and error handling are the caller's responsibility
- * ({@link io.aledep10.obsidiansync.orchestrator.SyncOrchestrator}).</p>
+ * ({@link io.aledep10.nomadSync.orchestrator.SyncOrchestrator}).</p>
  *
  * <p>All operations run in the vault directory specified by {@code vault.path}.</p>
  */

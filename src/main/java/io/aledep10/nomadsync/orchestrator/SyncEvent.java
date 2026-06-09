@@ -1,4 +1,4 @@
-package io.aledep10.obsidiansync.orchestrator;
+package io.aledep10.nomadSync.orchestrator;
 
 /**
  * Represents a synchronization command published to the {@link SyncEventQueue}.
@@ -38,7 +38,7 @@ public class SyncEvent implements Comparable<SyncEvent> {
      *
      * <p>Allows tests to create {@link SyncEvent} instances with a controlled
      * timestamp, enabling deterministic latest-wins scenarios in
-     * io.aledep10.obsidiansync.orchestrator.SyncEventQueueTest
+     * io.aledep10.nomadSync.orchestrator.SyncEventQueueTest
      * without exposing timestamp mutability to production code.</p>
      *
      * <p>Prefer this constructor over setTimestamp(long) — it keeps

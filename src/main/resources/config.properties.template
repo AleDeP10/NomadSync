@@ -21,5 +21,5 @@ git.token=ghp_YOURDEVTOKENHERE
 autosave.interval.minutes=15
 
 # ── Logging ──────────────────────────────────────────────
-log.path=C:/Users/YOURUSER/IdeaProjects/ObsidianSync/logs/obsidiansync.log
+log.path=C:/Users/YOURUSER/IdeaProjects/NomadSync/logs/nomadSync.log
 log.level=DEBUG

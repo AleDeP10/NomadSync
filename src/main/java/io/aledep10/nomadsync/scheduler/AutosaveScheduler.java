@@ -1,9 +1,9 @@
-package io.aledep10.obsidiansync.scheduler;
+package io.aledep10.nomadSync.scheduler;
 
-import io.aledep10.obsidiansync.orchestrator.EventType;
-import io.aledep10.obsidiansync.orchestrator.SyncEvent;
-import io.aledep10.obsidiansync.orchestrator.SyncEventQueue;
-import io.aledep10.obsidiansync.service.LogService;
+import io.aledep10.nomadSync.orchestrator.EventType;
+import io.aledep10.nomadSync.orchestrator.SyncEvent;
+import io.aledep10.nomadSync.orchestrator.SyncEventQueue;
+import io.aledep10.nomadSync.service.LogService;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -44,7 +44,7 @@ public class AutosaveScheduler {
      * Package-private constructor for testing purposes only.
      *
      * <p>Allows tests to use short intervals (e.g. milliseconds) without
-     * changing the public interface used by {@link io.aledep10.obsidiansync.Main}.</p>
+     * changing the public interface used by {@link io.aledep10.nomadSync.Main}.</p>
      *
      * @param queue      the queue on which AUTOSAVE events are published
      * @param logService shared logging service
@@ -86,7 +86,7 @@ public class AutosaveScheduler {
     /**
      * Stops the autosave timer gracefully.
      *
-     * <p>Should be called before {@link io.aledep10.obsidiansync.orchestrator.SyncOrchestrator#stop()}
+     * <p>Should be called before {@link io.aledep10.nomadSync.orchestrator.SyncOrchestrator#stop()}
      * to avoid publishing events onto an unattended queue.</p>
      */
     public void stop() {

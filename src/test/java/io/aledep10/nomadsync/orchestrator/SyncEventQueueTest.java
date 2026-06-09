@@ -1,6 +1,6 @@
-package io.aledep10.obsidiansync.orchestrator;
+package io.aledep10.nomadSync.orchestrator;
 
-import io.aledep10.obsidiansync.service.LogService;
+import io.aledep10.nomadSync.service.LogService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +23,7 @@ class SyncEventQueueTest {
     @BeforeAll
     static void prepareLogService() {
         Properties properties = new Properties();
-        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/obsidiansync-test.log");
+        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/nomadSync-test.log");
         properties.setProperty("log.level", "DEBUG");
         logService = new LogService(properties);
     }

@@ -1,4 +1,4 @@
-package io.aledep10.obsidiansync.orchestrator;
+package io.aledep10.nomadSync.orchestrator;
 
 /**
  * Defines the types of synchronization events that can be published to the {@link SyncEventQueue}.

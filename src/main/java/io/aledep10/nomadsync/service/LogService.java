@@ -1,6 +1,6 @@
-package io.aledep10.obsidiansync.service;
+package io.aledep10.nomadSync.service;
 
-import io.aledep10.obsidiansync.scheduler.AutosaveScheduler;
+import io.aledep10.nomadSync.scheduler.AutosaveScheduler;
 
 import java.io.BufferedWriter;
 import java.io.File;

@@ -1,6 +1,6 @@
-package io.aledep10.obsidiansync.orchestrator;
+package io.aledep10.nomadSync.orchestrator;
 
-import io.aledep10.obsidiansync.service.LogService;
+import io.aledep10.nomadSync.service.LogService;
 
 import java.util.Iterator;
 import java.util.concurrent.PriorityBlockingQueue;

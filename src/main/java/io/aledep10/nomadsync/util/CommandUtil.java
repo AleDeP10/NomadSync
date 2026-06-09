@@ -1,6 +1,6 @@
-package io.aledep10.obsidiansync.util;
+package io.aledep10.nomadSync.util;
 
-import io.aledep10.obsidiansync.service.LogService;
+import io.aledep10.nomadSync.service.LogService;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -11,7 +11,7 @@ import java.util.List;
 /**
  * Utility class for executing shell commands via {@link ProcessBuilder}.
  *
- * <p>Extracted from {@link io.aledep10.obsidiansync.service.GitService} to avoid
+ * <p>Extracted from {@link io.aledep10.nomadSync.service.GitService} to avoid
  * duplication in test helpers and future utilities that need process execution
  * without depending on GitService directly.</p>
  *

@@ -1,7 +1,7 @@
 # 📓 Obsidian Portfolio Vault
 
 This repository is the **public knowledge base** of an ongoing learning and development journey,
-built around [ObsidianSync](https://github.com/AleDeP10/ObsidianSync) — a self-built Java CLI tool
+built around [NomadSync](https://github.com/AleDeP10/NomadSync) — a self-built Java CLI tool
 that automates Git-based synchronization of an Obsidian vault across multiple Windows machines.
 
 The vault documents the full lifecycle of the project: architecture decisions, sprint planning,
@@ -23,7 +23,7 @@ and the growth across iterations.
 
 ```
 obsidian-portfolio/
-└── ObsidianSync Diary/
+└── NomadSync Diary/
     ├── Decisions/          ← Architecture Decision Records (ADR-style)
     │   └── DEC_Milestone_1.md
     ├── Groomings/          ← Sprint planning sessions with risk analysis and know-how preparation
@@ -36,7 +36,7 @@ obsidian-portfolio/
 
 ---
 
-## The project: ObsidianSync
+## The project: NomadSync
 
 > A lightweight Java CLI tool that automates Git-based sync of an Obsidian vault across
 > Windows machines. Triggered on logon/logoff via Task Scheduler, it handles pull/push
@@ -44,7 +44,7 @@ obsidian-portfolio/
 
 **Tech stack**: Java 21 · Maven · Git CLI via ProcessBuilder · Task Scheduler · Windows Batch
 
-**Source code**: [github.com/AleDeP10/ObsidianSync](https://github.com/AleDeP10/ObsidianSync)
+**Source code**: [github.com/AleDeP10/NomadSync](https://github.com/AleDeP10/NomadSync)
 
 ### Architecture highlights
 

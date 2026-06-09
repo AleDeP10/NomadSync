@@ -1,4 +1,4 @@
-package io.aledep10.obsidiansync.service;
+package io.aledep10.nomadSync.service;
 
 import org.junit.jupiter.api.Test;
 
@@ -92,7 +92,7 @@ class LogServiceTest {
      */
     static String tempLogFilePath() {
         return System.getProperty("java.io.tmpdir")
-                + "obsidiansync-test_"
+                + "nomadSync-test_"
                 + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmssSSS"))
                 + ".log";
     }
