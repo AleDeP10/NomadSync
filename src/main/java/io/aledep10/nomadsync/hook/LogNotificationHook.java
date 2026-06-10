@@ -1,7 +1,7 @@
-package io.aledep10.nomadSync.hook;
+package io.aledep10.nomadsync.hook;
 
-import io.aledep10.nomadSync.orchestrator.SyncEvent;
-import io.aledep10.nomadSync.service.LogService;
+import io.aledep10.nomadsync.orchestrator.SyncEvent;
+import io.aledep10.nomadsync.service.LogService;
 
 /**
  * Default NotificationHook implementation — writes failures to the log file.

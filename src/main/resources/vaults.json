@@ -1,0 +1,18 @@
+{
+  "vaults": [
+    {
+      "id": "A768-6CF3-10B-0000",
+      "name": "obsidian-portfolio",
+      "path": "C:\\Users\\aless\\obsidian-vaults\\obsidian-portfolio"
+    }, {
+      "id": "A768-6CF3-10B-0001",
+      "name": "obsidian-personal",
+      "path": "C:\\Users\\aless\\obsidian-vaults\\obsidian-personal"
+    }, {
+      "id": "A768-6CF3-10B-0002",
+      "name": "obsidian-test-vault",
+      "path": "C:\\Users\\aless\\obsidian-vaults\\obsidian-test-vault"
+    }
+  ]
+}
+

@@ -2,8 +2,7 @@
 env=dev
 
 # ── Paths ────────────────────────────────────────────────
-# Local Obsidian vault to sync
-vault.path=C:/Users/YOURUSER/Obsidian
+vaults.file=vaults.json
 
 # ── Git ──────────────────────────────────────────────────
 git.executable=C:/Program Files/Git/bin/git.exe
@@ -16,10 +15,13 @@ git.email=YOUREMAIL
 git.username=YOURUSERNAME
 git.token=ghp_YOURDEVTOKENHERE
 
+# ── Socket ───────────────────────────────────────────────
+socket.retryDelay=30000
+
 # ── Autosave ─────────────────────────────────────────────
 # Interval in minutes between differential autosave checks
 autosave.interval.minutes=15
 
 # ── Logging ──────────────────────────────────────────────
-log.path=C:/Users/YOURUSER/IdeaProjects/NomadSync/logs/nomadSync.log
+log.path=C:/Users/YOURUSER/IdeaProjects/ObsidianSync/logs/obsidiansync.log
 log.level=DEBUG

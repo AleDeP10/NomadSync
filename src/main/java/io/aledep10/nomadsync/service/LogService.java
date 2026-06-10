@@ -1,6 +1,7 @@
-package io.aledep10.nomadSync.service;
+package io.aledep10.nomadsync.service;
 
-import io.aledep10.nomadSync.scheduler.AutosaveScheduler;
+import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
+import io.aledep10.nomadsync.logging.LogLevel;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -20,10 +21,6 @@ import java.util.Properties;
  */
 public class LogService {
 
-    enum LogLevel {
-        DEBUG, INFO, WARN, ERROR
-    }
-
     private static final DateTimeFormatter FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
@@ -42,8 +39,11 @@ public class LogService {
     }
 
     public void debug(String message) { log(LogLevel.DEBUG, message); }
+    public void debug(String message, Throwable cause) { log(LogLevel.DEBUG, message, cause); }
     public void info(String message)  { log(LogLevel.INFO,  message); }
+    public void info(String message, Throwable cause) { log(LogLevel.INFO, message, cause); }
     public void warn(String message)  { log(LogLevel.WARN,  message); }
+    public void warn(String message, Throwable cause) { log(LogLevel.WARN, message, cause); }
     public void error(String message) { log(LogLevel.ERROR, message); }
     public void error(String message, Throwable cause) { log(LogLevel.ERROR, message, cause); }
 
@@ -79,14 +79,19 @@ public class LogService {
 
         // Write to console
         switch (level) {
-            case WARN -> System.err.println(line);
-            case ERROR -> {
+            case WARN, ERROR -> {
                 System.err.println(line);
                 if (cause != null) {
                     cause.printStackTrace(System.err);
                 }
             }
-            default -> System.out.println(line);
+            default -> {
+                System.out.println(line);
+                if (cause != null) {
+                    cause.printStackTrace(System.out);
+                }
+            }
         }
+
     }
 }

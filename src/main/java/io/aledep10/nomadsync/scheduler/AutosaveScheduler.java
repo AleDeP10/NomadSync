@@ -1,9 +1,12 @@
-package io.aledep10.nomadSync.scheduler;
+package io.aledep10.nomadsync.scheduler;
 
-import io.aledep10.nomadSync.orchestrator.EventType;
-import io.aledep10.nomadSync.orchestrator.SyncEvent;
-import io.aledep10.nomadSync.orchestrator.SyncEventQueue;
-import io.aledep10.nomadSync.service.LogService;
+import io.aledep10.nomadsync.Main;
+import io.aledep10.nomadsync.orchestrator.EventType;
+import io.aledep10.nomadsync.orchestrator.SyncEvent;
+import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
+import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
+import io.aledep10.nomadsync.tray.SocketServer;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -14,10 +17,16 @@ import java.util.concurrent.TimeUnit;
  * Periodically publishes {@link EventType#AUTOSAVE} events to the {@link SyncEventQueue}.
  *
  * <p>Acts exclusively as a publisher — never interacts with GitService directly.
- * Sequencing and execution are delegated to SyncOrchestrator.</p>
+ * Sequencing and execution are delegated to {@link SyncOrchestrator}.</p>
+ *
+ * <p>Publishes {@code AUTOSAVE} events with {@code vaultId = null} — the broadcast
+ * sentinel. {@link SocketServer#doRedirect()} distributes
+ * the event to all registered vaults at routing time.</p>
  *
  * <p>Uses {@link ScheduledExecutorService#scheduleAtFixedRate} to model autosave
- * as a fixed-interval clock.</p>
+ * as a fixed-interval clock. The first execution is delayed by one full interval —
+ * at logon a {@code PULL_LOGON} event is already in flight and an immediate autosave
+ * would be redundant.</p>
  */
 public class AutosaveScheduler {
 
@@ -44,7 +53,7 @@ public class AutosaveScheduler {
      * Package-private constructor for testing purposes only.
      *
      * <p>Allows tests to use short intervals (e.g. milliseconds) without
-     * changing the public interface used by {@link io.aledep10.nomadSync.Main}.</p>
+     * changing the public interface used by {@link Main}.</p>
      *
      * @param queue      the queue on which AUTOSAVE events are published
      * @param logService shared logging service
@@ -52,29 +61,25 @@ public class AutosaveScheduler {
      * @param timeUnit   time unit for the interval
      */
     AutosaveScheduler(SyncEventQueue queue, LogService logService, long interval, TimeUnit timeUnit) {
-        this.queue     = queue;
+        this.queue      = queue;
         this.logService = logService;
-        this.interval  = interval;
-        this.timeUnit  = timeUnit;
-        this.executor  = Executors.newSingleThreadScheduledExecutor();
+        this.interval   = interval;
+        this.timeUnit   = timeUnit;
+        this.executor   = Executors.newSingleThreadScheduledExecutor();
     }
 
     /**
      * Starts the autosave timer.
      *
-     * <p>The first execution is delayed by one full interval — at logon a
-     * {@code PULL_LOGON} event is already published by Main.
-     * An immediate autosave would be redundant.</p>
-     *
      * <p>The task is wrapped in try/catch to prevent unchecked exceptions
      * from silently cancelling the schedule.</p>
      */
     public void start() {
-        logService.info("AutosaveScheduler: starting, interval = " + interval + " " + TimeUnit.MINUTES);
+        logService.info("AutosaveScheduler: starting, interval = " + interval + " " + timeUnit);
 
         scheduledTask = executor.scheduleAtFixedRate(() -> {
             try {
-                SyncEvent event = new SyncEvent(EventType.AUTOSAVE);
+                SyncEvent event = new SyncEvent(EventType.AUTOSAVE, null);
                 logService.info("AutosaveScheduler: publishing " + event);
                 queue.publish(event);
             } catch (Exception e) {
@@ -86,7 +91,8 @@ public class AutosaveScheduler {
     /**
      * Stops the autosave timer gracefully.
      *
-     * <p>Should be called before {@link io.aledep10.nomadSync.orchestrator.SyncOrchestrator#stop()}
+     * <p>Should be called before
+     * {@link SyncOrchestrator#stop()}
      * to avoid publishing events onto an unattended queue.</p>
      */
     public void stop() {

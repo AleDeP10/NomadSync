@@ -1,6 +1,6 @@
-package io.aledep10.nomadSync.hook;
+package io.aledep10.nomadsync.hook;
 
-import io.aledep10.nomadSync.orchestrator.SyncEvent;
+import io.aledep10.nomadsync.orchestrator.SyncEvent;
 
 /**
  * Abstraction for user-facing failure notifications.

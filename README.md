@@ -1,77 +1,155 @@
-# 📓 Obsidian Portfolio Vault
+# ObsidianSync
 
-This repository is the **public knowledge base** of an ongoing learning and development journey,
-built around [NomadSync](https://github.com/AleDeP10/NomadSync) — a self-built Java CLI tool
-that automates Git-based synchronization of an Obsidian vault across multiple Windows machines.
+A lightweight Java tool that keeps one or more Obsidian vaults in sync across multiple Windows machines using Git and GitHub — no subscription required.
 
-The vault documents the full lifecycle of the project: architecture decisions, sprint planning,
-milestone retrospectives, and scored self-assessments — structured as a real-world Agile workflow.
+ObsidianSync runs silently in the background as a system tray icon. It pulls the latest vault state at logon, commits local changes periodically, pushes at logoff, and lets you trigger a manual push with a single click. Multiple vaults are supported, each backed by its own private GitHub repository.
 
 ---
 
-## Why this exists
+## Features
 
-Most portfolios show the final product. This one shows **the process**.
-
-Every decision has a reason. Every obstacle has a post-mortem. Every sprint has a score.
-The goal is to demonstrate not just what was built, but *how* — the thinking, the trade-offs,
-and the growth across iterations.
+- **Automatic pull at logon** — the vault is always up to date when you start working
+- **Periodic autosave** — local commits every 15 minutes, no network dependency
+- **Automatic push at logoff** — changes are pushed to GitHub when the session ends
+- **Manual push on demand** — left-click the tray icon to push the current vault at any time
+- **Multi-vault support** — manage multiple vaults from the same tray icon, each mapped to its own repository
+- **Vault switcher** — right-click the tray icon to switch the active vault; optionally push immediately on selection
+- **Conflict resolution** — remote always wins on pull; every overwrite is traceable in the git log
+- **Exponential backoff retry** — network failures are retried automatically (30s → 60s → 120s) before giving up
+- **Zero cloud subscription** — uses a free private GitHub repository instead of Obsidian Sync (~€4/month)
 
 ---
 
-## Repository structure
+## Requirements
+
+- Java 11 or later
+- Git installed and available on `PATH`
+- A GitHub account with a private repository per vault
+- Windows 10 or Windows 11
+
+---
+
+## Installation
+
+1. Clone or download this repository
+2. Copy `config.properties.template` to `config.properties` and fill in your settings
+3. Copy `vaults.json.template` to `vaults.json` and configure your vaults
+4. Build the fat JAR:
+   ```
+   mvn package
+   ```
+5. Register the three Task Scheduler tasks (see [Task Scheduler Setup](#task-scheduler-setup))
+6. Start the tray manually once to verify, then let Task Scheduler handle it at every logon
+
+---
+
+## Configuration
+
+### config.properties
+
+```properties
+socket.port=4242
+log.path=logs/obsidian-sync.log
+```
+
+### vaults.json
+
+```json
+{
+  "vaults": [
+    {
+      "id": "personal",
+      "label": "Personal",
+      "path": "C:/vaults/personal",
+      "remote": "https://github.com/youruser/personal-vault",
+      "token": "ghp_..."
+    }
+  ]
+}
+```
+
+Add one entry per vault. Each vault must already be a git repository with the remote configured.
+
+---
+
+## Task Scheduler Setup
+
+Three tasks must be registered in Windows Task Scheduler (`taskschd.msc`):
+
+| Task name | Trigger | Action |
+|---|---|---|
+| `ObsidianSync-Tray` | At log on | `java -jar path\to\ObsidianSync.jar tray` |
+| `ObsidianSync-Logon` | At log on (delay 30s) | `java -jar path\to\ObsidianSync.jar logon` |
+| `ObsidianSync-Logoff` | At log off | `java -jar path\to\ObsidianSync.jar logoff` |
+
+The autosave task is managed internally by the tray process and does not require a separate Task Scheduler entry.
+
+All tasks should run under the current user account. The logoff task must be configured with "Run whether user is logged on or not" disabled and "Wait for task to complete" enabled.
+
+---
+
+## How it works
 
 ```
-obsidian-portfolio/
-└── NomadSync Diary/
-    ├── Decisions/          ← Architecture Decision Records (ADR-style)
-    │   └── DEC_Milestone_1.md
-    ├── Groomings/          ← Sprint planning sessions with risk analysis and know-how preparation
-    │   └── GRM_Milestone_2.md
-    ├── Milestones/         ← Sprint retrospectives: objectives, problems, cheat-sheets acquired
-    │   └── MILESTONE_1.md
-    └── Scores/             ← Recruiter-style assessments and personal trainer evaluations
-        └── SCR_Milestone_2.md
+Logon
+  └─ Tray process starts (hosts orchestrator + socket server on :4242)
+  └─ Logon client connects → sends PULL_LOGON → orchestrator: stash → pull → stash pop
+
+During session
+  └─ Autosave every 15 min → orchestrator: diff → commit local (no network)
+  └─ Left-click tray → PUSH_MANUAL → orchestrator: diff → commit → push
+
+Logoff
+  └─ Logoff client connects → sends PUSH_LOGOFF → orchestrator: diff → commit → push
+  └─ Tray process exits
+```
+
+Events are queued with priority (pull > manual push > logoff push > autosave). If two events of the same type arrive, the latest replaces the earlier one in the queue. Network failures trigger up to three retry attempts with exponential backoff before the event is discarded and logged.
+
+---
+
+## Project structure
+
+```
+src/main/java/
+├── Main.java
+├── model/
+│   ├── SyncEvent.java
+│   └── Vault.java
+├── service/
+│   ├── GitService.java
+│   └── LogService.java
+├── orchestrator/
+│   ├── SyncOrchestrator.java
+│   └── SyncEventQueue.java
+├── notification/
+│   └── NotificationHook.java
+├── socket/
+│   ├── SocketServer.java
+│   └── SocketClient.java
+└── tray/
+    └── TrayManager.java
+
+src/main/resources/
+├── config.properties.template
+└── vaults.json.template
 ```
 
 ---
 
-## The project: NomadSync
+## Design decisions
 
-> A lightweight Java CLI tool that automates Git-based sync of an Obsidian vault across
-> Windows machines. Triggered on logon/logoff via Task Scheduler, it handles pull/push
-> workflows, differential autosave, and conflict resolution with audit logging.
+All architectural decisions taken during development are recorded in the Decision Track Record, maintained in English inside `docs/`. Each milestone has its own DTR file:
 
-**Tech stack**: Java 21 · Maven · Git CLI via ProcessBuilder · Task Scheduler · Windows Batch
+- `docs/DTR_Milestone_1.md` — Git sync strategy, Task Scheduler, autosave
+- `docs/DTR_Milestone_2.md` — SyncOrchestrator, event-driven architecture, retry policy
+- `docs/DTR_Milestone_3.md` — Testing stack (JUnit 5, Mockito, AssertJ, Awaitility)
+- `docs/DTR_Milestone_4.md` — Windows integration, multi-vault, tray icon, IPC
 
-**Source code**: [github.com/AleDeP10/NomadSync](https://github.com/AleDeP10/NomadSync)
-
-### Architecture highlights
-
-- **Event-driven orchestration** — operations are published as prioritized events to a queue;
-  the orchestrator consumes them serially, preventing Git concurrency issues
-- **Exponential backoff retry** — network failures trigger up to 3 retries with progressive delays
-- **Differential autosave** — commits only when `git diff` detects actual changes
-- **Conflict resolution strategy** — `git pull -X theirs` with full audit logging
-- **Dependency inversion** — `NotificationHook` interface decouples the orchestrator
-  from any future notification implementation (tray icon, toast, etc.)
+The DTR captures context, decision, rationale, and discarded alternatives for every non-trivial choice. It is the primary reference for understanding why the system is built the way it is.
 
 ---
 
-## How to read this vault
+## License
 
-Start with **`DEC_Milestone_1.md`** to understand the architectural choices made before
-writing a single line of code.
-
-Then read **`MILESTONE_1.md`** for the retrospective: what was built, what broke,
-and what was learned.
-
-Follow with **`GRM_Milestone_2.md`** to see how the next sprint was planned — risks
-identified, priorities set, unknowns acknowledged.
-
----
-
-## About
-
-Alessandro De Prato · FullStack Developer  
-[Portfolio](https://aledep10.github.io) · [Portfolio Vault](https://github.com/AleDeP10/obsidian-portfolio) · [GitHub](https://github.com/AleDeP10) · [LinkedIn](https://www.linkedin.com/in/alessandro-de-prato)
+MIT

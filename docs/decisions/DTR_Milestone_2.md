@@ -150,22 +150,22 @@ for a single thread with loop semantics.
 
 ---
 
-## [M2] Shutdown hook registered in io.aledep10.nomadSync.io.aledep10.nomadSync.Main, not in SyncOrchestrator
+## [M2] Shutdown hook registered in io.obsidiansync.io.obsidiansync.Main, not in SyncOrchestrator
 
 **Context**: the first implementation registered the JVM shutdown hook inside
 `SyncOrchestrator.start()`. This prevented controlling the shutdown order between the
 scheduler and the orchestrator.
 
-**Decision**: shutdown hook registered in `io.aledep10.nomadSync.io.aledep10.nomadSync.Main`, which owns the wiring of all components.
+**Decision**: shutdown hook registered in `io.obsidiansync.io.obsidiansync.Main`, which owns the wiring of all components.
 
 ```java
 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
     scheduler.stop();     // stop publishing first
     orchestrator.stop();  // then drain and stop consuming
-}, "nomadSync-shutdown"));
+}, "obsidiansync-shutdown"));
 ```
 
-**Motivation**: `io.aledep10.nomadSync.io.aledep10.nomadSync.Main` is the natural place to decide shutdown order — the same place that
+**Motivation**: `io.obsidiansync.io.obsidiansync.Main` is the natural place to decide shutdown order — the same place that
 decides startup order. Stopping the scheduler first prevents publishing events onto a queue
 that is no longer being consumed.
 

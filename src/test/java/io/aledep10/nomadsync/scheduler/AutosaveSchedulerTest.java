@@ -1,8 +1,9 @@
-package io.aledep10.nomadSync.scheduler;
+package io.aledep10.nomadsync.scheduler;
 
-import io.aledep10.nomadSync.orchestrator.EventType;
-import io.aledep10.nomadSync.orchestrator.SyncEventQueue;
-import io.aledep10.nomadSync.service.LogService;
+import io.aledep10.nomadsync.orchestrator.EventType;
+import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
+import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
+import io.aledep10.nomadsync.service.LogService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,7 @@ class AutosaveSchedulerTest {
     @BeforeAll
     static void prepareLogService() {
         Properties properties = new Properties();
-        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/nomadSync-test.log");
+        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/obsidiansync-test.log");
         properties.setProperty("log.level", "DEBUG");
         logService = new LogService(properties);
     }
