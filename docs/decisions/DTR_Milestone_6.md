@@ -44,7 +44,7 @@ Once confirmed, the remote version will be deleted.
 
 ## [M6] PrismUI — shared JavaFX design system, Maven Central candidate
 
-**Context**: ObsidianSync is the first product in a planned family of Java desktop
+**Context**: NomadSync is the first product in a planned family of Java desktop
 applications. Shared JavaFX library enables consistent theming.
 
 **Decision**: separate Maven project `prism-ui`. Three themes via CSS swap:

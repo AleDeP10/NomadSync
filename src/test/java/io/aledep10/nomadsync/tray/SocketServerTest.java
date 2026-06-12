@@ -50,17 +50,23 @@ class SocketServerTest {
 
     @BeforeAll
     static void prepareSharedState() throws IOException {
-        testVault  = TestUtil.getTestVault("SocketServerTest");
+        testVault = TestUtil.getTestVault("SocketServerTest");
         logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG));
         gitService = mock(GitService.class);
 
         testVaults = new HashMap<>();
-        testVaults.put("test-1", new Vault(UUID.randomUUID().toString(), "test-1",
-                testVault.vaultPath().resolve("test-1").toString()));
-        testVaults.put("test-2", new Vault(UUID.randomUUID().toString(), "test-2",
-                testVault.vaultPath().resolve("test-2").toString()));
-        testVaults.put("test-3", new Vault(UUID.randomUUID().toString(), "test-3",
-                testVault.vaultPath().resolve("test-3").toString()));
+        testVaults.put("test-1",
+                new Vault(UUID.randomUUID().toString(),
+                        "owner", "test-1",
+                        testVault.vaultPath().resolve("test-1").toString()));
+        testVaults.put("test-2",
+                new Vault(UUID.randomUUID().toString(),
+                        "owner", "test-2",
+                        testVault.vaultPath().resolve("test-2").toString()));
+        testVaults.put("test-3",
+                new Vault(UUID.randomUUID().toString(),
+                        "owner", "test-3",
+                        testVault.vaultPath().resolve("test-3").toString()));
     }
 
     @BeforeEach
@@ -148,7 +154,7 @@ class SocketServerTest {
             assertThat(response).isEqualTo(SocketResponse.NACK.name());
             assertThat(socketServer.mainQueue.size()).isEqualTo(0);
             assertThat(socketServer.vaults.values().stream()
-                    .noneMatch(v -> v.getQueue().size() > 0)).isTrue();
+                    .noneMatch(v -> v.queue().size() > 0)).isTrue();
         }
     }
 
@@ -179,7 +185,7 @@ class SocketServerTest {
 
         assertThat(socketServer.mainQueue.size()).isEqualTo(0);
         assertThat(socketServer.vaults.values().stream()
-                .noneMatch(v -> v.getQueue().size() > 0)).isTrue();
+                .noneMatch(v -> v.queue().size() > 0)).isTrue();
     }
 
     /**
@@ -188,11 +194,11 @@ class SocketServerTest {
     @Test
     void socketServer_handlesMultipleSequentialRequests() {
         List<SocketMessage> messages = List.of(
-                new SocketMessage(EventType.PULL_LOGON.name(),  testVaults.get("test-1").getId(), 10),
-                new SocketMessage(EventType.PULL_LOGON.name(),  testVaults.get("test-2").getId(), 10),
-                new SocketMessage(EventType.PULL_LOGON.name(),  testVaults.get("test-3").getId(), 10),
+                new SocketMessage(EventType.PULL_LOGON.name(), testVaults.get("test-1").getId(), 10),
+                new SocketMessage(EventType.PULL_LOGON.name(), testVaults.get("test-2").getId(), 10),
+                new SocketMessage(EventType.PULL_LOGON.name(), testVaults.get("test-3").getId(), 10),
                 new SocketMessage(EventType.SYNCHRONIZE.name(), testVaults.get("test-2").getId(), 10),
-                new SocketMessage(EventType.AUTOSAVE.name(),    null,                             10),
+                new SocketMessage(EventType.AUTOSAVE.name(), null, 10),
                 new SocketMessage(EventType.SYNCHRONIZE.name(), testVaults.get("test-3").getId(), 10));
 
         messages.forEach(message -> {

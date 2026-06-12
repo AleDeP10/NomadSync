@@ -4,7 +4,6 @@ import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -40,7 +39,6 @@ class LogServiceTest {
 
     /**
      * Verifies that events below the configured minimum level are not written to the file.
-     * A {@code DEBUG} message must not appear when the threshold is {@code INFO}.
      */
     @Test
     void log_belowMinLevel_doesNotWrite() {
@@ -52,8 +50,7 @@ class LogServiceTest {
     }
 
     /**
-     * Verifies that an event at exactly the minimum level is written to the file,
-     * with the level tag and message both present.
+     * Verifies that an event at exactly the minimum level is written with level tag and message.
      */
     @Test
     void log_atMinLevel_writes() {
@@ -67,8 +64,7 @@ class LogServiceTest {
     }
 
     /**
-     * Verifies that an event above the minimum level is written — an {@code ERROR}
-     * message passes through a service configured at {@code INFO}.
+     * Verifies that an event above the minimum level is written.
      */
     @Test
     void log_aboveMinLevel_writes() {
@@ -97,6 +93,19 @@ class LogServiceTest {
                 .containsPattern("\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\]");
     }
 
+    /**
+     * Verifies that every log line includes the repoSlug field.
+     * Default constructor uses "SYSTEM" as repoSlug.
+     */
+    @Test
+    void log_defaultConstructor_usesSystemRepoSlug() {
+        LogService logService = createLogService(LogLevel.DEBUG);
+
+        logService.info("check slug");
+
+        assertThat(readLogFile()).contains("SYSTEM");
+    }
+
     // ── log() — append mode ───────────────────────────────────────────────────
 
     /**
@@ -114,27 +123,144 @@ class LogServiceTest {
         assertThat(content).contains("second session");
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── constructor(Properties, String repoSlug) ──────────────────────────────
 
     /**
-     * Creates a {@link LogService} writing to the shared {@link TestVault#logFilePath()}.
-     *
-     * @param level minimum log level
-     * @return a configured {@link LogService} instance
+     * Verifies that the vault-scoped constructor writes the provided repoSlug
+     * to every log line.
      */
-    private LogService createLogService(LogLevel level) {
-        Properties properties = new Properties();
-        properties.setProperty("log.path",  testVault.logFilePath().toString());
-        properties.setProperty("log.level", level.name());
-        return new LogService(properties);
+    @Test
+    void constructor_withRepoSlug_writesRepoSlugToLog() {
+        Properties properties = baseProperties(LogLevel.DEBUG);
+        LogService logService = new LogService(properties, "AleDeP10/public-vault");
+
+        logService.info("vault message");
+
+        assertThat(readLogFile()).contains("AleDeP10/public-vault");
     }
 
     /**
-     * Reads the content of the shared log file as a single string.
-     * Returns an empty string if the file does not exist.
-     *
-     * @return log file content, or empty string if absent
+     * Verifies that the vault-scoped constructor still filters by level.
      */
+    @Test
+    void constructor_withRepoSlug_respectsMinLevel() {
+        Properties properties = baseProperties(LogLevel.WARN);
+        LogService logService = new LogService(properties, "AleDeP10/public-vault");
+
+        logService.info("below threshold");
+
+        assertThat(readLogFile()).doesNotContain("below threshold");
+    }
+
+    // ── withVault() ───────────────────────────────────────────────────────────
+
+    /**
+     * Verifies that {@code withVault()} returns a new instance scoped to the
+     * given repoSlug — the slug appears in every subsequent log line.
+     */
+    @Test
+    void withVault_writesNewRepoSlugToLog() {
+        LogService system = createLogService(LogLevel.DEBUG);
+        LogService vaultScoped = system.withVault("AleDeP10/private-vault");
+
+        vaultScoped.info("vault-scoped message");
+
+        assertThat(readLogFile()).contains("AleDeP10/private-vault");
+    }
+
+    /**
+     * Verifies that the original {@code LogService} instance retains its own
+     * repoSlug after {@code withVault()} is called — instances are independent.
+     */
+    @Test
+    void withVault_originalInstanceRetainsSystemSlug() {
+        LogService system = createLogService(LogLevel.DEBUG);
+        system.withVault("AleDeP10/private-vault");  // discard result
+
+        system.info("system message");
+
+        assertThat(readLogFile()).contains("SYSTEM");
+        assertThat(readLogFile()).doesNotContain("AleDeP10/private-vault");
+    }
+
+    /**
+     * Verifies that two vault-scoped instances derived from the same system
+     * instance are independent — each writes its own slug.
+     */
+    @Test
+    void withVault_twoScopedInstances_writeDistinctSlugs() {
+        LogService system  = createLogService(LogLevel.DEBUG);
+        LogService vaultA  = system.withVault("AleDeP10/public-vault");
+        LogService vaultB  = system.withVault("AleDeP10/private-vault");
+
+        vaultA.info("from A");
+        vaultB.info("from B");
+
+        String content = readLogFile();
+        assertThat(content).contains("AleDeP10/public-vault");
+        assertThat(content).contains("AleDeP10/private-vault");
+    }
+
+    // ── buildWriters — unknown token ──────────────────────────────────────────
+
+    /**
+     * Verifies that an unknown writer token in {@code log.writers} does not throw —
+     * the service starts with the remaining valid writers.
+     */
+    @Test
+    void buildWriters_unknownToken_doesNotThrow() {
+        Properties properties = baseProperties(LogLevel.DEBUG);
+        properties.setProperty("log.writers", "console,unknown-writer,file");
+
+        LogService logService = new LogService(properties);
+        logService.info("still works");
+
+        assertThat(readLogFile()).contains("still works");
+    }
+
+    /**
+     * Verifies that requesting the {@code file} writer without {@code log.path}
+     * does not throw — the writer is skipped and console remains active.
+     */
+    @Test
+    void buildWriters_fileWriterMissingPath_doesNotThrow() {
+        Properties properties = new Properties();
+        properties.setProperty("log.level",   LogLevel.DEBUG.name());
+        properties.setProperty("log.writers", "file");
+        // log.path intentionally absent
+
+        // must not throw
+        new LogService(properties);
+    }
+
+    /**
+     * Verifies that requesting the {@code seq} writer without {@code seq.url}
+     * does not throw — the writer is skipped.
+     */
+    @Test
+    void buildWriters_seqWriterMissingUrl_doesNotThrow() {
+        Properties properties = baseProperties(LogLevel.DEBUG);
+        properties.setProperty("log.writers", "console,seq");
+        // seq.url intentionally absent
+
+        // must not throw
+        new LogService(properties);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private LogService createLogService(LogLevel level) {
+        return new LogService(baseProperties(level));
+    }
+
+    private Properties baseProperties(LogLevel level) {
+        Properties properties = new Properties();
+        properties.setProperty("log.path",    testVault.logFilePath().toString());
+        properties.setProperty("log.level",   level.name());
+        properties.setProperty("log.writers", "file");
+        return properties;
+    }
+
     private String readLogFile() {
         try {
             if (!Files.exists(testVault.logFilePath())) return "";

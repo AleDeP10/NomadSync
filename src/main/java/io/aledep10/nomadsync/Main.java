@@ -17,7 +17,7 @@ import java.io.IOException;
 import java.util.Properties;
 
 /**
- * Entry point for ObsidianSync.
+ * Entry point for NomadSync.
  *
  * <p>Responsibilities:</p>
  * <ol>
@@ -29,13 +29,13 @@ import java.util.Properties;
  *
  * <p>Usage:</p>
  * <pre>
- *   java -jar ObsidianSync.jar [pull|push|autosave] [config.properties]
+ *   java -jar NomadSync.jar [pull|push|autosave] [config.properties]
  * </pre>
  */
 public class Main {
     public static void main(String[] args) {
         if (args == null || args.length < 2) {
-            System.err.println("Usage: java -jar ObsidianSync.jar [pull|push|autosave] <properties_file>");
+            System.err.println("Usage: java -jar NomadSync.jar [pull|push|autosave] <properties_file>");
             System.exit(1);
         }
 
@@ -63,7 +63,7 @@ public class Main {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             scheduler.stop();     // stop publishing first
             orchestrator.stop();  // then drain and stop consuming
-        }, "obsidiansync-shutdown"));
+        }, "nomadsync-shutdown"));
 
         // ── CLI argument → event ─────────────────────────────────────────────
         switch (args[0]) {
@@ -74,7 +74,7 @@ public class Main {
             case "autosave" -> { /* AutosaveScheduler handles periodic publishing */ }
             case null, default -> {
                 logService.error("Unknown operation: " + args[0]);
-                logService.error("Usage: java -jar ObsidianSync.jar [pull|push|autosave] <properties_file>");
+                logService.error("Usage: java -jar NomadSync.jar [pull|push|autosave] <properties_file>");
                 System.exit(1);
             }
         }

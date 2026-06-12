@@ -12,7 +12,6 @@ import io.aledep10.nomadsync.dto.VaultRootDto;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEvent;
 import io.aledep10.nomadsync.orchestrator.Vault;
-import io.aledep10.nomadsync.tray.SocketMessage;
 
 import java.io.File;
 import java.io.IOException;
@@ -20,12 +19,12 @@ import java.io.InputStream;
 import java.util.List;
 
 /**
- * JSON serialisation and deserialisation utility for ObsidianSync domain objects.
+ * JSON serialisation and deserialisation utility for NomadSync domain objects.
  *
- * <p>Acts as the mapping layer between the socket transport format (JSON strings)
- * and the domain model ({@link SyncEvent}, {@link Vault}). Keeps Jackson awareness
- * out of domain classes — {@link SyncEvent} and {@link Vault} do not depend on
- * Jackson annotations except where necessary for {@code @JsonCreator}.</p>
+ * <p>Acts as the mapping layer between JSON representations (files, socket messages)
+ * and the domain model ({@link SyncEvent}, {@link Vault}). All Jackson awareness
+ * is concentrated here and in the {@code dto} package — domain classes carry no
+ * Jackson annotations.</p>
  *
  * <p>A single {@link ObjectMapper} instance is shared across all calls — it is
  * thread-safe after initial configuration and expensive to instantiate per call.</p>
@@ -36,44 +35,74 @@ public final class JsonMapper {
 
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-    private JsonMapper() {
-        // utility class — no instances
-    }
+
+    private JsonMapper() {}
+
+    // ── Vault persistence ─────────────────────────────────────────────────────
 
     /**
-     * Carica la lista di Vault deserializzando il wrapper DTO.
+     * Loads the list of vaults from {@code vaults.json}.
+     *
+     * <p>Deserialises via {@link VaultRootDto} → {@link VaultDto} → {@link Vault}
+     * to keep Jackson annotations out of the domain class. Returns an empty list
+     * if the file does not exist — no exception is thrown.</p>
+     *
+     * @param file the {@code vaults.json} file
+     * @return list of domain {@link Vault} objects, or empty list if file absent
+     * @throws IOException if the file exists but cannot be read or parsed
      */
     public static List<Vault> loadVaultsFromFile(File file) throws IOException {
         if (!file.exists()) return List.of();
         VaultRootDto root = MAPPER.readValue(file, VaultRootDto.class);
-        return root.getVaults().stream().map(VaultDto::asVault).toList();
+        return root.getVaults().stream().map(VaultDto::toDomain).toList();
     }
 
     /**
-     * Salva la lista di Vault nel file vaults.json usando il wrapper DTO.
+     * Persists the list of vaults to {@code vaults.json}.
+     *
+     * <p>Serialises via {@link Vault} → {@link VaultDto} → {@link VaultRootDto}
+     * to keep Jackson annotations out of the domain class. The file is written
+     * with pretty-printing for human readability.</p>
+     *
+     * @param vaultsFile the target {@code vaults.json} file
+     * @param vaults     the current in-memory vault list
+     * @throws IOException if the file cannot be written
      */
     public static void saveVaultsToFile(File vaultsFile, List<Vault> vaults) throws IOException {
-        VaultRootDto root = new VaultRootDto(vaults.stream().map(VaultDto::new).toList());
+        VaultRootDto root = new VaultRootDto(
+                vaults.stream().map(VaultDto::fromDomain).toList());
         MAPPER.writerWithDefaultPrettyPrinter().writeValue(vaultsFile, root);
     }
 
+    // ── Socket / event ────────────────────────────────────────────────────────
+
     /**
-     * Serializzazione generica per socket o log.
+     * Deserialises a socket JSON message into a {@link SyncEvent}.
+     *
+     * <p>Parses via {@link SocketMessageDto} to avoid coupling Jackson to
+     * {@link SyncEvent}. The {@code event} field is converted to
+     * {@link EventType} via {@link EventType#valueOf(String)}.</p>
+     *
+     * @param json the JSON string received from the socket
+     * @return the corresponding {@link SyncEvent}
+     * @throws JsonProcessingException if the JSON is malformed
+     * @throws IllegalArgumentException if {@code event} does not match any {@link EventType}
      */
-    public static String toJson(Object obj) throws JsonProcessingException {
-        return MAPPER.writeValueAsString(obj);
+    public static SyncEvent toSyncEvent(String json) throws JsonProcessingException {
+        SocketMessageDto dto = MAPPER.readValue(json, SocketMessageDto.class);
+        return new SyncEvent(EventType.valueOf(dto.getEvent()), dto.getVaultId());
     }
 
     /**
      * Reads an {@link InputStream} and returns its content as a compact JSON string.
      *
-     * <p>Uses Jackson's streaming API to parse the input without loading the full
-     * payload into a string first. The result is re-serialised as a compact
-     * (non-pretty) JSON string suitable for passing to other mapper methods.</p>
+     * <p>Uses Jackson's streaming API to parse without loading the full payload
+     * into a string first. The result is re-serialised as a compact JSON string
+     * suitable for passing to {@link #toSyncEvent(String)}.</p>
      *
-     * @param stream the input stream to read from — typically a socket input stream
+     * @param stream the input stream to read — typically a socket input stream
      * @return the JSON content as a compact string
-     * @throws IOException if the stream cannot be read or the content is not valid JSON
+     * @throws IOException if the stream cannot be read or is not valid JSON
      */
     public static String extractJson(InputStream stream) throws IOException {
         JsonFactory factory = MAPPER.getFactory();
@@ -83,59 +112,21 @@ public final class JsonMapper {
         }
     }
 
-    /**
-     * Deserialises a JSON string into a {@link Vault} object.
-     *
-     * <p>The JSON must contain {@code id}, {@code name}, and {@code path} fields
-     * matching the {@link Vault} constructor annotated with {@code @JsonCreator}.</p>
-     *
-     * @param json the JSON string to deserialise
-     * @return the deserialised {@link Vault}
-     * @throws JsonProcessingException if the JSON is malformed or missing required fields
-     */
-    public static Vault toVault(String json) throws JsonProcessingException {
-        // [TODO] ancora non utilizzato
-        return MAPPER.readValue(json, Vault.class);
-    }
+    // ── Generic ───────────────────────────────────────────────────────────────
 
     /**
-     * Deserialises a socket JSON message into a {@link SyncEvent}.
+     * Serialises any object to a compact JSON string.
      *
-     * <p>Parses via {@link SocketMessageDto} (transport layer) to avoid
-     * coupling Jackson annotations to the {@link SyncEvent} domain class.
-     * The {@code event} field is converted to {@link EventType} via
-     * {@link EventType#valueOf(String)}.</p>
+     * <p>General-purpose fallback — use for socket transmission, logging, and any
+     * other context where a JSON string representation is needed. Covers all cases
+     * previously handled by the removed per-type overloads ({@code toJson(Vault)},
+     * {@code toJson(SocketMessage)}).</p>
      *
-     * @param json the JSON string received from the socket
-     * @return the corresponding {@link SyncEvent}
-     * @throws JsonProcessingException if the JSON is malformed
-     * @throws IllegalArgumentException if the {@code event} field does not match any {@link EventType}
-     */
-    public static SyncEvent toSyncEvent(String json) throws JsonProcessingException {
-        SocketMessageDto dto = MAPPER.readValue(json, SocketMessageDto.class);
-        return new SyncEvent(EventType.valueOf(dto.getEvent()), dto.getVaultId());
-    }
-
-    /**
-     * Serialises a {@link SocketMessage} to a compact JSON string for socket transmission.
-     *
-     * @param message the message to serialise
+     * @param obj the object to serialise
      * @return compact JSON string
      * @throws JsonProcessingException if serialisation fails
      */
-    public static String toJson(SocketMessage message) throws JsonProcessingException {
-        return MAPPER.writeValueAsString(message);
-    }
-
-    /**
-     * Serialises a {@link Vault} to a compact JSON string for persistence in
-     * {@code vaults.json}.
-     *
-     * @param vault the vault to serialise
-     * @return compact JSON string
-     * @throws JsonProcessingException if serialisation fails
-     */
-    public static String toJson(Vault vault) throws JsonProcessingException {
-        return MAPPER.writeValueAsString(vault);
+    public static String toJson(Object obj) throws JsonProcessingException {
+        return MAPPER.writeValueAsString(obj);
     }
 }

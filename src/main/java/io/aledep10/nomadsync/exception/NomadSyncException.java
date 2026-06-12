@@ -3,7 +3,7 @@ package io.aledep10.nomadsync.exception;
 import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
 
 /**
- * Base exception for all ObsidianSync domain errors.
+ * Base exception for all NomadSync domain errors.
  *
  * <p>Subclasses distinguish between network-related failures ({@link NetworkException})
  * and local Git errors ({@link GitException}), allowing {@link

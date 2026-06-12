@@ -1,9 +1,9 @@
 package io.aledep10.nomadsync.exception;
 
-import io.aledep10.nomadsync.service.GitService;
+import io.aledep10.nomadsync.service.VaultService;
 
 /**
- * Thrown by {@link GitService} when an exception occurs while performing vault
+ * Thrown by {@link VaultService} when an exception occurs while performing vault
  * operation, such as CRUD or backup.
  */
 public class VaultException extends NomadSyncException {

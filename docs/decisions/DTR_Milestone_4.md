@@ -283,7 +283,7 @@ the microservices layer.
 **Principle**: KISS — Better Done Than Perfect. The value does not justify the effort
 at this stage of the project.
 
-**Next step**: when ObsidianSync is integrated into the ToDoList 2.0 microservices
+**Next step**: when NomadSync is integrated into the ToDoList 2.0 microservices
 architecture, `LogService` will be replaced by slf4j + logback. Caller logging will
 be available at no cost via MDC without a single additional line of code.
 
@@ -291,7 +291,7 @@ be available at no cost via MDC without a single additional line of code.
 
 ## [M4] Multi-vault architecture with VaultContext and global priority queue
 
-**Context**: ObsidianSync was designed as a single-vault tool. The introduction of the
+**Context**: NomadSync was designed as a single-vault tool. The introduction of the
 socket layer (SocketServer/SocketClient) surfaced the need to handle multiple vaults
 with isolated queues and cross-vault event ordering.
 

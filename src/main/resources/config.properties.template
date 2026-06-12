@@ -23,5 +23,5 @@ socket.retryDelay=30000
 autosave.interval.minutes=15
 
 # ── Logging ──────────────────────────────────────────────
-log.path=C:/Users/YOURUSER/IdeaProjects/ObsidianSync/logs/obsidiansync.log
+log.path=C:/Users/YOURUSER/IdeaProjects/NomadSync/logs/nomadsync.log
 log.level=DEBUG

@@ -27,7 +27,7 @@ class AutosaveSchedulerTest {
     @BeforeAll
     static void prepareLogService() {
         Properties properties = new Properties();
-        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/obsidiansync-test.log");
+        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/nomadsync-test.log");
         properties.setProperty("log.level", "DEBUG");
         logService = new LogService(properties);
     }

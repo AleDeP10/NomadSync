@@ -45,8 +45,8 @@ public class GitService {
      * Constructs the service from the provided configuration.
      *
      * @param properties   application properties containing {@code git.executable}
-     * @param vaultService vault lifecycle service — used for snapshot creation in
-     *                     {@link #synchronize(String)}
+     * @param vaultService vault lifecycle service — used for snapshot creation and
+     *                     conflict file persistence in {@link #synchronize(String)}
      * @param logService   shared logging service
      */
     public GitService(Properties properties, VaultService vaultService, LogService logService) {
@@ -186,7 +186,9 @@ public class GitService {
      *       <li>FIFO snapshot via {@link VaultService#makeVaultSnapshot(String)}.</li>
      *       <li>{@code git pull -X ours --no-edit}.</li>
      *       <li>Extract conflicted files from {@code "Auto-merging"} lines in stdout.</li>
-     *       <li>Save remote versions to {@code remote-conflicts/<vault>_<timestamp>/}.</li>
+     *       <li>For each conflicted file: fetch remote version via
+     *           {@link CommandUtil#runCommandToFile} to a temp file, then move to
+     *           {@code conflictsRoot} via {@link VaultService#saveConflict}.</li>
      *       <li>Push.</li>
      *     </ol>
      *   </li>
@@ -200,7 +202,7 @@ public class GitService {
      * @return list of relative paths of conflicted files, empty if no conflict
      * @throws GitException         if an unrecoverable Git error occurs
      * @throws NetworkException     if a network connectivity failure is detected
-     * @throws VaultException       if snapshot creation fails
+     * @throws VaultException       if snapshot or conflict persistence fails
      * @throws InterruptedException if the thread is interrupted while waiting
      */
     public List<String> synchronize(String vaultPath)
@@ -209,8 +211,8 @@ public class GitService {
         List<String> result = new ArrayList<>();
 
         try {
-            String timestamp    = DateFormats.nowLog();
-            int commitExitCode  = commitLocal(vaultPath, timestamp + ", synchronize");
+            String timestamp   = DateFormats.nowLog();
+            int commitExitCode = commitLocal(vaultPath, timestamp + ", synchronize");
             logService.debug("Commit exit code: " + commitExitCode);
 
             StringWriter sw1 = new StringWriter();
@@ -227,7 +229,7 @@ public class GitService {
                     logService.warn("git push failed with code " + pushExitCode);
                 }
             } else {
-                // abort any in-progress merge — exit code non-zero is normal if no merge was running
+                // abort any in-progress merge — non-zero exit is normal if no merge was running
                 CommandUtil.runCommand(
                         vaultPath, List.of(gitExecutable, "merge", "--abort"), logService);
 
@@ -250,22 +252,22 @@ public class GitService {
                         .map(l -> l.replace("Auto-merging ", "").trim())
                         .toList();
 
-                String conflictTimestamp = DateFormats.nowLog();
-                Path conflictsDir = Path.of(vaultPath)
-                        .getParent()
-                        .resolve("remote-conflicts")
-                        .resolve(Path.of(vaultPath).getFileName() + "_" + conflictTimestamp);
-                Files.createDirectories(conflictsDir);
+                String vaultName       = Path.of(vaultPath).getFileName().toString();
+                String conflictDirName = vaultName + "_" + DateFormats.nowLog();
 
                 for (String file : conflicted) {
-                    StringWriter sw3 = new StringWriter();
-                    int showExitCode = CommandUtil.runCommandToWriter(
-                            vaultPath, List.of(gitExecutable, "--no-pager", "show",
-                                    "FETCH_HEAD:" + file,
-                                    "--output=" + conflictsDir.resolve(
-                                            Path.of(file).getFileName())),
-                            new PrintWriter(sw3));
-                    logService.debug("Show " + file + " exit code: " + showExitCode);
+                    String basename = Path.of(file).getFileName().toString();
+                    Path tempFile   = Files.createTempFile("nomadsync-conflict-", "-" + basename);
+                    try {
+                        int showExitCode = CommandUtil.runCommandToFile(
+                                vaultPath,
+                                List.of(gitExecutable, "--no-pager", "show", "FETCH_HEAD:" + file),
+                                tempFile);
+                        logService.debug("show " + file + " exit code: " + showExitCode);
+                        vaultService.saveConflict(conflictDirName, basename, tempFile);
+                    } finally {
+                        Files.deleteIfExists(tempFile); // no-op if saveConflict already moved it
+                    }
                     result.add(file);
                 }
 
@@ -278,7 +280,7 @@ public class GitService {
             return result;
 
         } catch (IOException e) {
-            throw new VaultException("Unable to create conflicts directory", e);
+            throw new VaultException("Unable to handle conflicts", e);
         }
     }
 }

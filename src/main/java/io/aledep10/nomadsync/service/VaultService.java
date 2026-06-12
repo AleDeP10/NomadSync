@@ -24,9 +24,15 @@ import java.util.stream.Stream;
  * <h2>Snapshot paths</h2>
  * <p>Backup and conflict directories can be configured explicitly via
  * {@code backup.path} and {@code conflicts.path} in the application properties.
- * If those keys are absent, both directories fall back to the application working
- * directory ({@code user.dir}), keeping the layout self-contained without
- * requiring explicit configuration in simple deployments.</p>
+ * If those keys are absent, both directories fall back to subdirectories of the
+ * application working directory ({@code user.dir}), keeping the layout
+ * self-contained without requiring explicit configuration in simple deployments.</p>
+ *
+ * <h2>Defensive copies</h2>
+ * <p>{@link #findAll()} returns a new {@link ArrayList} on every call — structural
+ * modifications to the returned list do not affect the internal map. Note: the
+ * {@link Vault} objects themselves are shared references — mutate via
+ * {@link #update(Vault)} to persist changes.</p>
  *
  * <h2>Constructor argument order</h2>
  * <p>Follows the project convention: {@link Properties} first, dependencies in
@@ -46,7 +52,7 @@ public class VaultService {
     private final Path conflictsRoot;
 
     /**
-     * Primary constructor — backup and conflict paths loaded from properties.
+     * Constructs the service. Does not load from disk — call {@link #load()} explicitly.
      *
      * <p>If {@code backup.path} or {@code conflicts.path} are absent from the
      * provided properties, both fall back to subdirectories of the application
@@ -90,6 +96,9 @@ public class VaultService {
     /**
      * Persists the current in-memory vault state to {@code vaults.json}.
      *
+     * <p>Called automatically by all mutating operations. Can be called explicitly
+     * if external mutations to {@link Vault} objects need to be flushed to disk.</p>
+     *
      * @throws IOException if the file cannot be written
      */
     public void save() throws IOException {
@@ -101,13 +110,14 @@ public class VaultService {
     /**
      * Creates a new vault with a generated UUID, registers it in memory, and persists.
      *
-     * @param name human-readable vault name
-     * @param path absolute path to the vault directory
+     * @param owner GitHub account that owns the remote repository
+     * @param name  human-readable vault name, also the remote repository name
+     * @param path  absolute path to the vault directory on the local filesystem
      * @return the created {@link Vault} with its generated id
      * @throws IOException if persistence fails
      */
-    public Vault create(String name, String path) throws IOException {
-        Vault vault = new Vault(UUID.randomUUID().toString(), name, path);
+    public Vault create(String owner, String name, String path) throws IOException {
+        Vault vault = new Vault(UUID.randomUUID().toString(), owner, name, path);
         vaults.put(vault.getId(), vault);
         save();
         return vault;
@@ -116,9 +126,11 @@ public class VaultService {
     /**
      * Updates an existing vault in memory and persists.
      *
-     * @param vault the vault to update — must not be {@code null},
-     *              and {@code vault.getId()} must not be {@code null}
-     * @throws IllegalArgumentException if {@code vault} or its id is {@code null}
+     * <p>The vault is identified by its {@code id} — both the vault and its id
+     * must not be {@code null}.</p>
+     *
+     * @param vault the vault to update
+     * @throws IllegalArgumentException if {@code vault} or {@code vault.getId()} is {@code null}
      * @throws IOException              if persistence fails
      */
     public void update(Vault vault) throws IOException {
@@ -148,6 +160,10 @@ public class VaultService {
     /**
      * Returns all registered vaults as a defensive copy.
      *
+     * <p>Structural modifications (add/remove) to the returned list do not affect
+     * the internal map. The {@link Vault} objects themselves are shared references —
+     * mutate via {@link #update(Vault)} to persist changes.</p>
+     *
      * @return a new list containing all registered vaults
      */
     public List<Vault> findAll() {
@@ -156,6 +172,8 @@ public class VaultService {
 
     /**
      * Returns the vault with the given UUID, or {@link Optional#empty()} if not found.
+     *
+     * <p>O(1) lookup via the internal {@link HashMap}.</p>
      *
      * @param id the UUID to look up
      * @return an {@link Optional} containing the vault, or empty if not registered
@@ -181,14 +199,21 @@ public class VaultService {
     /**
      * Creates a FIFO backup snapshot of the vault directory.
      *
+     * <h2>Sequence</h2>
+     * <ol>
+     *   <li>Create {@link #backupsRoot} if it does not exist.</li>
+     *   <li>Read active ignore patterns via {@link GitignoreService#forSnapshot(Path)}.</li>
+     *   <li>List existing snapshots for this vault — if {@code >= 3}, delete the oldest.</li>
+     *   <li>Walk the vault tree: skip directories whose relative path matches an ignore
+     *       pattern; copy files whose relative path matches no ignore pattern.</li>
+     * </ol>
+     *
      * <p>Snapshots are stored under {@link #backupsRoot} (configured via
      * {@code backup.path} or falling back to {@code user.dir/backups}).
-     * The snapshot directory is named {@code <vaultName>_<timestamp>}.</p>
+     * Each snapshot directory is named {@code <vaultName>_<timestamp>}.</p>
      *
-     * <p>At most 3 snapshots are kept — the oldest is deleted before creating a new one
-     * when the count reaches 3.</p>
-     *
-     * <p>Files and directories matching active gitignore patterns are excluded.</p>
+     * <p>Files and directories matching active gitignore patterns are excluded from
+     * the snapshot — negated patterns ({@code !}) are included.</p>
      *
      * @param vaultPath absolute path to the vault directory
      * @throws VaultException     if the snapshot cannot be created
@@ -247,8 +272,57 @@ public class VaultService {
         }
     }
 
+    // ── Conflicts ─────────────────────────────────────────────────────────────
+
+    /**
+     * Moves a conflict file from a temporary location into the conflicts root.
+     *
+     * <p>The destination path is:
+     * {@code conflictsRoot/<conflictDirName>/<filename>}</p>
+     *
+     * <h2>Flow</h2>
+     * <p>The caller ({@link io.aledep10.nomadsync.service.GitService}) writes the
+     * remote version of a conflicted file to a temp path via
+     * {@link io.aledep10.nomadsync.util.CommandUtil#runCommandToFile}, then delegates
+     * the move here. {@link Files#move} with {@link StandardCopyOption#REPLACE_EXISTING}
+     * is atomic on same-filesystem moves — no partial writes are visible to other
+     * threads during the operation.</p>
+     *
+     * <p>After a successful move, the source temp file no longer exists. The caller
+     * wraps the call in a {@code try/finally} with {@link Files#deleteIfExists} on
+     * {@code sourcePath} as a safety net in case this method throws before completing
+     * the move.</p>
+     *
+     * @param conflictDirName directory name for this conflict session,
+     *                        typically {@code <vaultName>_<timestamp>} — shared
+     *                        across all files belonging to the same synchronisation run
+     * @param filename        basename of the conflicted file (no path separators)
+     * @param sourcePath      temp file containing the remote version of the conflict
+     * @throws VaultException if the conflict directory cannot be created or the move fails
+     */
+    public void saveConflict(String conflictDirName, String filename, Path sourcePath)
+            throws VaultException {
+        try {
+            Path conflictDir = conflictsRoot.resolve(conflictDirName);
+            Files.createDirectories(conflictDir);
+            Files.move(sourcePath, conflictDir.resolve(filename),
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new VaultException("Could not save conflict: " + filename, e);
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /**
+     * Recursively deletes a directory and all its contents.
+     *
+     * <p>Files are deleted before their parent directories by sorting in reverse
+     * order — the OS refuses to delete a non-empty directory.</p>
+     *
+     * @param root the directory to delete
+     * @throws IOException if any file or directory cannot be deleted
+     */
     private void deleteRecursively(Path root) throws IOException {
         Files.walk(root)
                 .sorted(Comparator.reverseOrder())

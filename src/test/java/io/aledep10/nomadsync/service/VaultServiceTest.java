@@ -22,14 +22,15 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 /**
  * Unit tests for {@link VaultService}.
  *
- * <p>Each test class instance uses a shared {@link TestVault} created in
- * {@code @BeforeAll}. The vault directory is cleaned in {@code @AfterEach}
- * to guarantee filesystem isolation between tests.</p>
+ * <h2>Two vault creation patterns — why both?</h2>
+ * <p>{@code vaultService.create(owner, name, path)} tests the service end-to-end:
+ * the service generates the UUID, persists, and returns the domain object.
+ * This is the normal case for CRUD and query tests.</p>
  *
- * <p>{@link LogService} is shared across all tests — it carries no mutable
- * test state. {@link VaultService} is recreated in {@code @BeforeEach} with
- * a uniquely-named {@code vaults_<timestamp>.json} file to prevent cross-test
- * contamination on disk.</p>
+ * <p>{@code new Vault(UUID, owner, name, path)} + {@link JsonMapper#saveVaultsToFile}
+ * is used only in {@code load()} tests where the goal is to verify that the service
+ * correctly reads a file written by a previous session. Using {@code create()} there
+ * would bypass the very logic under test.</p>
  */
 class VaultServiceTest {
 
@@ -62,12 +63,16 @@ class VaultServiceTest {
     /**
      * Verifies that {@code load()} reads vaults written by {@link JsonMapper} and
      * makes them available via {@code findById()}.
+     *
+     * <p>Uses {@code new Vault(...)} + {@code saveVaultsToFile} to simulate a file
+     * written by a previous session — the goal is to test {@code load()}, not
+     * {@code create()}.</p>
      */
     @Test
     void load_existingFile_returnsVaults() throws IOException {
         List<Vault> seed = List.of(
-                new Vault(UUID.randomUUID().toString(), "vault-1", "/path/1"),
-                new Vault(UUID.randomUUID().toString(), "vault-2", "/path/2"));
+                new Vault(UUID.randomUUID().toString(), "AleDeP10", "vault-1", "/path/1"),
+                new Vault(UUID.randomUUID().toString(), "AleDeP10", "vault-2", "/path/2"));
         JsonMapper.saveVaultsToFile(vaultService.vaultFile, seed);
 
         vaultService.load();
@@ -97,12 +102,12 @@ class VaultServiceTest {
      */
     @Test
     void load_replacesExistingInMemoryState() throws IOException {
-        vaultService.create("old-vault", "/old/path");
+        vaultService.create("AleDeP10", "old-vault", "/old/path");
         assertThat(vaultService.findAll().size()).isEqualTo(1);
 
         List<Vault> diskState = List.of(
-                new Vault(UUID.randomUUID().toString(), "new-vault-1", "/new/path/1"),
-                new Vault(UUID.randomUUID().toString(), "new-vault-2", "/new/path/2"));
+                new Vault(UUID.randomUUID().toString(), "AleDeP10", "new-vault-1", "/new/path/1"),
+                new Vault(UUID.randomUUID().toString(), "AleDeP10", "new-vault-2", "/new/path/2"));
         JsonMapper.saveVaultsToFile(vaultService.vaultFile, diskState);
 
         vaultService.load();
@@ -115,40 +120,28 @@ class VaultServiceTest {
 
     // ── create() ──────────────────────────────────────────────────────────────
 
-    /**
-     * Verifies that {@code create()} adds the vault to the in-memory map and
-     * immediately persists it — the file must exist after the call.
-     */
     @Test
     void create_addsVaultAndPersists() throws IOException {
-        Vault vault = vaultService.create("vault-create", "/some/path");
+        Vault vault = vaultService.create("AleDeP10", "vault-create", "/some/path");
 
         assertThat(vaultService.findAll().size()).isEqualTo(1);
         assertThat(vaultService.findById(vault.getId())).isPresent();
         assertThat(vaultService.vaultFile.exists()).isTrue();
     }
 
-    /**
-     * Verifies that two {@code create()} calls for vaults with the same name produce
-     * two distinct entries — IDs are generated independently via {@link UUID#randomUUID()}.
-     */
     @Test
     void create_generatesUniqueIds() throws IOException {
-        vaultService.create("duplicate-name", "/path/a");
-        vaultService.create("duplicate-name", "/path/b");
+        vaultService.create("AleDeP10", "duplicate-name", "/path/a");
+        vaultService.create("AleDeP10", "duplicate-name", "/path/b");
 
         List<Vault> all = vaultService.findAll();
         assertThat(all.size()).isEqualTo(2);
         assertThat(all.get(0).getId()).isNotEqualTo(all.get(1).getId());
     }
 
-    /**
-     * Verifies that the vault file written by {@code create()} can be read back by
-     * {@link JsonMapper} and contains the created vault.
-     */
     @Test
     void create_persistsToFile_vaultFileContainsCreatedVault() throws IOException {
-        vaultService.create("persisted-vault", "/persisted/path");
+        vaultService.create("AleDeP10", "persisted-vault", "/persisted/path");
 
         List<Vault> onDisk = JsonMapper.loadVaultsFromFile(vaultService.vaultFile);
         assertThat(onDisk.stream().anyMatch(v -> v.getName().equals("persisted-vault"))).isTrue();
@@ -156,13 +149,9 @@ class VaultServiceTest {
 
     // ── update() ──────────────────────────────────────────────────────────────
 
-    /**
-     * Verifies that {@code update()} replaces the in-memory entry and persists — the
-     * old name disappears and the new name is present.
-     */
     @Test
     void update_existingVault_persistsChanges() throws IOException {
-        Vault vault = vaultService.create("original-name", "/some/path");
+        Vault vault = vaultService.create("AleDeP10", "original-name", "/some/path");
         vault.setName("updated-name");
 
         vaultService.update(vault);
@@ -171,13 +160,9 @@ class VaultServiceTest {
         assertThat(vaultService.findByName("original-name")).isNotPresent();
     }
 
-    /**
-     * Verifies that {@code update()} throws {@link IllegalArgumentException}
-     * when the vault id is {@code null}.
-     */
     @Test
     void update_nullId_throwsIllegalArgumentException() {
-        Vault vault = new Vault(null, "no-id", "/some/path");
+        Vault vault = new Vault(null, "AleDeP10", "no-id", "/some/path");
 
         assertThatThrownBy(() -> vaultService.update(vault))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -185,13 +170,9 @@ class VaultServiceTest {
 
     // ── delete() ──────────────────────────────────────────────────────────────
 
-    /**
-     * Verifies that {@code delete()} removes the vault from memory and from the
-     * persisted file.
-     */
     @Test
     void delete_existingVault_removesAndPersists() throws IOException {
-        Vault vault = vaultService.create("to-delete", "/delete/path");
+        Vault vault = vaultService.create("AleDeP10", "to-delete", "/delete/path");
 
         vaultService.delete(vault.getId());
 
@@ -200,9 +181,6 @@ class VaultServiceTest {
         assertThat(onDisk.stream().noneMatch(v -> v.getName().equals("to-delete"))).isTrue();
     }
 
-    /**
-     * Verifies that {@code delete(null)} throws {@link IllegalArgumentException}.
-     */
     @Test
     void delete_nullId_throwsIllegalArgumentException() {
         assertThatThrownBy(() -> vaultService.delete(null))
@@ -211,22 +189,15 @@ class VaultServiceTest {
 
     // ── findAll() ─────────────────────────────────────────────────────────────
 
-    /**
-     * Verifies that a freshly constructed service returns an empty list.
-     */
     @Test
     void findAll_emptyService_returnsEmptyList() {
         assertThat(vaultService.findAll().size()).isEqualTo(0);
     }
 
-    /**
-     * Verifies that {@code findAll()} returns a defensive copy — structural
-     * modifications to the returned list do not affect the internal map.
-     */
     @Test
     void findAll_returnsDefensiveCopy() throws IOException {
-        vaultService.create("vault-a", "/path/a");
-        vaultService.create("vault-b", "/path/b");
+        vaultService.create("AleDeP10", "vault-a", "/path/a");
+        vaultService.create("AleDeP10", "vault-b", "/path/b");
 
         List<Vault> copy = vaultService.findAll();
         copy.clear();
@@ -236,12 +207,9 @@ class VaultServiceTest {
 
     // ── findById() / findByName() ─────────────────────────────────────────────
 
-    /**
-     * Verifies that {@code findById()} returns the vault for a known id.
-     */
     @Test
     void findById_existingId_returnsVault() throws IOException {
-        Vault vault = vaultService.create("findme-by-id", "/path/findme");
+        Vault vault = vaultService.create("AleDeP10", "findme-by-id", "/path/findme");
 
         Optional<Vault> found = vaultService.findById(vault.getId());
 
@@ -249,20 +217,14 @@ class VaultServiceTest {
         assertThat(found.get().getName()).isEqualTo("findme-by-id");
     }
 
-    /**
-     * Verifies that {@code findById()} returns empty for an unknown id.
-     */
     @Test
     void findById_unknownId_returnsEmpty() {
         assertThat(vaultService.findById("non-existent-id")).isNotPresent();
     }
 
-    /**
-     * Verifies that {@code findByName()} returns the vault for a known name.
-     */
     @Test
     void findByName_existingName_returnsVault() throws IOException {
-        Vault vault = vaultService.create("findme-by-name", "/path/findme");
+        Vault vault = vaultService.create("AleDeP10", "findme-by-name", "/path/findme");
 
         Optional<Vault> found = vaultService.findByName("findme-by-name");
 

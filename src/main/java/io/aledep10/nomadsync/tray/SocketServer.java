@@ -3,7 +3,6 @@ package io.aledep10.nomadsync.tray;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.orchestrator.*;
-import io.aledep10.nomadsync.orchestrator.*;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.JsonMapper;
@@ -92,8 +91,8 @@ public class SocketServer {
         this.vaults           = new HashMap<>();
         this.scheduler        = Executors.newScheduledThreadPool(5);
         this.serverSocket     = new ServerSocket(port);
-        this.receiver         = new Thread(this::doReceive,  "obsidiansync-receiver");
-        this.router           = new Thread(this::doRedirect, "obsidiansync-router");
+        this.receiver         = new Thread(this::doReceive,  "nomadsync-receiver");
+        this.router           = new Thread(this::doRedirect, "nomadsync-router");
     }
 
     // ── Thread loops ──────────────────────────────────────────────────────────
@@ -183,8 +182,8 @@ public class SocketServer {
             return;
         }
         logService.info("Event %s routed to vault %s [%s]"
-                .formatted(event, ctx.getVault().getName(), ctx.getVault().getId()));
-        ctx.getQueue().publish(event);
+                .formatted(event, ctx.vault().getName(), ctx.vault().getId()));
+        ctx.queue().publish(event);
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -211,7 +210,7 @@ public class SocketServer {
      */
     public void stop() {
         vaults.values().stream()
-                .map(VaultContext::getAggregatorFuture)
+                .map(VaultContext::aggregatorFuture)
                 .forEach(f -> f.cancel(true));
         receiver.interrupt();
         router.interrupt();

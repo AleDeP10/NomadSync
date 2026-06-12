@@ -63,7 +63,7 @@ public class SyncOrchestrator {
                     break;
                 }
             }
-        }, "obsidiansync-worker");
+        }, "nomadsync-worker");
     }
 
     /**

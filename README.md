@@ -1,8 +1,8 @@
-# ObsidianSync
+# NomadSync
 
 A lightweight Java tool that keeps one or more Obsidian vaults in sync across multiple Windows machines using Git and GitHub — no subscription required.
 
-ObsidianSync runs silently in the background as a system tray icon. It pulls the latest vault state at logon, commits local changes periodically, pushes at logoff, and lets you trigger a manual push with a single click. Multiple vaults are supported, each backed by its own private GitHub repository.
+NomadSync runs silently in the background as a system tray icon. It pulls the latest vault state at logon, commits local changes periodically, pushes at logoff, and lets you trigger a manual push with a single click. Multiple vaults are supported, each backed by its own private GitHub repository.
 
 ---
 
@@ -78,9 +78,9 @@ Three tasks must be registered in Windows Task Scheduler (`taskschd.msc`):
 
 | Task name | Trigger | Action |
 |---|---|---|
-| `ObsidianSync-Tray` | At log on | `java -jar path\to\ObsidianSync.jar tray` |
-| `ObsidianSync-Logon` | At log on (delay 30s) | `java -jar path\to\ObsidianSync.jar logon` |
-| `ObsidianSync-Logoff` | At log off | `java -jar path\to\ObsidianSync.jar logoff` |
+| `NomadSync-Tray` | At log on | `java -jar path\to\NomadSync.jar tray` |
+| `NomadSync-Logon` | At log on (delay 30s) | `java -jar path\to\NomadSync.jar logon` |
+| `NomadSync-Logoff` | At log off | `java -jar path\to\NomadSync.jar logoff` |
 
 The autosave task is managed internally by the tray process and does not require a separate Task Scheduler entry.
 
