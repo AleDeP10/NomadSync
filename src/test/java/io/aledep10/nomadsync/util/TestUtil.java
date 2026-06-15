@@ -151,7 +151,7 @@ public final class TestUtil {
     public static Properties forVaultService(TestVault vault) throws IOException {
         Files.createDirectories(vault.rootPath()); // ← garantisce che la root esista
         Properties properties = new Properties();
-        properties.setProperty("vaults.file",
+        properties.setProperty("path.vaults",
                 vault.rootPath().resolve("vaults_" + vault.timestamp() + ".json").toString());
         return properties;
     }

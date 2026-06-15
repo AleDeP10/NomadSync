@@ -54,7 +54,7 @@ public final class JsonMapper {
     public static List<Vault> loadVaultsFromFile(File file) throws IOException {
         if (!file.exists()) return List.of();
         VaultRootDto root = MAPPER.readValue(file, VaultRootDto.class);
-        return root.getVaults().stream().map(VaultDto::toDomain).toList();
+        return root.vaults().stream().map(VaultDto::toDomain).toList();
     }
 
     /**

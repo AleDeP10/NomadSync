@@ -12,29 +12,28 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * Levelled, append-only logging service with fan-out to multiple {@link LogWriter} targets.
  *
  * <h2>Writer configuration</h2>
- * <p>Writers are built from {@code log.writers} in the application properties
+ * <p>Writers are built from the {@code log.writers} property
  * (comma-separated, default {@code "console,file"}). Supported tokens:</p>
  * <ul>
  *   <li>{@code console} — writes to stdout/stderr via {@link ConsoleLogWriter}</li>
  *   <li>{@code file}    — appends to {@code log.path} via {@link FileLogWriter};
  *       skipped with a warning if {@code log.path} is absent</li>
  *   <li>{@code seq}     — ships CLEF events to Seq via {@link SeqHttpLogWriter};
- *       skipped with a warning if {@code seq.url} is absent</li>
+ *       skipped with a warning if {@code log.seq.url} is absent</li>
  * </ul>
  *
  * <h2>Vault scoping</h2>
- * <p>Each log entry carries a {@code repoSlug} ({@code <owner>/<name>}) that
- * identifies which vault generated the event. The system-level instance uses
- * {@code "SYSTEM"} as the slug. Per-vault instances are obtained via
- * {@link #withVault(String)} — they share the same underlying writers and
- * only differ in the slug written to each line.</p>
+ * <p>Each log entry carries a {@code repoSlug} ({@code <owner>/<name>}) identifying
+ * the vault that generated the event. The system-level instance uses {@code "SYSTEM"}.
+ * Per-vault instances are obtained via {@link #withVault(String)} — they share the
+ * same underlying writers and only differ in the slug written to each line.</p>
  *
  * <h2>Threading</h2>
  * <p>Thread safety is delegated to each {@link LogWriter} implementation:
@@ -45,11 +44,6 @@ import java.util.TreeSet;
  * <p>{@link #close()} must be called at shutdown (typically from the JVM shutdown
  * hook in {@code Main}) to flush and release resources held by writers such as
  * {@link SeqHttpLogWriter}.</p>
- *
- * <h2>Constructor argument order</h2>
- * <p>Follows the project convention: {@link Properties} first, {@link LogService}
- * last — but since this class IS the log service, it takes no {@code LogService}
- * dependency.</p>
  */
 public class LogService {
 
@@ -63,11 +57,11 @@ public class LogService {
     /**
      * Constructs a system-level {@code LogService} with {@code repoSlug = "SYSTEM"}.
      *
-     * <p>Writers are built from the {@code log.writers} property. Use this constructor
-     * at boot, before any vault is loaded.</p>
+     * <p>Writers are built from {@code log.writers}. Use this constructor at boot,
+     * before any vault is loaded.</p>
      *
-     * @param properties application properties containing at minimum {@code log.level}
-     *                   and {@code log.writers}
+     * @param properties application properties containing at minimum
+     *                   {@code log.level} and {@code log.writers}
      */
     public LogService(Properties properties) {
         this(properties, buildWriters(properties), "SYSTEM");
@@ -76,9 +70,9 @@ public class LogService {
     /**
      * Constructs a vault-scoped {@code LogService} with the given {@code repoSlug}.
      *
-     * <p>Writers are built fresh from properties — use {@link #withVault(String)}
-     * instead when you want to reuse existing writers without reopening files or
-     * reconnecting to Seq.</p>
+     * <p>Writers are built fresh from properties. Prefer {@link #withVault(String)}
+     * when deriving a per-vault instance from an existing one — it reuses writers
+     * without reopening files or reconnecting to Seq.</p>
      *
      * @param properties application properties
      * @param repoSlug   vault identifier in {@code <owner>/<name>} form,
@@ -122,7 +116,7 @@ public class LogService {
         return new LogService(this.properties, this.writers, repoSlug);
     }
 
-    // ── API pubblica ──────────────────────────────────────────────────────────
+    // ── API ───────────────────────────────────────────────────────────────────
 
     public void debug(String message)                  { log(LogLevel.DEBUG, message, null);  }
     public void debug(String message, Throwable cause) { log(LogLevel.DEBUG, message, cause); }
@@ -160,14 +154,14 @@ public class LogService {
      * property.
      *
      * <p>Tokens are parsed in alphabetical order (via {@link TreeSet}) to ensure
-     * deterministic writer order across runs. Unknown tokens and missing required
-     * properties are reported to {@code stderr} and skipped — the service starts
-     * even if some writers cannot be initialised.</p>
+     * deterministic writer initialisation across runs. Unknown tokens and missing
+     * required properties ({@code log.path}, {@code log.seq.url}) are reported to
+     * {@code stderr} and skipped — the service starts even if some writers cannot
+     * be initialised.</p>
      *
-     * <p>{@code InMemoryLogWriter} is intentionally absent from the switch —
-     * it is not a user-configurable writer but an in-process tool used by code
-     * that needs to inspect log output (e.g. future tray UI buffering). It is
-     * instantiated directly where needed, never via properties.</p>
+     * <p>{@code InMemoryLogWriter} is intentionally absent — it is not a
+     * user-configurable writer but an in-process tool instantiated directly by
+     * code that needs to inspect log output at runtime (e.g. tray UI buffering).</p>
      *
      * @param properties application properties
      * @return mutable list of initialised writers
@@ -191,12 +185,12 @@ public class LogService {
                     }
                 }
                 case "seq" -> {
-                    if (properties.containsKey("seq.url")) {
+                    if (properties.containsKey("log.seq.url")) {
                         result.add(new SeqHttpLogWriter(
-                                properties.getProperty("seq.url"),
+                                properties.getProperty("log.seq.url"),
                                 properties.getProperty("seq.apiKey", "")));
                     } else {
-                        System.err.println("[LogService] seq.url missing — seq writer skipped");
+                        System.err.println("[LogService] log.seq.url missing — seq writer skipped");
                     }
                 }
                 default -> System.err.println("[LogService] unknown writer: " + token);

@@ -1,27 +1,57 @@
-# ── Environment ──────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
+# NomadSync — configuration template
+#
+# Copy this file to config.dev.properties or config.prod.properties,
+# fill in your values, and keep it out of version control (.gitignore).
+# ────────────────────────────────────────────────────────────────────────────
+
+# ── Environment ──────────────────────────────────────────────────────────────
 env=dev
 
-# ── Paths ────────────────────────────────────────────────
-vaults.file=vaults.json
+# ── Vault registry ───────────────────────────────────────────────────────────
+# Path to the JSON file listing all registered vaults.
+# Relative paths are resolved from the working directory at runtime.
+path.vaults=vaults.json
 
-# ── Git ──────────────────────────────────────────────────
+# ── Git ──────────────────────────────────────────────────────────────────────
+# Full path to the git executable.
+# On Windows use forward slashes or escape backslashes.
 git.executable=C:/Program Files/Git/bin/git.exe
 git.remote=origin
 git.branch=main
 
-# GitHub credentials
-git.name=YOURREALNAME
-git.email=YOUREMAIL
-git.username=YOURUSERNAME
-git.token=ghp_YOURDEVTOKENHERE
+# Global Git identity — used for commits when a vault does not override these.
+# Per-vault credentials are configured in vaults.json.
+git.name=YOUR_REAL_NAME
+git.email=YOUR_EMAIL
+git.username=YOUR_GITHUB_USERNAME
+git.token=ghp_YOUR_DEV_TOKEN_HERE
 
-# ── Socket ───────────────────────────────────────────────
+# ── Socket ────────────────────────────────────────────────────────────────────
+# Retry delay in milliseconds for SocketClient reconnection attempts.
 socket.retryDelay=30000
 
-# ── Autosave ─────────────────────────────────────────────
-# Interval in minutes between differential autosave checks
+# ── Autosave ──────────────────────────────────────────────────────────────────
+# Interval in minutes between differential autosave commits.
 autosave.interval.minutes=15
 
-# ── Logging ──────────────────────────────────────────────
+# ── Snapshot & conflicts ──────────────────────────────────────────────────────
+# Directories where FIFO backups and remote conflict files are stored.
+# If absent, both fall back to <user.dir>/backups and <user.dir>/remote-conflicts.
+# path.backup=C:/Users/YOURUSER/vaults/backups
+# path.conflicts=C:/Users/YOURUSER/vaults/remote-conflicts
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Comma-separated list of active writers: console, file, seq
+# Default if absent: console,file
+log.writers=console,file
+
+# Required when log.writers includes "file"
 log.path=C:/Users/YOURUSER/IdeaProjects/NomadSync/logs/nomadsync.log
+
+# Minimum log level: DEBUG, INFO, WARN, ERROR
 log.level=DEBUG
+
+# Required when log.writers includes "seq"
+# log.seq.url=http://localhost:5341
+# seq.apiKey=YOUR_SEQ_API_KEY

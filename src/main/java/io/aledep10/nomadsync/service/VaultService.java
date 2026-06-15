@@ -23,10 +23,18 @@ import java.util.stream.Stream;
  *
  * <h2>Snapshot paths</h2>
  * <p>Backup and conflict directories can be configured explicitly via
- * {@code backup.path} and {@code conflicts.path} in the application properties.
+ * {@code path.backup} and {@code path.conflicts} in the application properties.
  * If those keys are absent, both directories fall back to subdirectories of the
  * application working directory ({@code user.dir}), keeping the layout
  * self-contained without requiring explicit configuration in simple deployments.</p>
+ *
+ * <h2>Vault name uniqueness</h2>
+ * <p>Vault {@code name} must be unique across all registered vaults — it determines
+ * the {@code backups/<name>_<timestamp>/} and {@code remote-conflicts/<name>_<timestamp>/}
+ * directory names. Two vaults sharing a {@code name} (even under different {@code owner}s)
+ * would silently collide on the same snapshot/conflict directories. {@link #load()},
+ * {@link #create(String, String, String)} and {@link #update(Vault)} all enforce this
+ * constraint by throwing {@link VaultException}.</p>
  *
  * <h2>Defensive copies</h2>
  * <p>{@link #findAll()} returns a new {@link ArrayList} on every call — structural
@@ -54,25 +62,25 @@ public class VaultService {
     /**
      * Constructs the service. Does not load from disk — call {@link #load()} explicitly.
      *
-     * <p>If {@code backup.path} or {@code conflicts.path} are absent from the
+     * <p>If {@code path.backup} or {@code path.conflicts} are absent from the
      * provided properties, both fall back to subdirectories of the application
      * working directory ({@code user.dir}).</p>
      *
-     * @param properties       application properties containing {@code vaults.file}
-     *                         and optionally {@code backup.path}, {@code conflicts.path}
+     * @param properties       application properties containing {@code path.vaults}
+     *                         and optionally {@code path.backup}, {@code path.conflicts}
      * @param gitignoreService used to read active ignore patterns during snapshot creation
      * @param logService       shared logging service
      */
     public VaultService(Properties properties,
                         GitignoreService gitignoreService,
                         LogService logService) {
-        this.vaultFile        = new File(properties.getProperty("vaults.file"));
+        this.vaultFile        = new File(properties.getProperty("path.vaults"));
         this.gitignoreService = gitignoreService;
         this.logService       = logService;
         this.backupsRoot      = Path.of(properties.getProperty(
-                "backup.path", FALLBACK_ROOT + "/backups"));
+                "path.backup", FALLBACK_ROOT + "/backups"));
         this.conflictsRoot    = Path.of(properties.getProperty(
-                "conflicts.path", FALLBACK_ROOT + "/remote-conflicts"));
+                "path.conflicts", FALLBACK_ROOT + "/remote-conflicts"));
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -84,10 +92,12 @@ public class VaultService {
      * is returned — no exception is thrown.</p>
      *
      * @return the list of loaded vaults
-     * @throws IOException if the file exists but cannot be read or parsed
+     * @throws IOException    if the file exists but cannot be read or parsed
+     * @throws VaultException if two or more vaults share the same {@code name}
      */
-    public List<Vault> load() throws IOException {
+    public List<Vault> load() throws IOException, VaultException {
         List<Vault> loaded = JsonMapper.loadVaultsFromFile(vaultFile);
+        validateUniqueNames(loaded);
         vaults.clear();
         loaded.forEach(v -> vaults.put(v.getId(), v));
         return new ArrayList<>(vaults.values());
@@ -111,12 +121,17 @@ public class VaultService {
      * Creates a new vault with a generated UUID, registers it in memory, and persists.
      *
      * @param owner GitHub account that owns the remote repository
-     * @param name  human-readable vault name, also the remote repository name
+     * @param name  human-readable vault name, also the remote repository name —
+     *              must be unique across all registered vaults
      * @param path  absolute path to the vault directory on the local filesystem
      * @return the created {@link Vault} with its generated id
-     * @throws IOException if persistence fails
+     * @throws VaultException if a vault with the same {@code name} already exists
+     * @throws IOException    if persistence fails
      */
-    public Vault create(String owner, String name, String path) throws IOException {
+    public Vault create(String owner, String name, String path) throws IOException, VaultException {
+        if (findByName(name).isPresent()) {
+            throw new VaultException("duplicated vault name: " + name);
+        }
         Vault vault = new Vault(UUID.randomUUID().toString(), owner, name, path);
         vaults.put(vault.getId(), vault);
         save();
@@ -127,15 +142,23 @@ public class VaultService {
      * Updates an existing vault in memory and persists.
      *
      * <p>The vault is identified by its {@code id} — both the vault and its id
-     * must not be {@code null}.</p>
+     * must not be {@code null}. If {@code vault.getName()} is being changed to a
+     * name already used by a <em>different</em> vault, the update is rejected.</p>
      *
      * @param vault the vault to update
      * @throws IllegalArgumentException if {@code vault} or {@code vault.getId()} is {@code null}
+     * @throws VaultException           if {@code vault.getName()} collides with a different vault's name
      * @throws IOException              if persistence fails
      */
-    public void update(Vault vault) throws IOException {
+    public void update(Vault vault) throws IOException, VaultException {
         ValidationUtil.requireNonNull(vault, "vault");
         ValidationUtil.requireNonNull(vault.getId(), "vault.id");
+
+        Optional<Vault> existing = findByName(vault.getName());
+        if (existing.isPresent() && !existing.get().getId().equals(vault.getId())) {
+            throw new VaultException("duplicated vault name: " + vault.getName());
+        }
+
         vaults.put(vault.getId(), vault);
         save();
     }
@@ -209,7 +232,7 @@ public class VaultService {
      * </ol>
      *
      * <p>Snapshots are stored under {@link #backupsRoot} (configured via
-     * {@code backup.path} or falling back to {@code user.dir/backups}).
+     * {@code path.backup} or falling back to {@code user.dir/backups}).
      * Each snapshot directory is named {@code <vaultName>_<timestamp>}.</p>
      *
      * <p>Files and directories matching active gitignore patterns are excluded from
@@ -328,5 +351,25 @@ public class VaultService {
                 .sorted(Comparator.reverseOrder())
                 .map(Path::toFile)
                 .forEach(File::delete);
+    }
+
+    /**
+     * Validates that no two vaults in the given list share the same {@code name}.
+     *
+     * <p>Vault names are used to derive {@code backups/<name>_<timestamp>/} and
+     * {@code remote-conflicts/<name>_<timestamp>/} directory names. Two vaults with
+     * the same {@code name} — even under different {@code owner}s — would collide
+     * on the same snapshot/conflict directories, silently mixing their contents.</p>
+     *
+     * @param loaded vaults freshly deserialised from {@code vaults.json}
+     * @throws VaultException if any name appears more than once
+     */
+    private void validateUniqueNames(List<Vault> loaded) throws VaultException {
+        Set<String> seen = new HashSet<>();
+        for (Vault vault : loaded) {
+            if (!seen.add(vault.getName())) {
+                throw new VaultException("duplicated vault name in vaults.json: " + vault.getName());
+            }
+        }
     }
 }

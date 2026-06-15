@@ -17,6 +17,12 @@
       "owner": "AleDeP10",
       "name":  "nomad-test-vault",
       "path":  "C:\\Users\\aless\\vaults\\nomad-test"
+    },
+    {
+      "id":    "A768-6CF3-10B-0003",
+      "owner": "Belmani",
+      "name":  "belmani-apex",
+      "path":  "C:\\Users\\aless\\vaults\\belmani-apex"
     }
   ]
 }

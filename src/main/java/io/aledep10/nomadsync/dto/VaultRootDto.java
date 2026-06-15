@@ -2,6 +2,7 @@ package io.aledep10.nomadsync.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.aledep10.nomadsync.util.JsonMapper;
 
 import java.util.List;
 
@@ -10,7 +11,7 @@ import java.util.List;
  *
  * <p>Maps the top-level structure {@code { "vaults": [...] }} to a list of
  * {@link VaultDto} entries. Used exclusively by
- * {@link io.aledep10.nomadsync.util.JsonMapper} for load and save operations.</p>
+ * {@link JsonMapper} for load and save operations.</p>
  *
  * <h2>File structure</h2>
  * <pre>{@code
@@ -22,9 +23,7 @@ import java.util.List;
  * }
  * }</pre>
  */
-public class VaultRootDto {
-
-    private final List<VaultDto> vaults;
+public record VaultRootDto(List<VaultDto> vaults) {
 
     /**
      * Jackson deserialisation constructor.
@@ -36,6 +35,11 @@ public class VaultRootDto {
         this.vaults = vaults;
     }
 
-    /** Returns the list of vault DTOs. */
-    public List<VaultDto> getVaults() { return vaults; }
+    /**
+     * Returns the list of vault DTOs.
+     */
+    @Override
+    public List<VaultDto> vaults() {
+        return vaults;
+    }
 }

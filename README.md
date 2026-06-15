@@ -1,31 +1,39 @@
 # NomadSync
 
-A lightweight Java tool that keeps one or more Obsidian vaults in sync across multiple Windows machines using Git and GitHub — no subscription required.
+A lightweight, cross-platform Java tool that keeps one or more folders in sync
+across multiple machines using Git and GitHub — no subscription required.
 
-NomadSync runs silently in the background as a system tray icon. It pulls the latest vault state at logon, commits local changes periodically, pushes at logoff, and lets you trigger a manual push with a single click. Multiple vaults are supported, each backed by its own private GitHub repository.
+NomadSync has no dependency on any specific application: any folder backed by
+a private Git repository — notes, configuration, projects, dotfiles, or vaults
+from tools like Obsidian, Logseq, or similar — can be managed the same way. It
+runs as a background process, optionally with a system tray icon, and
+supports multiple independent folders ("vaults"), each mapped to its own
+GitHub repository and, optionally, its own owner and credentials.
 
 ---
 
 ## Features
 
-- **Automatic pull at logon** — the vault is always up to date when you start working
-- **Periodic autosave** — local commits every 15 minutes, no network dependency
-- **Automatic push at logoff** — changes are pushed to GitHub when the session ends
-- **Manual push on demand** — left-click the tray icon to push the current vault at any time
-- **Multi-vault support** — manage multiple vaults from the same tray icon, each mapped to its own repository
-- **Vault switcher** — right-click the tray icon to switch the active vault; optionally push immediately on selection
-- **Conflict resolution** — remote always wins on pull; every overwrite is traceable in the git log
-- **Exponential backoff retry** — network failures are retried automatically (30s → 60s → 120s) before giving up
-- **Zero cloud subscription** — uses a free private GitHub repository instead of Obsidian Sync (~€4/month)
+- **Automatic pull at logon** — every vault is up to date before you start working
+- **Periodic autosave** — local commits at a configurable interval, no network dependency
+- **Automatic push at logoff** — local changes are pushed to GitHub when the session ends
+- **One-shot synchronize** — pull, resolve, and push in a single operation, with automatic conflict handling
+- **Multi-vault support** — manage any number of folders from a single process, each backed by its own repository and (optionally) its own GitHub account
+- **Broadcast and targeted operations** — synchronize a single vault or all registered vaults at once
+- **Conflict resolution with safety net** — on divergence, your local version is kept (`-X ours`); the remote version and a full pre-conflict snapshot are saved for manual review, never silently discarded
+- **FIFO backups** — the last 3 pre-conflict snapshots per vault are retained automatically
+- **Exponential backoff retry** — network failures are retried automatically (30s → 60s → 120s) before giving up, with notification on final failure
+- **Structured logging** — console, file, and optional [Seq](https://datalust.co/seq) structured log server, all vault-tagged for multi-vault observability
+- **Zero cloud subscription** — uses a free private GitHub repository per vault instead of paid sync services
 
 ---
 
 ## Requirements
 
-- Java 11 or later
-- Git installed and available on `PATH`
+- Java 21 or later
+- Git, available on `PATH` (or configured explicitly via `git.executable`)
 - A GitHub account with a private repository per vault
-- Windows 10 or Windows 11
+- Windows, macOS, or Linux
 
 ---
 
@@ -33,13 +41,17 @@ NomadSync runs silently in the background as a system tray icon. It pulls the la
 
 1. Clone or download this repository
 2. Copy `config.properties.template` to `config.properties` and fill in your settings
-3. Copy `vaults.json.template` to `vaults.json` and configure your vaults
+3. Copy `vaults.json.template` to `vaults.json` and register your vaults
 4. Build the fat JAR:
+
    ```
    mvn package
    ```
-5. Register the three Task Scheduler tasks (see [Task Scheduler Setup](#task-scheduler-setup))
-6. Start the tray manually once to verify, then let Task Scheduler handle it at every logon
+
+5. Copy the contents of `target/` to a dedicated folder (e.g. `~/Tools/NomadSync`)
+6. Run a manual `pull` once to verify your configuration, then register the
+   scheduled tasks for your platform (Windows Task Scheduler, macOS
+   `launchd`, or Linux `cron`/`systemd`)
 
 ---
 
@@ -48,9 +60,39 @@ NomadSync runs silently in the background as a system tray icon. It pulls the la
 ### config.properties
 
 ```properties
-socket.port=4242
-log.path=logs/obsidian-sync.log
+# -- Paths --------------------------------------------------
+path.vaults=./vaults.json
+path.backup=./backup
+path.conflicts=./remote_conflicts
+
+# -- Git ------------------------------------------------------
+git.executable=git
+git.remote=origin
+git.branch=main
+git.name=Your Name
+git.email=you@example.com
+git.username=your-github-username
+git.token=ghp_...
+
+# -- Autosave ---------------------------------------------------
+autosave.interval.minutes=15
+
+# -- Logging ----------------------------------------------------
+log.writers=console,file,seq
+log.path=logs/nomadsync.log
+log.level=INFO
+log.seq.url=http://localhost:5341
 ```
+
+`git.executable=git` resolves via `PATH` on Windows, macOS, and Linux. Override
+with an absolute path only if Git is not on `PATH` (e.g.
+`C:/Program Files/Git/bin/git.exe`).
+
+`log.writers` accepts any combination of `console`, `file`, `seq`
+(comma-separated). The `seq` writer ships structured, vault-tagged events to a
+[Seq](https://datalust.co/seq) server — useful for observing multiple vaults
+in real time. If `seq` is configured but unreachable, NomadSync continues
+normally; events are simply dropped.
 
 ### vaults.json
 
@@ -58,33 +100,63 @@ log.path=logs/obsidian-sync.log
 {
   "vaults": [
     {
-      "id": "personal",
-      "label": "Personal",
-      "path": "C:/vaults/personal",
-      "remote": "https://github.com/youruser/personal-vault",
-      "token": "ghp_..."
+      "id":    "A768-6CF3-10B-0000",
+      "owner": "your-github-username",
+      "name":  "personal-vault",
+      "path":  "/path/to/your/vault"
     }
   ]
 }
 ```
 
-Add one entry per vault. Each vault must already be a git repository with the remote configured.
+Add one entry per vault. Each `path` must already be a Git repository with its
+remote configured. `name` must be unique across all registered vaults — it is
+used to name backup and conflict directories
+(`backup/<name>_<timestamp>/`, `remote_conflicts/<name>_<timestamp>/`), and a
+duplicate will be rejected at load time.
+
+Optional per-vault fields `gitName`, `gitEmail`, `gitUsername`, `gitToken`
+allow overriding global Git credentials for a specific vault — useful when a
+vault belongs to a different GitHub account than your default.
 
 ---
 
-## Task Scheduler Setup
+## Usage
 
-Three tasks must be registered in Windows Task Scheduler (`taskschd.msc`):
+NomadSync is a single executable invoked with an operation and a config file:
 
-| Task name | Trigger | Action |
-|---|---|---|
-| `NomadSync-Tray` | At log on | `java -jar path\to\NomadSync.jar tray` |
-| `NomadSync-Logon` | At log on (delay 30s) | `java -jar path\to\NomadSync.jar logon` |
-| `NomadSync-Logoff` | At log off | `java -jar path\to\NomadSync.jar logoff` |
+```
+java -jar NomadSync.jar <pull|push|sync|autosave> config.properties [vaultId]
+```
 
-The autosave task is managed internally by the tray process and does not require a separate Task Scheduler entry.
+`vaultId` is optional. For `pull`, `push`, and `sync` it scopes the operation
+to a single vault — if omitted, `pull`/`push` default to the first registered
+vault, and `sync` broadcasts to **all** vaults. `autosave` always broadcasts
+and ignores `vaultId`.
 
-All tasks should run under the current user account. The logoff task must be configured with "Run whether user is logged on or not" disabled and "Wait for task to complete" enabled.
+### Command-line shortcuts
+
+For day-to-day use, a set of platform scripts (`.bat` on Windows, `.sh` on
+macOS/Linux) wrap the most common operations — one per event type, each
+calling the shared dispatcher script with the right arguments:
+
+| Script | Operation | Effect | Typical use |
+|---|---|---|---|
+| `NomadSync.bat`/`.sh <op> [config] [vaultId]` | dispatcher | any operation | scripting, Task Scheduler/cron entries |
+| `NomadSyncPull.bat`/`.sh` | `pull` | stash → pull → stash pop | start of session |
+| `NomadSyncPush.bat`/`.sh` | `push` | commit local changes → push | end of session |
+| `NomadSyncSync.bat`/`.sh` | `sync` | commit → pull (with conflict handling) → push | on-demand, single click |
+| `NomadSyncCommit.bat`/`.sh` | commit | opens your default text editor for a commit message, commits locally — no push | checkpoint work-in-progress with a meaningful message |
+
+These shortcuts give developers the same fine-grained control over Git
+operations that the tray icon gives end users — without remembering CLI
+syntax. `NomadSyncCommit` in particular is a developer-facing addition: it
+lets you create a clean, meaningful local commit at any point, without
+triggering autosave's generic timestamped message or a full synchronize cycle.
+
+There is intentionally no `NomadSyncAutosave` script — autosave is managed
+internally by the running process on its configured interval and is not
+meant to be triggered manually.
 
 ---
 
@@ -92,43 +164,60 @@ All tasks should run under the current user account. The logoff task must be con
 
 ```
 Logon
-  └─ Tray process starts (hosts orchestrator + socket server on :4242)
-  └─ Logon client connects → sends PULL_LOGON → orchestrator: stash → pull → stash pop
+  └─ pull → stash (if dirty) → git pull → stash pop
 
 During session
-  └─ Autosave every 15 min → orchestrator: diff → commit local (no network)
-  └─ Left-click tray → PUSH_MANUAL → orchestrator: diff → commit → push
+  └─ autosave every N minutes → commit local only (no network)
+  └─ on-demand sync → commit local → pull
+       ├─ no conflict → push
+       └─ conflict → backup snapshot → pull -X ours → save remote version
+                       for review → push (local version preserved)
 
 Logoff
-  └─ Logoff client connects → sends PUSH_LOGOFF → orchestrator: diff → commit → push
-  └─ Tray process exits
+  └─ push → commit local (if dirty) → push
 ```
 
-Events are queued with priority (pull > manual push > logoff push > autosave). If two events of the same type arrive, the latest replaces the earlier one in the queue. Network failures trigger up to three retry attempts with exponential backoff before the event is discarded and logged.
+Events are processed serially per vault through a priority queue — pull takes
+precedence over synchronize, which takes precedence over logoff push, which
+takes precedence over autosave. If two events of the same type are queued for
+the same vault, the most recent replaces the earlier one. Network failures
+trigger up to three retry attempts with exponential backoff (30s → 60s → 120s)
+before the event is discarded and a failure notification is raised.
+
+`autosave` and broadcast `sync` reach **all** registered vaults through a
+dedicated broadcast queue, regardless of how many vaults are configured —
+adding a vault to `vaults.json` requires no changes to scheduled tasks.
 
 ---
 
 ## Project structure
 
 ```
-src/main/java/
+src/main/java/io/aledep10/nomadsync/
 ├── Main.java
-├── model/
+├── dto/                  ← Jackson-annotated DTOs, isolated from domain classes
+├── orchestrator/
+│   ├── Vault.java
+│   ├── VaultContext.java
 │   ├── SyncEvent.java
-│   └── Vault.java
+│   ├── SyncEventQueue.java
+│   └── SyncOrchestrator.java
+├── scheduler/
+│   └── AutosaveScheduler.java
 ├── service/
 │   ├── GitService.java
+│   ├── GitignoreService.java
+│   ├── VaultService.java
 │   └── LogService.java
-├── orchestrator/
-│   ├── SyncOrchestrator.java
-│   └── SyncEventQueue.java
-├── notification/
+├── logging/
+│   ├── ConsoleLogWriter.java
+│   ├── FileLogWriter.java
+│   └── SeqHttpLogWriter.java
+├── hook/
 │   └── NotificationHook.java
-├── socket/
-│   ├── SocketServer.java
-│   └── SocketClient.java
-└── tray/
-    └── TrayManager.java
+└── util/
+    ├── CommandUtil.java
+    └── JsonMapper.java
 
 src/main/resources/
 ├── config.properties.template
@@ -139,14 +228,32 @@ src/main/resources/
 
 ## Design decisions
 
-All architectural decisions taken during development are recorded in the Decision Track Record, maintained in English inside `docs/`. Each milestone has its own DTR file:
+All architectural decisions taken during development are recorded in the
+unified [Decision Track Record](docs/DTR.md) (`docs/DTR.md`), available in
+[English](docs/DTR.md) and [Italian](docs/DTR_it.md). Each entry captures
+context, decision, rationale, and evaluated alternatives — it is the primary
+reference for understanding why the system is built the way it is.
 
-- `docs/DTR_Milestone_1.md` — Git sync strategy, Task Scheduler, autosave
-- `docs/DTR_Milestone_2.md` — SyncOrchestrator, event-driven architecture, retry policy
-- `docs/DTR_Milestone_3.md` — Testing stack (JUnit 5, Mockito, AssertJ, Awaitility)
-- `docs/DTR_Milestone_4.md` — Windows integration, multi-vault, tray icon, IPC
+---
 
-The DTR captures context, decision, rationale, and discarded alternatives for every non-trivial choice. It is the primary reference for understanding why the system is built the way it is.
+## Roadmap
+
+NomadSync is the first of a planned family of cross-platform desktop tools
+sharing a common Java/JavaFX foundation, including a shared design system
+([ForgeUI](docs/DTR.md#dtr-044--forgeui--shared-javafx-design-system-maven-central-candidate)),
+a system tray UI, a JavaFX dashboard (`MainWindow`), and internationalisation
+across 10 languages. See `docs/DTR.md` for the current status of each
+planned component.
+
+---
+
+## Authors
+
+**Alessandro De Prato** · Senior Software Engineer – Product Owner, Tech Lead
+[Portfolio](https://aledep10.github.io/) · [GitHub](https://github.com/AleDeP10) · [LinkedIn](https://www.linkedin.com/in/alessandro-de-prato)
+
+**Gabriela Belmani** · Software Engineer – Developer, QA Engineer
+[GitHub](https://github.com/Belmani) · [LinkedIn](https://www.linkedin.com/in/gabriela-da-sa%C3%BAde-belmani-tumfart)
 
 ---
 

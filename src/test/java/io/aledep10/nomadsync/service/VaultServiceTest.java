@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.orchestrator.Vault;
 import io.aledep10.nomadsync.util.JsonMapper;
@@ -31,6 +32,12 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
  * is used only in {@code load()} tests where the goal is to verify that the service
  * correctly reads a file written by a previous session. Using {@code create()} there
  * would bypass the very logic under test.</p>
+ *
+ * <h2>Vault name uniqueness (DTR-046)</h2>
+ * <p>{@code create()}, {@code update()} and {@code load()} all reject duplicate
+ * {@code name} values with {@link VaultException}. Every test method therefore
+ * declares {@code throws VaultException} alongside {@code IOException}, and uses
+ * distinct names across different vaults within the same test.</p>
  */
 class VaultServiceTest {
 
@@ -69,7 +76,7 @@ class VaultServiceTest {
      * {@code create()}.</p>
      */
     @Test
-    void load_existingFile_returnsVaults() throws IOException {
+    void load_existingFile_returnsVaults() throws IOException, VaultException {
         List<Vault> seed = List.of(
                 new Vault(UUID.randomUUID().toString(), "AleDeP10", "vault-1", "/path/1"),
                 new Vault(UUID.randomUUID().toString(), "AleDeP10", "vault-2", "/path/2"));
@@ -90,7 +97,7 @@ class VaultServiceTest {
      * without throwing.
      */
     @Test
-    void load_missingFile_returnsEmptyList() throws IOException {
+    void load_missingFile_returnsEmptyList() throws IOException, VaultException {
         vaultService.load();
 
         assertThat(vaultService.findAll().size()).isEqualTo(0);
@@ -101,7 +108,7 @@ class VaultServiceTest {
      * created vaults are discarded and only the disk state survives.
      */
     @Test
-    void load_replacesExistingInMemoryState() throws IOException {
+    void load_replacesExistingInMemoryState() throws IOException, VaultException {
         vaultService.create("AleDeP10", "old-vault", "/old/path");
         assertThat(vaultService.findAll().size()).isEqualTo(1);
 
@@ -118,10 +125,26 @@ class VaultServiceTest {
         assertThat(vaultService.findByName("new-vault-2")).isPresent();
     }
 
+    /**
+     * Verifies that {@code load()} rejects a {@code vaults.json} file containing
+     * two vaults with the same {@code name} — even under different {@code owner}s.
+     */
+    @Test
+    void load_duplicateNamesInFile_throwsVaultException() throws IOException {
+        List<Vault> diskState = List.of(
+                new Vault(UUID.randomUUID().toString(), "AleDeP10", "shared-name", "/path/1"),
+                new Vault(UUID.randomUUID().toString(), "belmani-apex", "shared-name", "/path/2"));
+        JsonMapper.saveVaultsToFile(vaultService.vaultFile, diskState);
+
+        assertThatThrownBy(() -> vaultService.load())
+                .isInstanceOf(VaultException.class)
+                .hasMessageContaining("shared-name");
+    }
+
     // ── create() ──────────────────────────────────────────────────────────────
 
     @Test
-    void create_addsVaultAndPersists() throws IOException {
+    void create_addsVaultAndPersists() throws IOException, VaultException {
         Vault vault = vaultService.create("AleDeP10", "vault-create", "/some/path");
 
         assertThat(vaultService.findAll().size()).isEqualTo(1);
@@ -129,10 +152,14 @@ class VaultServiceTest {
         assertThat(vaultService.vaultFile.exists()).isTrue();
     }
 
+    /**
+     * Verifies that two {@code create()} calls with distinct names produce
+     * two distinct entries with distinct generated UUIDs.
+     */
     @Test
-    void create_generatesUniqueIds() throws IOException {
-        vaultService.create("AleDeP10", "duplicate-name", "/path/a");
-        vaultService.create("AleDeP10", "duplicate-name", "/path/b");
+    void create_generatesUniqueIds() throws IOException, VaultException {
+        vaultService.create("AleDeP10", "unique-ids-vault-a", "/path/a");
+        vaultService.create("AleDeP10", "unique-ids-vault-b", "/path/b");
 
         List<Vault> all = vaultService.findAll();
         assertThat(all.size()).isEqualTo(2);
@@ -140,17 +167,50 @@ class VaultServiceTest {
     }
 
     @Test
-    void create_persistsToFile_vaultFileContainsCreatedVault() throws IOException {
+    void create_persistsToFile_vaultFileContainsCreatedVault() throws IOException, VaultException {
         vaultService.create("AleDeP10", "persisted-vault", "/persisted/path");
 
         List<Vault> onDisk = JsonMapper.loadVaultsFromFile(vaultService.vaultFile);
         assertThat(onDisk.stream().anyMatch(v -> v.getName().equals("persisted-vault"))).isTrue();
     }
 
+    /**
+     * Verifies that {@code create()} rejects a name already used by another vault,
+     * and does not register or persist the rejected vault.
+     */
+    @Test
+    void create_duplicateName_throwsVaultExceptionAndDoesNotPersist() throws IOException, VaultException {
+        vaultService.create("AleDeP10", "duplicate-name", "/path/a");
+
+        assertThatThrownBy(() -> vaultService.create("AleDeP10", "duplicate-name", "/path/b"))
+                .isInstanceOf(VaultException.class)
+                .hasMessageContaining("duplicate-name");
+
+        assertThat(vaultService.findAll().size()).isEqualTo(1);
+        List<Vault> onDisk = JsonMapper.loadVaultsFromFile(vaultService.vaultFile);
+        assertThat(onDisk.size()).isEqualTo(1);
+    }
+
+    /**
+     * Verifies that {@code create()} allows the same name across different
+     * {@code owner}s only when no other vault currently uses that name —
+     * i.e. duplicate detection is on {@code name} alone, not {@code owner+name}.
+     * This test documents the constraint explicitly: a second owner with the
+     * same name is rejected.
+     */
+    @Test
+    void create_sameNameDifferentOwner_throwsVaultException() throws IOException, VaultException {
+        vaultService.create("AleDeP10", "shared-name", "/path/a");
+
+        assertThatThrownBy(() -> vaultService.create("belmani-apex", "shared-name", "/path/b"))
+                .isInstanceOf(VaultException.class)
+                .hasMessageContaining("shared-name");
+    }
+
     // ── update() ──────────────────────────────────────────────────────────────
 
     @Test
-    void update_existingVault_persistsChanges() throws IOException {
+    void update_existingVault_persistsChanges() throws IOException, VaultException {
         Vault vault = vaultService.create("AleDeP10", "original-name", "/some/path");
         vault.setName("updated-name");
 
@@ -168,10 +228,54 @@ class VaultServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /**
+     * Verifies that {@code update()} allows renaming a vault to its own current
+     * name — a no-op rename must not be rejected as a duplicate of itself.
+     */
+    @Test
+    void update_renameToOwnCurrentName_doesNotThrow() throws IOException, VaultException {
+        Vault vault = vaultService.create("AleDeP10", "same-name", "/some/path");
+        vault.setPath("/some/other/path"); // unrelated change, name unchanged
+
+        vaultService.update(vault);
+
+        assertThat(vaultService.findByName("same-name")).isPresent();
+        assertThat(vaultService.findByName("same-name").get().getPath())
+                .isEqualTo("/some/other/path");
+    }
+
+    /**
+     * Verifies that {@code update()} rejects renaming a vault to a name already
+     * used by a <em>different</em> vault, and does not persist the rejected change.
+     */
+    @Test
+    void update_renameToAnotherVaultsName_throwsVaultExceptionAndDoesNotPersist()
+            throws IOException, VaultException {
+        Vault vaultA = vaultService.create("AleDeP10", "rename-collision-vault-a", "/path/a");
+        vaultService.create("AleDeP10", "rename-collision-vault-b", "/path/b");
+
+        // Mutate a COPY, not the live in-memory instance — vaultA is the same
+        // object reference stored in the service's internal map. Renaming it
+        // directly would corrupt the map's state (two entries reporting the
+        // same name) before update() is even called, making findByName()
+        // results depend on HashMap iteration order.
+        Vault renamed = new Vault(vaultA.getId(), vaultA.getOwner(),
+                "rename-collision-vault-b", vaultA.getPath());
+
+        assertThatThrownBy(() -> vaultService.update(renamed))
+                .isInstanceOf(VaultException.class)
+                .hasMessageContaining("rename-collision-vault-b");
+
+        // in-memory state for vaultA's name is unchanged on disk
+        List<Vault> onDisk = JsonMapper.loadVaultsFromFile(vaultService.vaultFile);
+        assertThat(onDisk.stream().anyMatch(v -> v.getId().equals(vaultA.getId())
+                && v.getName().equals("rename-collision-vault-a"))).isTrue();
+    }
+
     // ── delete() ──────────────────────────────────────────────────────────────
 
     @Test
-    void delete_existingVault_removesAndPersists() throws IOException {
+    void delete_existingVault_removesAndPersists() throws IOException, VaultException {
         Vault vault = vaultService.create("AleDeP10", "to-delete", "/delete/path");
 
         vaultService.delete(vault.getId());
@@ -187,6 +291,22 @@ class VaultServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /**
+     * Verifies that after {@code delete()}, the freed name can be reused by
+     * {@code create()} without triggering a duplicate-name rejection.
+     */
+    @Test
+    void delete_thenCreateWithSameName_doesNotThrow() throws IOException, VaultException {
+        Vault vault = vaultService.create("AleDeP10", "reusable-name", "/path/a");
+        vaultService.delete(vault.getId());
+
+        Vault recreated = vaultService.create("AleDeP10", "reusable-name", "/path/b");
+
+        assertThat(vaultService.findByName("reusable-name")).isPresent();
+        assertThat(vaultService.findByName("reusable-name").get().getId())
+                .isEqualTo(recreated.getId());
+    }
+
     // ── findAll() ─────────────────────────────────────────────────────────────
 
     @Test
@@ -195,9 +315,9 @@ class VaultServiceTest {
     }
 
     @Test
-    void findAll_returnsDefensiveCopy() throws IOException {
-        vaultService.create("AleDeP10", "vault-a", "/path/a");
-        vaultService.create("AleDeP10", "vault-b", "/path/b");
+    void findAll_returnsDefensiveCopy() throws IOException, VaultException {
+        vaultService.create("AleDeP10", "defensive-copy-vault-a", "/path/a");
+        vaultService.create("AleDeP10", "defensive-copy-vault-b", "/path/b");
 
         List<Vault> copy = vaultService.findAll();
         copy.clear();
@@ -208,7 +328,7 @@ class VaultServiceTest {
     // ── findById() / findByName() ─────────────────────────────────────────────
 
     @Test
-    void findById_existingId_returnsVault() throws IOException {
+    void findById_existingId_returnsVault() throws IOException, VaultException {
         Vault vault = vaultService.create("AleDeP10", "findme-by-id", "/path/findme");
 
         Optional<Vault> found = vaultService.findById(vault.getId());
@@ -223,7 +343,7 @@ class VaultServiceTest {
     }
 
     @Test
-    void findByName_existingName_returnsVault() throws IOException {
+    void findByName_existingName_returnsVault() throws IOException, VaultException {
         Vault vault = vaultService.create("AleDeP10", "findme-by-name", "/path/findme");
 
         Optional<Vault> found = vaultService.findByName("findme-by-name");

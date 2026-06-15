@@ -234,14 +234,14 @@ class LogServiceTest {
     }
 
     /**
-     * Verifies that requesting the {@code seq} writer without {@code seq.url}
+     * Verifies that requesting the {@code seq} writer without {@code log.seq.url}
      * does not throw — the writer is skipped.
      */
     @Test
     void buildWriters_seqWriterMissingUrl_doesNotThrow() {
         Properties properties = baseProperties(LogLevel.DEBUG);
         properties.setProperty("log.writers", "console,seq");
-        // seq.url intentionally absent
+        // log.seq.url intentionally absent
 
         // must not throw
         new LogService(properties);

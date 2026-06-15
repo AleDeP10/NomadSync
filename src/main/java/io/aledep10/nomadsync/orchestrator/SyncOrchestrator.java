@@ -134,7 +134,6 @@ public class SyncOrchestrator {
                     if (dirty) gitService.stashPop(vaultPath);
                 }
                 case SYNCHRONIZE -> {
-                    // [IN_REVIEW] procedura descritta dal DTR, refactoring gitService a cascata
                     gitService.synchronize(vaultPath);
                 }
                 case PUSH_LOGOFF -> {
@@ -154,7 +153,6 @@ public class SyncOrchestrator {
             }
             logService.info("-> " + event + " completed");
         } catch (VaultException e) {
-            // [NOTA] errore backup, non deve essere bloccante
             logService.info("-> " + event + " failed: " + e.getMessage());
         }
         catch (NetworkException e) {
