@@ -1,12 +1,14 @@
-package io.aledep10.nomadSync.service;
+package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.util.TestUtil;
+import io.aledep10.nomadsync.util.TestVault;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Properties;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
@@ -14,125 +16,257 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 /**
  * Unit tests for {@link LogService}.
  *
- * <p>Each test writes to a uniquely named temporary log file to avoid
- * cross-test contamination. No teardown needed — temp files are cleaned
- * by the OS on reboot.</p>
+ * <p>Each test writes to the shared {@link TestVault#logFilePath()} — log entries
+ * are isolated by level and content assertions rather than by separate files.
+ * The test vault is cleaned in {@code @AfterEach}.</p>
  */
 class LogServiceTest {
 
-    // ── log() — level filtering ───────────────────────────────────────────────
+    TestVault testVault;
 
-    @Test
-    void log_belowMinLevel_doesNotWrite() {
-        String logFile = tempLogFilePath();
-        LogService logService = createLogService(logFile, LogService.LogLevel.INFO);
-
-        logService.debug("message");
-
-        assertThat(readLogFile(logFile)).doesNotContain("message");
+    @BeforeEach
+    void setUp() throws IOException {
+        testVault = TestUtil.getTestVault("LogServiceTest");
+        Files.createDirectories(testVault.logFilePath().getParent());
     }
 
+    @AfterEach
+    void tearDown() throws IOException {
+        Files.deleteIfExists(testVault.logFilePath());
+    }
+
+    // ── log() — level filtering ───────────────────────────────────────────────
+
+    /**
+     * Verifies that events below the configured minimum level are not written to the file.
+     */
+    @Test
+    void log_belowMinLevel_doesNotWrite() {
+        LogService logService = createLogService(LogLevel.INFO);
+
+        logService.debug("should not appear");
+
+        assertThat(readLogFile()).doesNotContain("should not appear");
+    }
+
+    /**
+     * Verifies that an event at exactly the minimum level is written with level tag and message.
+     */
     @Test
     void log_atMinLevel_writes() {
-        String logFile = tempLogFilePath();
-        LogService logService = createLogService(logFile, LogService.LogLevel.INFO);
+        LogService logService = createLogService(LogLevel.INFO);
 
         logService.info("expected message");
 
-        String logs = readLogFile(logFile);
-        assertThat(logs).contains("[INFO]");
-        assertThat(logs).contains("expected message");
+        String content = readLogFile();
+        assertThat(content).contains("[INFO]");
+        assertThat(content).contains("expected message");
     }
 
+    /**
+     * Verifies that an event above the minimum level is written.
+     */
     @Test
     void log_aboveMinLevel_writes() {
-        String logFile = tempLogFilePath();
-        LogService logService = createLogService(logFile, LogService.LogLevel.INFO);
+        LogService logService = createLogService(LogLevel.INFO);
 
         logService.error("critical error");
 
-        String logs = readLogFile(logFile);
-        assertThat(logs).contains("[ERROR]");
-        assertThat(logs).contains("critical error");
+        String content = readLogFile();
+        assertThat(content).contains("[ERROR]");
+        assertThat(content).contains("critical error");
     }
 
     // ── log() — format ────────────────────────────────────────────────────────
 
+    /**
+     * Verifies that every log line includes a timestamp in the format
+     * {@code [yyyy-MM-dd HH:mm:ss.SSS]}.
+     */
     @Test
     void log_alwaysIncludesTimestamp() {
-        String logFile = tempLogFilePath();
-        LogService logService = createLogService(logFile, LogService.LogLevel.DEBUG);
+        LogService logService = createLogService(LogLevel.DEBUG);
 
         logService.info("anything");
 
-        String timestampRegex = "\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}]";
-        assertThat(readLogFile(logFile)).containsPattern(timestampRegex);
+        assertThat(readLogFile())
+                .containsPattern("\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\]");
+    }
+
+    /**
+     * Verifies that every log line includes the repoSlug field.
+     * Default constructor uses "SYSTEM" as repoSlug.
+     */
+    @Test
+    void log_defaultConstructor_usesSystemRepoSlug() {
+        LogService logService = createLogService(LogLevel.DEBUG);
+
+        logService.info("check slug");
+
+        assertThat(readLogFile()).contains("SYSTEM");
     }
 
     // ── log() — append mode ───────────────────────────────────────────────────
 
+    /**
+     * Verifies that two {@link LogService} instances writing to the same file
+     * both append — neither truncates the existing content.
+     */
     @Test
     void log_appendMode_preservesPreviousSessions() throws InterruptedException {
-        String logFile = tempLogFilePath();
+        createLogService(LogLevel.DEBUG).info("first session");
+        Thread.sleep(1);
+        createLogService(LogLevel.DEBUG).info("second session");
 
-        createLogService(logFile, LogService.LogLevel.DEBUG).info("first session");
-        Thread.sleep(1);    // ensures distinct timestamps between sessions
-        createLogService(logFile, LogService.LogLevel.DEBUG).info("second session");
+        String content = readLogFile();
+        assertThat(content).contains("first session");
+        assertThat(content).contains("second session");
+    }
 
-        String logs = readLogFile(logFile);
-        assertThat(logs).contains("first session");
-        assertThat(logs).contains("second session");
+    // ── constructor(Properties, String repoSlug) ──────────────────────────────
+
+    /**
+     * Verifies that the vault-scoped constructor writes the provided repoSlug
+     * to every log line.
+     */
+    @Test
+    void constructor_withRepoSlug_writesRepoSlugToLog() {
+        Properties properties = baseProperties(LogLevel.DEBUG);
+        LogService logService = new LogService(properties, "AleDeP10/public-vault");
+
+        logService.info("vault message");
+
+        assertThat(readLogFile()).contains("AleDeP10/public-vault");
+    }
+
+    /**
+     * Verifies that the vault-scoped constructor still filters by level.
+     */
+    @Test
+    void constructor_withRepoSlug_respectsMinLevel() {
+        Properties properties = baseProperties(LogLevel.WARN);
+        LogService logService = new LogService(properties, "AleDeP10/public-vault");
+
+        logService.info("below threshold");
+
+        assertThat(readLogFile()).doesNotContain("below threshold");
+    }
+
+    // ── withVault() ───────────────────────────────────────────────────────────
+
+    /**
+     * Verifies that {@code withVault()} returns a new instance scoped to the
+     * given repoSlug — the slug appears in every subsequent log line.
+     */
+    @Test
+    void withVault_writesNewRepoSlugToLog() {
+        LogService system = createLogService(LogLevel.DEBUG);
+        LogService vaultScoped = system.withVault("AleDeP10/private-vault");
+
+        vaultScoped.info("vault-scoped message");
+
+        assertThat(readLogFile()).contains("AleDeP10/private-vault");
+    }
+
+    /**
+     * Verifies that the original {@code LogService} instance retains its own
+     * repoSlug after {@code withVault()} is called — instances are independent.
+     */
+    @Test
+    void withVault_originalInstanceRetainsSystemSlug() {
+        LogService system = createLogService(LogLevel.DEBUG);
+        system.withVault("AleDeP10/private-vault");  // discard result
+
+        system.info("system message");
+
+        assertThat(readLogFile()).contains("SYSTEM");
+        assertThat(readLogFile()).doesNotContain("AleDeP10/private-vault");
+    }
+
+    /**
+     * Verifies that two vault-scoped instances derived from the same system
+     * instance are independent — each writes its own slug.
+     */
+    @Test
+    void withVault_twoScopedInstances_writeDistinctSlugs() {
+        LogService system  = createLogService(LogLevel.DEBUG);
+        LogService vaultA  = system.withVault("AleDeP10/public-vault");
+        LogService vaultB  = system.withVault("AleDeP10/private-vault");
+
+        vaultA.info("from A");
+        vaultB.info("from B");
+
+        String content = readLogFile();
+        assertThat(content).contains("AleDeP10/public-vault");
+        assertThat(content).contains("AleDeP10/private-vault");
+    }
+
+    // ── buildWriters — unknown token ──────────────────────────────────────────
+
+    /**
+     * Verifies that an unknown writer token in {@code log.writers} does not throw —
+     * the service starts with the remaining valid writers.
+     */
+    @Test
+    void buildWriters_unknownToken_doesNotThrow() {
+        Properties properties = baseProperties(LogLevel.DEBUG);
+        properties.setProperty("log.writers", "console,unknown-writer,file");
+
+        LogService logService = new LogService(properties);
+        logService.info("still works");
+
+        assertThat(readLogFile()).contains("still works");
+    }
+
+    /**
+     * Verifies that requesting the {@code file} writer without {@code log.path}
+     * does not throw — the writer is skipped and console remains active.
+     */
+    @Test
+    void buildWriters_fileWriterMissingPath_doesNotThrow() {
+        Properties properties = new Properties();
+        properties.setProperty("log.level",   LogLevel.DEBUG.name());
+        properties.setProperty("log.writers", "file");
+        // log.path intentionally absent
+
+        // must not throw
+        new LogService(properties);
+    }
+
+    /**
+     * Verifies that requesting the {@code seq} writer without {@code log.seq.url}
+     * does not throw — the writer is skipped.
+     */
+    @Test
+    void buildWriters_seqWriterMissingUrl_doesNotThrow() {
+        Properties properties = baseProperties(LogLevel.DEBUG);
+        properties.setProperty("log.writers", "console,seq");
+        // log.seq.url intentionally absent
+
+        // must not throw
+        new LogService(properties);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /**
-     * Generates a unique temp log file path per test invocation.
-     * Uses a nanosecond timestamp to prevent cross-test file collisions.
-     */
-    static String tempLogFilePath() {
-        return System.getProperty("java.io.tmpdir")
-                + "nomadSync-test_"
-                + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmssSSS"))
-                + ".log";
+    private LogService createLogService(LogLevel level) {
+        return new LogService(baseProperties(level));
     }
 
-    /**
-     * Creates a {@link LogService} instance configured with the given log file path and level.
-     *
-     * <p>Utility method shared across test cases to avoid repeating property setup boilerplate.
-     * Each test should pass a unique file path (via {@link #tempLogFilePath()}) to prevent
-     * cross-test log contamination.</p>
-     *
-     * @param logFilePath absolute path to the log file
-     * @param level       minimum log level — entries below this level will not be written
-     * @return a configured {@link LogService} instance
-     */
-    static LogService createLogService(String logFilePath, LogService.LogLevel level) {
+    private Properties baseProperties(LogLevel level) {
         Properties properties = new Properties();
-        properties.setProperty("log.path",  logFilePath);
-        properties.setProperty("log.level", level.toString());
-        return new LogService(properties);
+        properties.setProperty("log.path",    testVault.logFilePath().toString());
+        properties.setProperty("log.level",   level.name());
+        properties.setProperty("log.writers", "file");
+        return properties;
     }
 
-    /**
-     * Reads the content of a log file and returns it as a single string.
-     *
-     * <p>Returns an empty string if the file does not exist — this is expected
-     * when the log level filter prevents any writes (e.g. DEBUG below INFO threshold).</p>
-     *
-     * @param logFilePath absolute path to the log file
-     * @return file content joined by newlines, or empty string if file does not exist
-     */
-    static String readLogFile(String logFilePath) {
+    private String readLogFile() {
         try {
-            Path path = Path.of(logFilePath);
-            if (!Files.exists(path)) {
-                return "";
-            }
-            return String.join("\n", Files.readAllLines(path));
+            if (!Files.exists(testVault.logFilePath())) return "";
+            return String.join("\n", Files.readAllLines(testVault.logFilePath()));
         } catch (IOException e) {
-            throw new RuntimeException("unable to read log file: " + logFilePath, e);
+            throw new RuntimeException("Unable to read log file: " + testVault.logFilePath(), e);
         }
     }
 }

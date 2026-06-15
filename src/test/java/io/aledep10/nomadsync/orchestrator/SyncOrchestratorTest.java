@@ -1,58 +1,75 @@
-package io.aledep10.nomadSync.orchestrator;
+package io.aledep10.nomadsync.orchestrator;
 
-import io.aledep10.nomadSync.hook.NotificationHook;
-import io.aledep10.nomadSync.service.GitService;
-import io.aledep10.nomadSync.service.LogService;
+import io.aledep10.nomadsync.exception.GitException;
+import io.aledep10.nomadsync.exception.NetworkException;
+import io.aledep10.nomadsync.exception.VaultException;
+import io.aledep10.nomadsync.hook.NotificationHook;
+import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.service.GitService;
+import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.util.TestUtil;
+import io.aledep10.nomadsync.util.TestVault;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
-import org.mockito.Mock;
 
 import java.io.IOException;
 import java.util.Properties;
+import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.mockito.MockitoAnnotations.openMocks;
 
 /**
  * Unit tests for {@link SyncOrchestrator}.
  *
- * <p>GitService and NotificationHook are mocked — no real Git operations are performed.
- * SyncEventQueue is a real instance — it contains pure logic with no side effects.</p>
+ * <p>{@link GitService} and {@link NotificationHook} are mocked — no real Git
+ * operations are performed. {@link SyncEventQueue} is a real instance — it contains
+ * pure logic with no side effects.</p>
  *
- * <p>Each test follows the ARRANGE / ACT / ASSERT pattern and verifies
- * both the presence and the order of Git operations via {@link InOrder}.</p>
+ * <p>Each test follows the ARRANGE / ACT / ASSERT pattern. Ordering constraints are
+ * verified via {@link InOrder} where the sequence matters.</p>
+ *
+ * <p><strong>Matcher rule</strong>: whenever a stubbed method mixes a literal argument
+ * with a wildcard, all arguments must use explicit matchers —
+ * {@code eq(testVault)} for the literal, {@code anyString()} for the wildcard.</p>
+ *
+ * <p><strong>SYNCHRONIZE scope</strong>: the orchestrator delegates the entire
+ * SYNCHRONIZE workflow to {@link GitService#synchronize(String)}. Tests for this
+ * event type verify the delegation boundary only — internal Git operations
+ * (commit, pull, backup, push) are covered by {@code GitServiceTest}.</p>
  */
 class SyncOrchestratorTest {
 
+    private static TestVault testVault;
     private static LogService logService;
-
-    AutoCloseable mocks;
-
-    @Mock
+    private String vaultId;
+    private AutoCloseable mocks;
+    private String testVaultPath;
     private NotificationHook notificationHook;
-
-    @Mock
     private GitService gitService;
-
     private SyncOrchestrator orchestrator;
 
     @BeforeAll
-    static void prepareLogService() {
-        Properties properties = new Properties();
-        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/nomadSync-test.log");
-        properties.setProperty("log.level", "DEBUG");
-        logService = new LogService(properties);
+    static void prepareLogService() throws IOException {
+        testVault = TestUtil.getTestVault("SyncOrchestratorTest");
+        logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG));
     }
 
     @BeforeEach
-    void setUp() {
-        mocks        = openMocks(this);
+    void setUp() throws IOException {
+        Properties properties = TestUtil.forOrchestrator(testVault);
+        vaultId          = UUID.randomUUID().toString();
+        mocks            = openMocks(this);
         notificationHook = mock(NotificationHook.class);
         gitService       = mock(GitService.class);
-        orchestrator     = new SyncOrchestrator(gitService, logService,
+        testVaultPath = properties.getProperty("vault.path");
+        orchestrator     = new SyncOrchestrator(
+                properties, gitService, logService,
                 new SyncEventQueue(logService), notificationHook);
     }
 
@@ -64,76 +81,127 @@ class SyncOrchestratorTest {
     // ── PULL_LOGON ────────────────────────────────────────────────────────────
 
     @Test
-    void pullLogon_dirtyTree_executesStashPullStashPop() throws InterruptedException, IOException {
-        when(gitService.hasUncommittedChanges()).thenReturn(true);
+    void pullLogon_dirtyTree_executesStashPullStashPop()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(true);
 
-        orchestrator.execute(new SyncEvent(EventType.PULL_LOGON));
+        orchestrator.execute(new SyncEvent(EventType.PULL_LOGON, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).hasUncommittedChanges();
-        inOrder.verify(gitService).stash();
-        inOrder.verify(gitService).pull();
-        inOrder.verify(gitService).stashPop();
+        inOrder.verify(gitService).hasUncommittedChanges(testVaultPath);
+        inOrder.verify(gitService).stash(testVaultPath);
+        inOrder.verify(gitService).pull(testVaultPath);
+        inOrder.verify(gitService).stashPop(testVaultPath);
     }
 
     @Test
-    void pullLogon_cleanTree_executesPullOnly() throws InterruptedException, IOException {
-        when(gitService.hasUncommittedChanges()).thenReturn(false);
+    void pullLogon_cleanTree_executesPullOnly()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
 
-        orchestrator.execute(new SyncEvent(EventType.PULL_LOGON));
+        orchestrator.execute(new SyncEvent(EventType.PULL_LOGON, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).hasUncommittedChanges();
-        inOrder.verify(gitService).pull();
-        verify(gitService, never()).stash();
-        verify(gitService, never()).stashPop();
+        inOrder.verify(gitService).hasUncommittedChanges(testVaultPath);
+        inOrder.verify(gitService).pull(testVaultPath);
+        verify(gitService, never()).stash(testVaultPath);
+        verify(gitService, never()).stashPop(testVaultPath);
+    }
+
+    // ── SYNCHRONIZE ───────────────────────────────────────────────────────────
+
+    @Test
+    void synchronize_always_delegatesToGitServiceSynchronize()
+            throws GitException, NetworkException, InterruptedException, VaultException {
+        orchestrator.execute(new SyncEvent(EventType.SYNCHRONIZE, vaultId));
+
+        verify(gitService).synchronize(testVaultPath);
+    }
+
+    @Test
+    void synchronize_never_callsStashOrStashPop()
+            throws GitException, NetworkException, InterruptedException, VaultException {
+        orchestrator.execute(new SyncEvent(EventType.SYNCHRONIZE, vaultId));
+
+        verify(gitService, never()).stash(testVaultPath);
+        verify(gitService, never()).stashPop(testVaultPath);
     }
 
     // ── PUSH_LOGOFF ───────────────────────────────────────────────────────────
 
     @Test
-    void pushLogoff_withChanges_commitsAndPushes() throws InterruptedException, IOException {
-        when(gitService.commitLocal(anyString())).thenReturn(0);
+    void pushLogoff_withChanges_commitsAndPushes()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.commitLocal(eq(testVaultPath), anyString())).thenReturn(0);
 
-        orchestrator.execute(new SyncEvent(EventType.PUSH_LOGOFF));
+        orchestrator.execute(new SyncEvent(EventType.PUSH_LOGOFF, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).commitLocal(anyString());
-        inOrder.verify(gitService).push();
+        inOrder.verify(gitService).commitLocal(eq(testVaultPath), anyString());
+        inOrder.verify(gitService).push(testVaultPath);
     }
 
     @Test
-    void pushLogoff_noChanges_skipsRemotePush() throws InterruptedException, IOException {
-        when(gitService.commitLocal(anyString())).thenReturn(1);
+    void pushLogoff_alwaysPushes()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.commitLocal(eq(testVaultPath), anyString())).thenReturn(1);
 
-        orchestrator.execute(new SyncEvent(EventType.PUSH_LOGOFF));
+        orchestrator.execute(new SyncEvent(EventType.PUSH_LOGOFF, vaultId));
 
-        verify(gitService).commitLocal(anyString());
-        verify(gitService, never()).push();
+        verify(gitService).commitLocal(eq(testVaultPath), anyString());
+        verify(gitService).push(testVaultPath);
     }
 
     // ── AUTOSAVE ──────────────────────────────────────────────────────────────
 
     @Test
-    void autosave_withChanges_commitsLocally() throws InterruptedException, IOException {
-        when(gitService.hasChanges()).thenReturn(true);
+    void autosave_withChanges_commitsLocally()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(true);
 
-        orchestrator.execute(new SyncEvent(EventType.AUTOSAVE));
+        orchestrator.execute(new SyncEvent(EventType.AUTOSAVE, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).hasChanges();
-        inOrder.verify(gitService).commitLocal(anyString());
-        verify(gitService, never()).push();
+        inOrder.verify(gitService).hasUncommittedChanges(testVaultPath);
+        inOrder.verify(gitService).commitLocal(eq(testVaultPath), anyString());
+        verify(gitService, never()).push(testVaultPath);
     }
 
     @Test
-    void autosave_noChanges_skipsCommit() throws IOException, InterruptedException {
-        when(gitService.hasChanges()).thenReturn(false);
+    void autosave_noChanges_skipsCommit()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
 
-        orchestrator.execute(new SyncEvent(EventType.AUTOSAVE));
+        orchestrator.execute(new SyncEvent(EventType.AUTOSAVE, vaultId));
 
-        verify(gitService).hasChanges();
-        verify(gitService, never()).commitLocal(anyString());
-        verify(gitService, never()).push();
+        verify(gitService).hasUncommittedChanges(testVaultPath);
+        verify(gitService, never()).commitLocal(eq(testVaultPath), anyString());
+        verify(gitService, never()).push(testVaultPath);
+    }
+
+    // ── Error handling ────────────────────────────────────────────────────────
+
+    @Test
+    void execute_networkException_schedulesRetry()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
+        doThrow(new NetworkException("timeout", null)).when(gitService).pull(testVaultPath);
+
+        SyncEvent event = new SyncEvent(EventType.PULL_LOGON, vaultId,
+                System.currentTimeMillis(), 10);
+        orchestrator.execute(event);
+
+        verify(notificationHook, never()).onFailure(any(), anyString());
+    }
+
+    @Test
+    void execute_gitException_notifiesImmediately()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
+        doThrow(new GitException("conflict", null)).when(gitService).pull(testVaultPath);
+
+        orchestrator.execute(new SyncEvent(EventType.PULL_LOGON, vaultId));
+
+        verify(notificationHook).onFailure(any(), anyString());
     }
 }

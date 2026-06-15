@@ -1,19 +1,25 @@
-package io.aledep10.nomadSync.orchestrator;
+package io.aledep10.nomadsync.orchestrator;
 
 /**
  * Defines the types of synchronization events that can be published to the {@link SyncEventQueue}.
  *
  * <p>Each type carries a numeric priority used by the queue to determine execution order.
- * Lower values mean higher urgency — {@code PULL_LOGON} (1) is always processed before
- * {@code AUTOSAVE} (4).</p>
+ * Lower values mean higher urgency — {@code PULL_LOGON} and {@code SYNCHRONIZE} (1)
+ * are always processed before {@code AUTOSAVE} (4).</p>
+ *
+ * <p>At equal priority, events are ordered by timestamp — the older event is processed first.</p>
  */
 public enum EventType {
 
     /** Triggered at Windows logon. Precondition for all other operations. */
     PULL_LOGON(1),
 
-    /** Triggered explicitly by the user (e.g. tray icon). Reflects deliberate intent. */
-    PUSH_MANUAL(2),
+    /**
+     * Triggered explicitly by the user via the tray icon refresh button.
+     * Used when the local vault is stale and needs to be aligned with remote
+     * without a logoff/logon cycle — e.g. persistent sessions or multi-device workflows.
+     */
+    SYNCHRONIZE (2),
 
     /** Triggered at Windows logoff. Persists the session to remote. */
     PUSH_LOGOFF(3),

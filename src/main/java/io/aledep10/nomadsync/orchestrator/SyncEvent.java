@@ -1,4 +1,7 @@
-package io.aledep10.nomadSync.orchestrator;
+package io.aledep10.nomadsync.orchestrator;
+
+import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
+import io.aledep10.nomadsync.tray.SocketServer;
 
 /**
  * Represents a synchronization command published to the {@link SyncEventQueue}.
@@ -9,26 +12,36 @@ package io.aledep10.nomadSync.orchestrator;
  * <p>Implements {@link Comparable} so that {@link java.util.concurrent.PriorityBlockingQueue}
  * can order events by priority. When two events share the same priority, the older one
  * (lower timestamp) is processed first.</p>
+ *
+ * <h2>Broadcast events</h2>
+ * <p>An event constructed with {@code vaultId = null} is a <em>broadcast sentinel</em> —
+ * it targets all registered vaults. {@link SocketServer}
+ * expands it into one event per vault via {@link #forVault(String)} before publishing
+ * to the per-vault queues. Used by {@link AutosaveScheduler}
+ * to trigger autosave across all vaults without knowing the vault list.</p>
  */
 public class SyncEvent implements Comparable<SyncEvent> {
 
+    /** Initial retry delay in milliseconds (30 seconds). */
+    public static final long INITIAL_RETRY_DELAY_MS = 30_000L;
+
     private final EventType type;
+    private final String vaultId;
     private final long timestamp;
 
     private int retryCount;
     private long retryDelay;
 
-    /** Initial retry delay in milliseconds (30 seconds). */
-    public static final long INITIAL_RETRY_DELAY_MS = 30_000L;
-
     /**
      * Constructs a new SyncEvent with the current timestamp and zeroed retry state.
      *
-     * @param type the type of synchronization operation to perform
+     * @param type    the type of synchronization operation to perform
+     * @param vaultId the target vault identifier, or {@code null} for broadcast events
      */
-    public SyncEvent(EventType type) {
-        this.type = type;
-        this.timestamp = System.currentTimeMillis();
+    public SyncEvent(EventType type, String vaultId) {
+        this.type       = type;
+        this.vaultId    = vaultId;
+        this.timestamp  = System.currentTimeMillis();
         this.retryCount = 0;
         this.retryDelay = INITIAL_RETRY_DELAY_MS;
     }
@@ -38,22 +51,23 @@ public class SyncEvent implements Comparable<SyncEvent> {
      *
      * <p>Allows tests to create {@link SyncEvent} instances with a controlled
      * timestamp, enabling deterministic latest-wins scenarios in
-     * io.aledep10.nomadSync.orchestrator.SyncEventQueueTest
-     * without exposing timestamp mutability to production code.</p>
+     * {@link SyncEventQueueTest} without exposing timestamp mutability to
+     * production code.</p>
      *
-     * <p>Prefer this constructor over setTimestamp(long) — it keeps
-     * the timestamp immutable after construction and removes the need for
-     * {@link Thread#sleep} to guarantee distinct timestamps.</p>
-     *
-     * @param type      the type of synchronization operation
-     * @param timestamp epoch milliseconds to assign as the event timestamp
+     * @param type               the type of synchronization operation
+     * @param vaultId            the target vault identifier, or {@code null} for broadcast
+     * @param timestamp          epoch milliseconds to assign as the event timestamp
+     * @param initialRetryDelay  initial retry delay in milliseconds
      */
-    SyncEvent(EventType type, long timestamp) {
-        this.type      = type;
-        this.timestamp = timestamp;
+    SyncEvent(EventType type, String vaultId, long timestamp, long initialRetryDelay) {
+        this.type       = type;
+        this.vaultId    = vaultId;
+        this.timestamp  = timestamp;
         this.retryCount = 0;
-        this.retryDelay = INITIAL_RETRY_DELAY_MS;
+        this.retryDelay = initialRetryDelay;
     }
+
+    // ── Retry ─────────────────────────────────────────────────────────────────
 
     /**
      * Increments the retry counter and doubles the retry delay (exponential backoff).
@@ -65,17 +79,37 @@ public class SyncEvent implements Comparable<SyncEvent> {
         this.retryDelay *= 2;
     }
 
-    // ── Getters ──────────────────────────────────────────────────────────────
+    // ── Broadcast support ─────────────────────────────────────────────────────
 
-    public EventType getType() { return type; }
+    /**
+     * Creates a vault-specific copy of this broadcast event.
+     *
+     * <p>Used by {@link SocketServer} to expand a
+     * broadcast sentinel ({@code vaultId = null}) into one targeted event per
+     * registered vault. Preserves the original timestamp so priority ordering
+     * is consistent across the expanded events.</p>
+     *
+     * @param vaultId the target vault identifier to assign
+     * @return a new {@link SyncEvent} identical to this one but with the given vaultId
+     * @throws UnsupportedOperationException if this event already has a vaultId assigned
+     */
+    public SyncEvent forVault(String vaultId) {
+        if (this.vaultId != null) {
+            throw new UnsupportedOperationException(
+                    "Event already assigned to vault: " + this.vaultId);
+        }
+        return new SyncEvent(type, vaultId, timestamp, retryDelay);
+    }
 
-    public long getTimestamp() { return timestamp; }
+    // ── Getters ───────────────────────────────────────────────────────────────
 
-    public int getRetryCount() { return retryCount; }
+    public EventType getType()      { return type; }
+    public String    getVaultId()   { return vaultId; }
+    public long      getTimestamp() { return timestamp; }
+    public int       getRetryCount(){ return retryCount; }
+    public long      getRetryDelay(){ return retryDelay; }
 
-    public long getRetryDelay() { return retryDelay; }
-
-    // ── Comparable ───────────────────────────────────────────────────────────
+    // ── Comparable ────────────────────────────────────────────────────────────
 
     /**
      * Compares events by priority first, then by timestamp for same-priority events.
@@ -87,17 +121,14 @@ public class SyncEvent implements Comparable<SyncEvent> {
     public int compareTo(SyncEvent other) {
         int priorityComparison = Integer.compare(
                 this.type.getPriority(),
-                other.type.getPriority()
-        );
-        if (priorityComparison != 0) {
-            return priorityComparison;
-        }
+                other.type.getPriority());
+        if (priorityComparison != 0) return priorityComparison;
         return Long.compare(this.timestamp, other.timestamp);
     }
 
     @Override
     public String toString() {
-        return "SyncEvent{type=%s, retryCount=%d, retryDelay=%dms}"
-                .formatted(type, retryCount, retryDelay);
+        return "SyncEvent{type=%s, vaultId=%s, retryCount=%d, retryDelay=%dms}"
+                .formatted(type, vaultId, retryCount, retryDelay);
     }
 }

@@ -1,11 +1,14 @@
-package io.aledep10.nomadSync.orchestrator;
+package io.aledep10.nomadsync.orchestrator;
 
-import io.aledep10.nomadSync.hook.NotificationHook;
-import io.aledep10.nomadSync.service.GitService;
-import io.aledep10.nomadSync.service.LogService;
+import io.aledep10.nomadsync.exception.GitException;
+import io.aledep10.nomadsync.exception.NetworkException;
+import io.aledep10.nomadsync.exception.VaultException;
+import io.aledep10.nomadsync.hook.NotificationHook;
+import io.aledep10.nomadsync.service.GitService;
+import io.aledep10.nomadsync.service.LogService;
 
-import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.Properties;
 
 /**
  * Coordinates sync operations by consuming events from {@link SyncEventQueue}
@@ -14,13 +17,16 @@ import java.time.LocalDateTime;
  * <p>Runs a dedicated worker thread that processes events serially,
  * preventing Git concurrency issues by design.</p>
  *
- * <p>On failure, applies exponential backoff retry up to {@link #MAX_RETRIES}
- * attempts before delegating to {@link NotificationHook#onFailure}.</p>
+ * <p>On {@link NetworkException}, applies exponential backoff retry up to
+ * {@link #MAX_RETRIES} attempts before invoking {@link NotificationHook#onFailure}.
+ * On {@link GitException}, fails immediately — local Git errors are not transient
+ * and do not benefit from retry.</p>
  */
 public class SyncOrchestrator {
 
     public static final int MAX_RETRIES = 3;
 
+    private final String vaultPath;
     private final SyncEventQueue queue;
     private final GitService gitService;
     private final NotificationHook notificationHook;
@@ -30,13 +36,21 @@ public class SyncOrchestrator {
     /**
      * Constructs the orchestrator and prepares the worker thread.
      * The worker is not started until {@link #start()} is called.
+     *
+     * @param properties      application properties — must contain {@code vault.path}
+     * @param gitService      stateless Git operations delegate
+     * @param logService      shared logging service
+     * @param queue           priority event queue
+     * @param notificationHook hook invoked on unrecoverable failures
      */
-    public SyncOrchestrator(GitService gitService, LogService logService,
+    public SyncOrchestrator(Properties properties,
+                            GitService gitService, LogService logService,
                             SyncEventQueue queue, NotificationHook notificationHook) {
-        this.queue            = queue;
-        this.gitService       = gitService;
-        this.notificationHook = notificationHook;
-        this.logService       = logService;
+        this.vaultPath          = properties.getProperty("vault.path");
+        this.queue              = queue;
+        this.gitService         = gitService;
+        this.notificationHook   = notificationHook;
+        this.logService         = logService;
 
         this.worker = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
@@ -44,25 +58,23 @@ public class SyncOrchestrator {
                     SyncEvent event = queue.consume();
                     execute(event);
                 } catch (InterruptedException e) {
-                    // consume() was unblocked by interrupt — clean exit
                     logService.info("Worker interrupted, shutting down.");
                     Thread.currentThread().interrupt();
                     break;
                 }
             }
-        }, "nomadSync-worker");
+        }, "nomadsync-worker");
     }
 
     /**
-     * Starts the worker thread and registers a JVM shutdown hook.
-     * Blocks the calling thread until the worker terminates.
+     * Starts the worker thread and blocks the calling thread until it terminates.
      */
     public void start() {
         worker.start();
         try {
             worker.join();
         } catch (InterruptedException e) {
-            logService.error("Main thread interrupted while waiting for worker: " + e.getMessage());
+            logService.info("Main thread interrupted while waiting for worker");
             Thread.currentThread().interrupt();
         }
     }
@@ -88,6 +100,26 @@ public class SyncOrchestrator {
     /**
      * Dispatches a {@link SyncEvent} to the appropriate Git workflow.
      *
+     * <h2>Dispatch table</h2>
+     * <ul>
+     *   <li>{@link EventType#PULL_LOGON} — stash if dirty → pull → stash pop</li>
+     *   <li>{@link EventType#SYNCHRONIZE} — delegates entirely to
+     *       {@link GitService#synchronize(String)}: commit local if dirty → pull →
+     *       on conflict: backup + pull -X ours + remote-conflicts snapshot → push</li>
+     *   <li>{@link EventType#PUSH_LOGOFF} — commit local → push</li>
+     *   <li>{@link EventType#AUTOSAVE} — commit local only if dirty, never pushes</li>
+     * </ul>
+     *
+     * <h2>Error handling</h2>
+     * <ul>
+     *   <li>{@link NetworkException} → exponential backoff retry up to
+     *       {@link #MAX_RETRIES} attempts, then {@link NotificationHook#onFailure}</li>
+     *   <li>{@link GitException} → immediate {@link NotificationHook#onFailure},
+     *       no retry</li>
+     *   <li>{@link VaultException} → logged and swallowed — backup failure is
+     *       non-blocking, sync proceeds</li>
+     * </ul>
+     *
      * @param event the event to process
      * @throws InterruptedException if the thread is interrupted during execution
      */
@@ -96,31 +128,39 @@ public class SyncOrchestrator {
             logService.info("-> Performing " + event);
             switch (event.getType()) {
                 case PULL_LOGON -> {
-                    boolean dirty = gitService.hasUncommittedChanges();
-                    if (dirty) gitService.stash();
-                    gitService.pull();
-                    if (dirty) gitService.stashPop();
+                    boolean dirty = gitService.hasUncommittedChanges(vaultPath);
+                    if (dirty) gitService.stash(vaultPath);
+                    gitService.pull(vaultPath);
+                    if (dirty) gitService.stashPop(vaultPath);
                 }
-                case PUSH_MANUAL, PUSH_LOGOFF -> {
-                    int commitExit = gitService.commitLocal("push " + LocalDateTime.now());
+                case SYNCHRONIZE -> {
+                    gitService.synchronize(vaultPath);
+                }
+                case PUSH_LOGOFF -> {
+                    int commitExit = gitService.commitLocal(vaultPath, "push " + LocalDateTime.now());
                     if (commitExit != 0) {
-                        logService.info("Nothing to commit, skipping push.");
-                        return;
+                        logService.info("Nothing to commit, pushing existing commits.");
                     }
-                    gitService.push();
+                    gitService.push(vaultPath);
                 }
                 case AUTOSAVE -> {
-                    if (gitService.hasChanges()) {
-                        gitService.commitLocal("autosave " + LocalDateTime.now());
+                    if (gitService.hasUncommittedChanges(vaultPath)) {
+                        gitService.commitLocal(vaultPath, "autosave " + LocalDateTime.now());
                     } else {
                         logService.info("No changes detected, skipping autosave.");
                     }
                 }
             }
             logService.info("-> " + event + " completed");
-        } catch (IOException e) {
-            logService.error("I/O error while performing " + event + ": " + e.getMessage());
+        } catch (VaultException e) {
+            logService.info("-> " + event + " failed: " + e.getMessage());
+        }
+        catch (NetworkException e) {
+            logService.error("Network error while performing " + event + ": " + e.getMessage());
             retry(event, e);
+        } catch (GitException e) {
+            logService.error("Git error while performing " + event + ": " + e.getMessage());
+            notificationHook.onFailure(event, "Git error (no retry): " + e.getMessage());
         }
     }
 
@@ -131,11 +171,14 @@ public class SyncOrchestrator {
      * After {@link #MAX_RETRIES} attempts the event is discarded
      * and {@link NotificationHook#onFailure} is invoked.</p>
      *
-     * @param event     the event to retry
-     * @param cause     the exception that caused the failure
+     * <p>Called only for {@link NetworkException} — {@link GitException}
+     * bypasses retry and fails immediately in {@link #execute}.</p>
+     *
+     * @param event the event to retry
+     * @param cause the network exception that caused the failure
      * @throws InterruptedException if the thread is interrupted during the delay
      */
-    private void retry(SyncEvent event, Exception cause) throws InterruptedException {
+    private void retry(SyncEvent event, NetworkException cause) throws InterruptedException {
         if (event.getRetryCount() < MAX_RETRIES) {
             event.incrementRetry();
             logService.warn("Retry %d/%d for %s in %ds".formatted(
@@ -150,7 +193,8 @@ public class SyncOrchestrator {
             }
             queue.publish(event);
         } else {
-            notificationHook.onFailure(event, "Failed after " + MAX_RETRIES + " retries: " + cause.getMessage());
+            notificationHook.onFailure(event,
+                    "Network failure after " + MAX_RETRIES + " retries: " + cause.getMessage());
             logService.error("Discarded after max retries: " + event);
         }
     }
