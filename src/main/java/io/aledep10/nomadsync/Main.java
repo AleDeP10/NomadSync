@@ -97,16 +97,12 @@ public class Main {
         List<SyncOrchestrator> orchestrators = new ArrayList<>();
 
         for (Vault vault : vaults) {
-            Properties vaultProperties = new Properties(properties);
-            vaultProperties.setProperty("vault.path", vault.getPath());
-
-            LogService     vaultLog = logService.withVault(vault.getRepoSlug());
-            SyncEventQueue queue    = new SyncEventQueue(vaultLog);
-            SyncOrchestrator orch   = new SyncOrchestrator(
-                    vaultProperties, gitService, vaultLog, queue, hook);
+            LogService     vaultLog         = logService.withVault(vault.getRepoSlug());
+            SyncEventQueue queue            = new SyncEventQueue(vaultLog);
+            SyncOrchestrator orchestrator   = new SyncOrchestrator(vault, gitService, vaultLog, queue, hook);
 
             queues.add(queue);
-            orchestrators.add(orch);
+            orchestrators.add(orchestrator);
         }
 
         // ── 6. Broadcast queue + broadcaster thread ───────────────────────────

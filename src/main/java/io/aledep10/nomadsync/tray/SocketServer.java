@@ -227,11 +227,9 @@ public class SocketServer {
      * @param vault the vault to register
      */
     public void register(Vault vault) {
-        Properties properties = new Properties();
-        properties.setProperty("vault.path", vault.getPath());
         SyncEventQueue queue = new SyncEventQueue(logService);
         SyncOrchestrator orchestrator = new SyncOrchestrator(
-                properties, gitService, logService, queue, notificationHook);
+                vault, gitService, logService, queue, notificationHook);
         ScheduledFuture<?> aggregatorFuture = scheduler.schedule(
                 orchestrator::start, 0, TimeUnit.MILLISECONDS);
         vaults.put(vault.getId(), new VaultContext(vault, queue, orchestrator, aggregatorFuture));

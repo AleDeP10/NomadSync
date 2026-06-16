@@ -9,25 +9,46 @@ import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.StringUtil;
 
 import java.time.LocalDateTime;
-import java.util.Properties;
 
 /**
- * Coordinates sync operations by consuming events from {@link SyncEventQueue}
- * and delegating execution to {@link GitService}.
+ * Coordinates sync operations for a single {@link Vault} by consuming events from
+ * {@link SyncEventQueue} and delegating execution to {@link GitService}.
  *
- * <p>Runs a dedicated worker thread that processes events serially,
- * preventing Git concurrency issues by design.</p>
+ * <h2>Threading model</h2>
+ * <p>Runs a dedicated worker thread ({@code nomadsync-worker}) that processes
+ * events serially, preventing Git concurrency issues by design. {@link #start()}
+ * blocks the calling thread until the worker terminates — callers must run it on
+ * a dedicated thread (see {@code Main}).</p>
  *
- * <p>On {@link NetworkException}, applies exponential backoff retry up to
- * {@link #MAX_RETRIES} attempts before invoking {@link NotificationHook#onFailure}.
- * On {@link GitException}, fails immediately — local Git errors are not transient
- * and do not benefit from retry.</p>
+ * <h2>Lifecycle</h2>
+ * <ol>
+ *   <li>Construct with all dependencies — worker thread is prepared but not started.</li>
+ *   <li>Call {@link #start()} — starts the worker and blocks until it stops.</li>
+ *   <li>Call {@link #stop()} from another thread (e.g. shutdown hook) to signal
+ *       the worker to finish its current task and exit cleanly.</li>
+ * </ol>
+ *
+ * <h2>Error handling</h2>
+ * <ul>
+ *   <li>{@link NetworkException} → exponential backoff retry up to
+ *       {@link #MAX_RETRIES} attempts, then {@link NotificationHook#onFailure}.</li>
+ *   <li>{@link GitException} → immediate {@link NotificationHook#onFailure},
+ *       no retry — local Git errors are not transient.</li>
+ *   <li>{@link VaultException} → logged and swallowed — snapshot/conflict
+ *       failures are non-blocking; sync continues.</li>
+ * </ul>
+ *
+ * <h2>Constructor argument order</h2>
+ * <p>Follows the project convention: domain object first ({@link Vault}),
+ * then services in descending order of complexity, {@link LogService} last
+ * among services, then infrastructure ({@link SyncEventQueue},
+ * {@link NotificationHook}).</p>
  */
 public class SyncOrchestrator {
 
     public static final int MAX_RETRIES = 3;
 
-    private final String vaultPath;
+    private final Vault vault;
     private final SyncEventQueue queue;
     private final GitService gitService;
     private final NotificationHook notificationHook;
@@ -38,20 +59,21 @@ public class SyncOrchestrator {
      * Constructs the orchestrator and prepares the worker thread.
      * The worker is not started until {@link #start()} is called.
      *
-     * @param properties      application properties — must contain {@code vault.path}
-     * @param gitService      stateless Git operations delegate
-     * @param logService      shared logging service
-     * @param queue           priority event queue
+     * @param vault            the vault this orchestrator manages — used to derive
+     *                         the vault path and identity for all Git operations
+     * @param gitService       stateless Git operations delegate
+     * @param logService       vault-scoped logging service
+     * @param queue            priority event queue — the orchestrator is the sole consumer
      * @param notificationHook hook invoked on unrecoverable failures
      */
-    public SyncOrchestrator(Properties properties,
+    public SyncOrchestrator(Vault vault,
                             GitService gitService, LogService logService,
                             SyncEventQueue queue, NotificationHook notificationHook) {
-        this.vaultPath          = properties.getProperty("vault.path");
-        this.queue              = queue;
-        this.gitService         = gitService;
-        this.notificationHook   = notificationHook;
-        this.logService         = logService;
+        this.vault             = vault;
+        this.queue             = queue;
+        this.gitService        = gitService;
+        this.notificationHook  = notificationHook;
+        this.logService        = logService;
 
         this.worker = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
@@ -69,6 +91,10 @@ public class SyncOrchestrator {
 
     /**
      * Starts the worker thread and blocks the calling thread until it terminates.
+     *
+     * <p>Must be called on a dedicated thread — it will block until {@link #stop()}
+     * is called from another thread (e.g. the JVM shutdown hook registered in
+     * {@code Main}).</p>
      */
     public void start() {
         worker.start();
@@ -84,8 +110,9 @@ public class SyncOrchestrator {
      * Signals the worker to stop and waits for it to finish the current task.
      *
      * <p>Uses {@code interrupt()} to unblock {@link SyncEventQueue#consume()}
+     * (which internally calls {@link java.util.concurrent.PriorityBlockingQueue#take()})
      * and {@code join()} to wait for clean termination — never kills the thread
-     * mid-operation.</p>
+     * mid-operation. The current task completes before the worker exits.</p>
      */
     public void stop() {
         logService.info("Shutdown requested — waiting for worker to finish.");
@@ -103,22 +130,18 @@ public class SyncOrchestrator {
      *
      * <h2>Dispatch table</h2>
      * <ul>
-     *   <li>{@link EventType#PULL_LOGON} — stash if dirty → pull → stash pop</li>
-     *   <li>{@link EventType#SYNCHRONIZE} — delegates entirely to
-     *       {@link GitService#synchronize(String)}: commit local if dirty → pull →
-     *       on conflict: backup + pull -X ours + remote-conflicts snapshot → push</li>
-     *   <li>{@link EventType#PUSH_LOGOFF} — commit local → push</li>
-     *   <li>{@link EventType#AUTOSAVE} — commit local only if dirty, never pushes</li>
-     * </ul>
-     *
-     * <h2>Error handling</h2>
-     * <ul>
-     *   <li>{@link NetworkException} → exponential backoff retry up to
-     *       {@link #MAX_RETRIES} attempts, then {@link NotificationHook#onFailure}</li>
-     *   <li>{@link GitException} → immediate {@link NotificationHook#onFailure},
-     *       no retry</li>
-     *   <li>{@link VaultException} → logged and swallowed — backup failure is
-     *       non-blocking, sync proceeds</li>
+     *   <li>{@link EventType#PULL_LOGON} — stash if dirty → pull → stash pop.
+     *       The stash/pop is skipped entirely if the working tree is clean.</li>
+     *   <li>{@link EventType#SYNCHRONIZE} — delegates to
+     *       {@link GitService#synchronize(Vault)}: commit local if dirty → pull →
+     *       on conflict: FIFO backup + pull {@code -X ours} +
+     *       remote-conflicts snapshot → push.</li>
+     *   <li>{@link EventType#PUSH_LOGOFF} — commit local (if dirty) → push.</li>
+     *   <li>{@link EventType#COMMIT_MANUAL} — commit local with user-provided message
+     *       (from {@link SyncEvent#getMessage()}) if dirty; no-op otherwise. Never
+     *       pushes. If the message is blank, a timestamped fallback is used.</li>
+     *   <li>{@link EventType#AUTOSAVE} — commit local with auto-generated timestamp
+     *       message if dirty; no-op otherwise. Never pushes.</li>
      * </ul>
      *
      * @param event the event to process
@@ -129,36 +152,34 @@ public class SyncOrchestrator {
             logService.info("-> Performing " + event);
             switch (event.getType()) {
                 case PULL_LOGON -> {
-                    boolean dirty = gitService.hasUncommittedChanges(vaultPath);
-                    if (dirty) gitService.stash(vaultPath);
-                    gitService.pull(vaultPath);
-                    if (dirty) gitService.stashPop(vaultPath);
+                    boolean dirty = gitService.hasUncommittedChanges(vault);
+                    if (dirty) gitService.stash(vault);
+                    gitService.pull(vault);
+                    if (dirty) gitService.stashPop(vault);
                 }
-                case SYNCHRONIZE -> {
-                    gitService.synchronize(vaultPath);
-                }
+                case SYNCHRONIZE -> gitService.synchronize(vault);
                 case PUSH_LOGOFF -> {
-                    int commitExit = gitService.commitLocal(vaultPath, "push " + LocalDateTime.now());
+                    int commitExit = gitService.commitLocal(vault, "push " + LocalDateTime.now());
                     if (commitExit != 0) {
                         logService.info("Nothing to commit, pushing existing commits.");
                     }
-                    gitService.push(vaultPath);
+                    gitService.push(vault);
                 }
                 case COMMIT_MANUAL -> {
-                    if (gitService.hasUncommittedChanges(vaultPath)) {
+                    if (gitService.hasUncommittedChanges(vault)) {
                         String message = event.getMessage();
                         if (StringUtil.isBlank(message)) {
                             logService.warn("COMMIT_MANUAL: empty message, using fallback");
                             message = "manual commit " + LocalDateTime.now();
                         }
-                        gitService.commitLocal(vaultPath, message);
+                        gitService.commitLocal(vault, message);
                     } else {
                         logService.info("No changes detected, skipping manual commit.");
                     }
                 }
                 case AUTOSAVE -> {
-                    if (gitService.hasUncommittedChanges(vaultPath)) {
-                        gitService.commitLocal(vaultPath, "autosave " + LocalDateTime.now());
+                    if (gitService.hasUncommittedChanges(vault)) {
+                        gitService.commitLocal(vault, "autosave " + LocalDateTime.now());
                     } else {
                         logService.info("No changes detected, skipping autosave.");
                     }
@@ -166,9 +187,9 @@ public class SyncOrchestrator {
             }
             logService.info("-> " + event + " completed");
         } catch (VaultException e) {
+            // Snapshot/conflict failure is non-blocking — log and continue.
             logService.info("-> " + event + " failed: " + e.getMessage());
-        }
-        catch (NetworkException e) {
+        } catch (NetworkException e) {
             logService.error("Network error while performing " + event + ": " + e.getMessage());
             retry(event, e);
         } catch (GitException e) {
@@ -180,12 +201,15 @@ public class SyncOrchestrator {
     /**
      * Retries a failed event using exponential backoff.
      *
-     * <p>Delay progression: 30s → 60s → 120s.
-     * After {@link #MAX_RETRIES} attempts the event is discarded
-     * and {@link NotificationHook#onFailure} is invoked.</p>
+     * <p>Delay progression: 30s → 60s → 120s. After {@link #MAX_RETRIES} attempts
+     * the event is discarded and {@link NotificationHook#onFailure} is invoked.</p>
      *
-     * <p>Called only for {@link NetworkException} — {@link GitException}
-     * bypasses retry and fails immediately in {@link #execute}.</p>
+     * <p>Called only for {@link NetworkException} — {@link GitException} bypasses
+     * retry and fails immediately in {@link #execute}.</p>
+     *
+     * <p>If the thread is interrupted during the sleep, the notification hook is
+     * invoked, the interrupt flag is restored, and the {@link InterruptedException}
+     * is rethrown — the worker loop will catch it and shut down cleanly.</p>
      *
      * @param event the event to retry
      * @param cause the network exception that caused the failure

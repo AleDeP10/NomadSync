@@ -50,7 +50,7 @@ class SocketServerTest {
 
     @BeforeAll
     static void prepareSharedState() throws IOException {
-        testVault = TestUtil.getTestVault("SocketServerTest");
+        testVault  = TestUtil.getTestVault("SocketServerTest");
         logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG));
         gitService = mock(GitService.class);
 
@@ -94,9 +94,9 @@ class SocketServerTest {
      * the server receives it, routes it to the orchestrator of the target vault,
      * and the orchestrator delegates to {@link GitService}.
      *
-     * <p><strong>Assert target</strong>: {@code gitService.synchronize(vault.getPath())} —
-     * the orchestrator receives {@code vaultPath} from {@link VaultContext},
-     * not from the event.</p>
+     * <p><strong>Assert target</strong>: {@code gitService.synchronize(vault)} —
+     * the orchestrator passes the full {@link Vault} to {@link GitService},
+     * not just its path.</p>
      *
      * <p>Uses {@link org.awaitility.Awaitility} because the orchestrator runs on a
      * separate thread — the assert must poll until the interaction is recorded
@@ -114,7 +114,7 @@ class SocketServerTest {
         }
 
         await().atMost(20, TimeUnit.SECONDS).untilAsserted(() ->
-                verify(gitService).synchronize(vault.getPath()));
+                verify(gitService).synchronize(vault));
     }
 
     /**
@@ -194,11 +194,11 @@ class SocketServerTest {
     @Test
     void socketServer_handlesMultipleSequentialRequests() {
         List<SocketMessage> messages = List.of(
-                new SocketMessage(EventType.PULL_LOGON.name(), testVaults.get("test-1").getId(), 10),
-                new SocketMessage(EventType.PULL_LOGON.name(), testVaults.get("test-2").getId(), 10),
-                new SocketMessage(EventType.PULL_LOGON.name(), testVaults.get("test-3").getId(), 10),
+                new SocketMessage(EventType.PULL_LOGON.name(),  testVaults.get("test-1").getId(), 10),
+                new SocketMessage(EventType.PULL_LOGON.name(),  testVaults.get("test-2").getId(), 10),
+                new SocketMessage(EventType.PULL_LOGON.name(),  testVaults.get("test-3").getId(), 10),
                 new SocketMessage(EventType.SYNCHRONIZE.name(), testVaults.get("test-2").getId(), 10),
-                new SocketMessage(EventType.AUTOSAVE.name(), null, 10),
+                new SocketMessage(EventType.AUTOSAVE.name(),    null,                             10),
                 new SocketMessage(EventType.SYNCHRONIZE.name(), testVaults.get("test-3").getId(), 10));
 
         messages.forEach(message -> {
