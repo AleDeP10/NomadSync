@@ -187,7 +187,7 @@ class SyncOrchestratorTest {
         when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
         doThrow(new NetworkException("timeout", null)).when(gitService).pull(testVaultPath);
 
-        SyncEvent event = new SyncEvent(EventType.PULL_LOGON, vaultId,
+        SyncEvent event = new SyncEvent(EventType.PULL_LOGON, vaultId, null,
                 System.currentTimeMillis(), 10);
         orchestrator.execute(event);
 

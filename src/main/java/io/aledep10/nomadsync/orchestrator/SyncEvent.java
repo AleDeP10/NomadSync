@@ -27,6 +27,7 @@ public class SyncEvent implements Comparable<SyncEvent> {
 
     private final EventType type;
     private final String vaultId;
+    private final String message;  // ← nuovo, null per eventi che non lo usano
     private final long timestamp;
 
     private int retryCount;
@@ -38,9 +39,15 @@ public class SyncEvent implements Comparable<SyncEvent> {
      * @param type    the type of synchronization operation to perform
      * @param vaultId the target vault identifier, or {@code null} for broadcast events
      */
+    // costruttore esistente invariato (message = null)
     public SyncEvent(EventType type, String vaultId) {
+        this(type, vaultId, null);
+    }
+
+    public SyncEvent(EventType type, String vaultId, String message) {
         this.type       = type;
         this.vaultId    = vaultId;
+        this.message    = message;
         this.timestamp  = System.currentTimeMillis();
         this.retryCount = 0;
         this.retryDelay = INITIAL_RETRY_DELAY_MS;
@@ -51,7 +58,7 @@ public class SyncEvent implements Comparable<SyncEvent> {
      *
      * <p>Allows tests to create {@link SyncEvent} instances with a controlled
      * timestamp, enabling deterministic latest-wins scenarios in
-     * {@link SyncEventQueueTest} without exposing timestamp mutability to
+     * SyncEventQueueTest without exposing timestamp mutability to
      * production code.</p>
      *
      * @param type               the type of synchronization operation
@@ -59,9 +66,10 @@ public class SyncEvent implements Comparable<SyncEvent> {
      * @param timestamp          epoch milliseconds to assign as the event timestamp
      * @param initialRetryDelay  initial retry delay in milliseconds
      */
-    SyncEvent(EventType type, String vaultId, long timestamp, long initialRetryDelay) {
+    SyncEvent(EventType type, String vaultId, String message, long timestamp, long initialRetryDelay) {
         this.type       = type;
         this.vaultId    = vaultId;
+        this.message    = message;
         this.timestamp  = timestamp;
         this.retryCount = 0;
         this.retryDelay = initialRetryDelay;
@@ -98,13 +106,14 @@ public class SyncEvent implements Comparable<SyncEvent> {
             throw new UnsupportedOperationException(
                     "Event already assigned to vault: " + this.vaultId);
         }
-        return new SyncEvent(type, vaultId, timestamp, retryDelay);
+        return new SyncEvent(type, vaultId, message, timestamp, retryDelay);
     }
 
     // ── Getters ───────────────────────────────────────────────────────────────
 
     public EventType getType()      { return type; }
     public String    getVaultId()   { return vaultId; }
+    public String    getMessage()   { return message; }
     public long      getTimestamp() { return timestamp; }
     public int       getRetryCount(){ return retryCount; }
     public long      getRetryDelay(){ return retryDelay; }

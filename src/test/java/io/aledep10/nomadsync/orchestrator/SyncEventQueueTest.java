@@ -89,8 +89,8 @@ class SyncEventQueueTest {
      */
     @Test
     void publish_olderEvent_isDiscarded() throws InterruptedException {
-        SyncEvent eventNew = new SyncEvent(EventType.AUTOSAVE, vaultId, 2000, 50);
-        SyncEvent eventOld = new SyncEvent(EventType.AUTOSAVE, vaultId, 1000, 50);
+        SyncEvent eventNew = new SyncEvent(EventType.AUTOSAVE, vaultId, null, 2000, 50);
+        SyncEvent eventOld = new SyncEvent(EventType.AUTOSAVE, vaultId, null, 1000, 50);
 
         eventQueue.publish(eventNew);
         eventQueue.publish(eventOld);

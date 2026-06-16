@@ -24,6 +24,10 @@ public enum EventType {
     /** Triggered at Windows logoff. Persists the session to remote. */
     PUSH_LOGOFF(3),
 
+    /** Triggered explicitly by the user via NomadSyncCommit — local commit only,
+     *  with a user-provided message. Never pushes. */
+    COMMIT_MANUAL(4),
+
     /** Triggered periodically by the scheduler. Tolerant and deferrable. */
     AUTOSAVE(4);
 

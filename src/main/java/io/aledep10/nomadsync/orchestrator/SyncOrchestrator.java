@@ -6,6 +6,7 @@ import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.util.StringUtil;
 
 import java.time.LocalDateTime;
 import java.util.Properties;
@@ -142,6 +143,18 @@ public class SyncOrchestrator {
                         logService.info("Nothing to commit, pushing existing commits.");
                     }
                     gitService.push(vaultPath);
+                }
+                case COMMIT_MANUAL -> {
+                    if (gitService.hasUncommittedChanges(vaultPath)) {
+                        String message = event.getMessage();
+                        if (StringUtil.isBlank(message)) {
+                            logService.warn("COMMIT_MANUAL: empty message, using fallback");
+                            message = "manual commit " + LocalDateTime.now();
+                        }
+                        gitService.commitLocal(vaultPath, message);
+                    } else {
+                        logService.info("No changes detected, skipping manual commit.");
+                    }
                 }
                 case AUTOSAVE -> {
                     if (gitService.hasUncommittedChanges(vaultPath)) {
