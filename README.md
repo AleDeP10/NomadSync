@@ -3,69 +3,37 @@
 A lightweight, cross-platform Java tool that keeps one or more folders in sync
 across multiple machines using Git and GitHub — no subscription required.
 
-NomadSync has no dependency on any specific application: any folder backed by
-a private Git repository — notes, configuration, projects, dotfiles, or vaults
-from tools like Obsidian, Logseq, or similar — can be managed the same way. It
-runs as a background process, optionally with a system tray icon, and
-supports multiple independent folders ("vaults"), each mapped to its own
-GitHub repository and, optionally, its own owner and credentials.
-
----
-
-## Features
-
-- **Automatic pull at logon** — every vault is up to date before you start working
-- **Periodic autosave** — local commits at a configurable interval, no network dependency
-- **Automatic push at logoff** — local changes are pushed to GitHub when the session ends
-- **One-shot synchronize** — pull, resolve, and push in a single operation, with automatic conflict handling
-- **Multi-vault support** — manage any number of folders from a single process, each backed by its own repository and (optionally) its own GitHub account
-- **Broadcast and targeted operations** — synchronize a single vault or all registered vaults at once
-- **Conflict resolution with safety net** — on divergence, your local version is kept (`-X ours`); the remote version and a full pre-conflict snapshot are saved for manual review, never silently discarded
-- **FIFO backups** — the last 3 pre-conflict snapshots per vault are retained automatically
-- **Exponential backoff retry** — network failures are retried automatically (30s → 60s → 120s) before giving up, with notification on final failure
-- **Structured logging** — console, file, and optional [Seq](https://datalust.co/seq) structured log server, all vault-tagged for multi-vault observability
-- **Zero cloud subscription** — uses a free private GitHub repository per vault instead of paid sync services
+Any folder backed by a private Git repository can be managed: notes,
+configuration files, projects, dotfiles, or vaults from tools like Obsidian,
+Logseq, or similar. NomadSync supports multiple independent folders ("vaults"),
+each mapped to its own GitHub repository and, optionally, its own credentials.
 
 ---
 
 ## Requirements
 
 - Java 21 or later
-- Git, available on `PATH` (or configured explicitly via `git.executable`)
-- A GitHub account with a private repository per vault
-- Windows, macOS, or Linux
+- Git installed and available on PATH (or configured in `config.properties`)
+- A private GitHub repository for each vault
+- Windows (primary), macOS/Linux (supported via `.sh` scripts)
 
 ---
 
 ## Installation
 
-1. Clone or download this repository
-2. Copy `config.properties.template` to `config.properties` and fill in your settings
+1. Copy the `target/` folder to the desired location (e.g. `C:\tools\nomadsync\`)
+2. Copy `config.properties.template` to `config.properties` and fill in your values
 3. Copy `vaults.json.template` to `vaults.json` and register your vaults
-4. Build the fat JAR:
-
-   ```
-   mvn package
-   ```
-
-5. Copy the contents of `target/` to a dedicated folder (e.g. `~/Tools/NomadSync`)
-6. Run a manual `pull` once to verify your configuration, then register the
-   scheduled tasks for your platform (Windows Task Scheduler, macOS
-   `launchd`, or Linux `cron`/`systemd`)
+4. Add the installation folder to your system PATH to use the scripts from any terminal
 
 ---
 
 ## Configuration
 
-### config.properties
+### `config.properties` — global defaults
 
 ```properties
-# -- Paths --------------------------------------------------
-path.vaults=./vaults.json
-path.backup=./backup
-path.conflicts=./remote_conflicts
-
-# -- Git ------------------------------------------------------
+# Git
 git.executable=git
 git.remote=origin
 git.branch=main
@@ -74,189 +42,184 @@ git.email=you@example.com
 git.username=your-github-username
 git.token=ghp_...
 
-# -- Autosave ---------------------------------------------------
-autosave.interval.minutes=15
+# Paths
+path.vaults=./vaults.json
+path.backup=./backups
+path.conflicts=./remote-conflicts
 
-# -- Logging ----------------------------------------------------
-log.writers=console,file,seq
+# Logging
+log.writers=console,file
 log.path=logs/nomadsync.log
 log.level=INFO
-log.seq.url=http://localhost:5341
+
+# Autosave
+autosave.interval.minutes=15
+
+# Commit editor (optional — defaults to notepad/nano)
+commit.editor=notepad++
 ```
 
-`git.executable=git` resolves via `PATH` on Windows, macOS, and Linux. Override
-with an absolute path only if Git is not on `PATH` (e.g.
-`C:/Program Files/Git/bin/git.exe`).
-
-`log.writers` accepts any combination of `console`, `file`, `seq`
-(comma-separated). The `seq` writer ships structured, vault-tagged events to a
-[Seq](https://datalust.co/seq) server — useful for observing multiple vaults
-in real time. If `seq` is configured but unreachable, NomadSync continues
-normally; events are simply dropped.
-
-### vaults.json
+### `vaults.json` — registered vaults
 
 ```json
-{
-  "vaults": [
-    {
-      "id":    "A768-6CF3-10B-0000",
-      "owner": "your-github-username",
-      "name":  "personal-vault",
-      "path":  "/path/to/your/vault"
-    }
-  ]
-}
+[
+  {
+    "id": "auto-generated-uuid",
+    "owner": "YourUsername",
+    "name": "repository-name",
+    "path": "C:\\Users\\you\\vault",
+    "gitToken": "ghp_vault_specific_token"
+  }
+]
 ```
 
-Add one entry per vault. Each `path` must already be a Git repository with its
-remote configured. `name` must be unique across all registered vaults — it is
-used to name backup and conflict directories
-(`backup/<name>_<timestamp>/`, `remote_conflicts/<name>_<timestamp>/`), and a
-duplicate will be rejected at load time.
+All `git*` fields in `vaults.json` are **optional**: if absent, the global
+values from `config.properties` are used. Useful for vaults owned by other
+users, or legacy repositories using `master` instead of `main`.
 
-Optional per-vault fields `gitName`, `gitEmail`, `gitUsername`, `gitToken`
-allow overriding global Git credentials for a specific vault — useful when a
-vault belongs to a different GitHub account than your default.
+> **Security**: `vaults.json` is excluded from version control — it may contain
+> credentials. Only `vaults.json.template` is committed. The token is stored in
+> the vault's local `.git/config` (never committed) and never appears in logs.
 
 ---
 
 ## Usage
 
-NomadSync is a single executable invoked with an operation and a config file:
+### Main operations
 
-```
-java -jar NomadSync.jar <pull|push|sync|autosave> config.properties [vaultId]
-```
+```bat
+REM Full bidirectional sync (pull + conflict resolution + push)
+NomadSyncSync.bat --vault=vault-name
 
-`vaultId` is optional. For `pull`, `push`, and `sync` it scopes the operation
-to a single vault — if omitted, `pull`/`push` default to the first registered
-vault, and `sync` broadcasts to **all** vaults. `autosave` always broadcasts
-and ignores `vaultId`.
+REM Pull at session start (broadcasts to all vaults if --vault absent)
+NomadSyncPull.bat
 
-### Command-line shortcuts
+REM Push at session end
+NomadSyncPush.bat
 
-For day-to-day use, a set of platform scripts (`.bat` on Windows, `.sh` on
-macOS/Linux) wrap the most common operations — one per event type, each
-calling the shared dispatcher script with the right arguments:
+REM Local commit with custom message (opens editor)
+NomadSyncCommit.bat --vault=vault-name
 
-| Script | Operation | Effect | Typical use |
-|---|---|---|---|
-| `NomadSync.bat`/`.sh <op> [config] [vaultId]` | dispatcher | any operation | scripting, Task Scheduler/cron entries |
-| `NomadSyncPull.bat`/`.sh` | `pull` | stash → pull → stash pop | start of session |
-| `NomadSyncPush.bat`/`.sh` | `push` | commit local changes → push | end of session |
-| `NomadSyncSync.bat`/`.sh` | `sync` | commit → pull (with conflict handling) → push | on-demand, single click |
-| `NomadSyncCommit.bat`/`.sh` | commit | opens your default text editor for a commit message, commits locally — no push | checkpoint work-in-progress with a meaningful message |
-
-These shortcuts give developers the same fine-grained control over Git
-operations that the tray icon gives end users — without remembering CLI
-syntax. `NomadSyncCommit` in particular is a developer-facing addition: it
-lets you create a clean, meaningful local commit at any point, without
-triggering autosave's generic timestamped message or a full synchronize cycle.
-
-There is intentionally no `NomadSyncAutosave` script — autosave is managed
-internally by the running process on its configured interval and is not
-meant to be triggered manually.
-
----
-
-## How it works
-
-```
-Logon
-  └─ pull → stash (if dirty) → git pull → stash pop
-
-During session
-  └─ autosave every N minutes → commit local only (no network)
-  └─ on-demand sync → commit local → pull
-       ├─ no conflict → push
-       └─ conflict → backup snapshot → pull -X ours → save remote version
-                       for review → push (local version preserved)
-
-Logoff
-  └─ push → commit local (if dirty) → push
+REM Show git status
+NomadSyncStatus.bat
+NomadSyncStatus.bat --vault=vault-name
 ```
 
-Events are processed serially per vault through a priority queue — pull takes
-precedence over synchronize, which takes precedence over logoff push, which
-takes precedence over autosave. If two events of the same type are queued for
-the same vault, the most recent replaces the earlier one. Network failures
-trigger up to three retry attempts with exponential backoff (30s → 60s → 120s)
-before the event is discarded and a failure notification is raised.
+### Configuration management
 
-`autosave` and broadcast `sync` reach **all** registered vaults through a
-dedicated broadcast queue, regardless of how many vaults are configured —
-adding a vault to `vaults.json` requires no changes to scheduled tasks.
+```bat
+REM Update global token (config.properties)
+NomadSyncConfig.bat --git.token=ghp_new_token
 
----
+REM Update token for a specific vault (vaults.json)
+NomadSyncConfig.bat --vault=vault-name --git.token=ghp_vault_token
 
-## Project structure
+REM Change branch for a legacy repository
+NomadSyncConfig.bat --vault=legacy-vault --git.branch=master
+```
+
+### Vault resolution
+
+`--vault` accepts the vault name or its full repoSlug:
+
+```bat
+NomadSyncSync.bat --vault=public-vault
+NomadSyncSync.bat --vault=YourUsername/public-vault
+```
+
+If multiple vaults share the same name (different owners), NomadSync requires
+the full repoSlug:
 
 ```
-src/main/java/io/aledep10/nomadsync/
-├── Main.java
-├── dto/                  ← Jackson-annotated DTOs, isolated from domain classes
-├── orchestrator/
-│   ├── Vault.java
-│   ├── VaultContext.java
-│   ├── SyncEvent.java
-│   ├── SyncEventQueue.java
-│   └── SyncOrchestrator.java
-├── scheduler/
-│   └── AutosaveScheduler.java
-├── service/
-│   ├── GitService.java
-│   ├── GitignoreService.java
-│   ├── VaultService.java
-│   └── LogService.java
-├── logging/
-│   ├── ConsoleLogWriter.java
-│   ├── FileLogWriter.java
-│   └── SeqHttpLogWriter.java
-├── hook/
-│   └── NotificationHook.java
-└── util/
-    ├── CommandUtil.java
-    └── JsonMapper.java
-
-src/main/resources/
-├── config.properties.template
-└── vaults.json.template
+vault name 'public-vault' is ambiguous.
+Matches: AleDeP10/public-vault, Belmani/public-vault.
+Use --vault=<owner>/<name>
 ```
 
 ---
 
-## Design decisions
+## Interactive commit
 
-All architectural decisions taken during development are recorded in the
-unified [Decision Track Record](docs/DTR.md) (`docs/DTR.md`), available in
-[English](docs/DTR.md) and [Italian](docs/DTR_it.md). Each entry captures
-context, decision, rationale, and evaluated alternatives — it is the primary
-reference for understanding why the system is built the way it is.
+`NomadSyncCommit` opens the configured text editor, waits for it to close, and
+uses the saved text as the commit message.
 
----
+- **Save and close** → commit created
+- **Close without saving** → operation cancelled, no commit
 
-## Roadmap
-
-NomadSync is the first of a planned family of cross-platform desktop tools
-sharing a common Java/JavaFX foundation, including a shared design system
-([ForgeUI](docs/DTR.md#dtr-044--forgeui--shared-javafx-design-system-maven-central-candidate)),
-a system tray UI, a JavaFX dashboard (`MainWindow`), and internationalisation
-across 10 languages. See `docs/DTR.md` for the current status of each
-planned component.
+Editor resolution order:
+1. `--editor` flag on the command line
+2. `commit.editor` in `config.properties`
+3. `EDITOR` environment variable
+4. `notepad` on Windows, `nano` on Unix
 
 ---
 
-## Authors
+## Conflict resolution
 
-**Alessandro De Prato** · Senior Software Engineer – Product Owner, Tech Lead
-[Portfolio](https://aledep10.github.io/) · [GitHub](https://github.com/AleDeP10) · [LinkedIn](https://www.linkedin.com/in/alessandro-de-prato)
+When a conflict occurs during `sync`:
 
-**Gabriela Belmani** · Software Engineer – Developer, QA Engineer
-[GitHub](https://github.com/Belmani) · [LinkedIn](https://www.linkedin.com/in/gabriela-da-sa%C3%BAde-belmani-tumfart)
+1. NomadSync creates a FIFO snapshot of the vault in `backups/`
+   (max 3 snapshots per vault)
+2. Applies `git pull -X ours` — local version wins
+3. Saves the remote version of each conflicted file in `remote-conflicts/`
+   for manual review
+
+Backup and conflict directories use the format `<owner>_<name>_<timestamp>`,
+ensuring no collision between vaults with the same name but different owners.
 
 ---
 
-## License
+## Daemon mode
 
-MIT
+By default, NomadSync exits automatically once all operations are complete
+(one-shot mode). Pass `--daemon` to keep the process alive indefinitely
+(for use with the Tray, coming in a future release):
+
+```bat
+NomadSync.bat pull --daemon
+```
+
+---
+
+## Task Scheduler (Windows)
+
+To automate pull at logon and push at logoff:
+
+```
+Trigger: At user logon → Action: NomadSyncPull.bat
+Trigger: At disconnect  → Action: NomadSyncPush.bat
+```
+
+Without `--vault`, both operate on all registered vaults.
+
+---
+
+## Troubleshooting
+
+### `Repository not found` on pull/push
+
+1. Verify the repository exists on GitHub with the exact name in `vaults.json`
+2. Check the token has not expired:
+   GitHub → Settings → Developer settings → Personal access tokens
+3. Verify the token has `repo` scope (full control of private repositories)
+4. Re-run bootstrap: `NomadSyncConfig.bat --vault=<name> --git.token=ghp_new`
+5. Check the remote URL: `git -C <vault-path> remote get-url origin`
+   — should start with `https://ghp_...@github.com/`
+
+### Process does not terminate after pull/push
+
+Without `--daemon`, the process exits automatically once all queues are drained.
+If it hangs, it is likely waiting for a network operation (retry with backoff).
+Check the log for `Network error` entries. The process will exit after at most
+3 retries (~3.5 minutes).
+
+### Token visible in logs
+
+The token is never logged by NomadSync. If you see it in a log file, it was
+passed as a command-line argument by an external script — review your wrapper
+scripts and use `NomadSyncConfig.bat --git.token=...` instead.
+
+### Empty `git status` output on one line
+
+Ensure you are using `NomadSyncStatus.bat` (which calls `Main` with `status`)
+and not calling `git status` directly from a script that strips newlines.

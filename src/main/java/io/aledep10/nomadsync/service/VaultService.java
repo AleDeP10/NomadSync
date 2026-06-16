@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.orchestrator.Vault;
@@ -81,13 +82,13 @@ public class VaultService {
     public VaultService(Properties properties,
                         GitignoreService gitignoreService,
                         LogService logService) {
-        this.vaultFile        = new File(properties.getProperty("path.vaults"));
+        this.vaultFile        = new File(properties.getProperty(NomadProperties.Path.VAULTS));
         this.gitignoreService = gitignoreService;
         this.logService       = logService;
         this.backupsRoot      = Path.of(properties.getProperty(
-                "path.backup",    FALLBACK_ROOT + "/backups"));
+                NomadProperties.Path.BACKUP, FALLBACK_ROOT + "/backups"));
         this.conflictsRoot    = Path.of(properties.getProperty(
-                "path.conflicts", FALLBACK_ROOT + "/remote-conflicts"));
+                NomadProperties.Path.CONFLICTS, FALLBACK_ROOT + "/remote-conflicts"));
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────

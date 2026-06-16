@@ -1,28 +1,10 @@
 {
   "vaults": [
     {
-      "id":    "A768-6CF3-10B-0000",
-      "owner": "AleDeP10",
-      "name":  "public-vault",
-      "path":  "C:\\Users\\aless\\vaults\\public"
-    },
-    {
-      "id":    "A768-6CF3-10B-0001",
-      "owner": "AleDeP10",
-      "name":  "private-vault",
-      "path":  "C:\\Users\\aless\\vaults\\private"
-    },
-    {
       "id":    "A768-6CF3-10B-0002",
       "owner": "AleDeP10",
       "name":  "nomad-test-vault",
       "path":  "C:\\Users\\aless\\vaults\\nomad-test"
-    },
-    {
-      "id":    "A768-6CF3-10B-0003",
-      "owner": "Belmani",
-      "name":  "belmani-apex",
-      "path":  "C:\\Users\\aless\\vaults\\belmani-apex"
     }
   ]
 }

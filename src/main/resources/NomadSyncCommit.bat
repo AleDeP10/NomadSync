@@ -1,37 +1,20 @@
 @echo off
-REM Usage: NomadSyncCommit.bat [config.properties] <vaultId>
-REM
-REM Opens a text editor for a commit message, then performs a local-only
-REM commit on the specified vault. Requires vaultId — a manual commit
-REM without an explicit target is intentionally not supported.
+rem ===========================================================================
+rem NomadSync Commit Shortcut
+rem Usage: NomadSyncCommit.bat --vault=<name|owner/name> [--config=<path>] [--editor=<path>]
+rem
+rem --vault is required — a manual commit without an explicit target is
+rem intentionally not supported.
+rem
+rem Opens the configured text editor for the commit message.
+rem Editor resolution order:
+rem   1. --editor flag
+rem   2. commit.editor in config.properties
+rem   3. EDITOR environment variable
+rem   4. notepad (Windows default)
+rem
+rem Save and close the editor to commit.
+rem Close without saving to abort — no commit will be created.
+rem ===========================================================================
 
-if "%2"=="" (
-    echo Usage: NomadSyncCommit.bat [config.properties] ^<vaultId^>
-    echo vaultId is required for manual commits.
-    pause
-    exit /b 1
-)
-
-set CONFIG=%1
-set VAULTID=%2
-set TMPFILE=%TEMP%\nomadsync-commit-%RANDOM%.txt
-
-REM Create empty message file and open default editor
-type nul > "%TMPFILE%"
-if defined EDITOR (
-    %EDITOR% "%TMPFILE%"
-) else (
-    notepad "%TMPFILE%"
-)
-
-REM Check if the file has any non-whitespace content
-for %%A in ("%TMPFILE%") do set SIZE=%%~zA
-if %SIZE%==0 (
-    echo Empty commit message — aborting, no commit created.
-    del "%TMPFILE%"
-    pause
-    exit /b 0
-)
-
-call NomadSync.bat commit "%CONFIG%" "%VAULTID%" "%TMPFILE%"
-del "%TMPFILE%"
+call NomadSync.bat commit %*

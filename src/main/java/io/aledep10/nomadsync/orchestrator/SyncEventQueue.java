@@ -13,8 +13,15 @@ import java.util.concurrent.PriorityBlockingQueue;
  * only the most recent one is retained (latest-wins deduplication).</p>
  *
  * <p>Publish operations are {@code synchronized} to guarantee atomicity of the
- * check-remove-insert sequence. Consume delegates to {@link PriorityBlockingQueue#take()},
- * which is already thread-safe and blocks until an event is available.</p>
+ * check-remove-insert sequence. Consume delegates to
+ * {@link PriorityBlockingQueue#take()}, which is already thread-safe and blocks
+ * until an event is available.</p>
+ *
+ * <h2>Daemon vs one-shot mode</h2>
+ * <p>In one-shot CLI mode (no {@code --daemon} flag), {@code Main} polls
+ * {@link #isEmpty()} across all per-vault queues to detect completion and
+ * terminate the process automatically. In daemon mode (Tray), the process
+ * stays alive indefinitely and queues are never polled for termination.</p>
  */
 public class SyncEventQueue {
 
@@ -28,7 +35,7 @@ public class SyncEventQueue {
      */
     public SyncEventQueue(LogService logService) {
         this.logService = logService;
-        this.queue = new PriorityBlockingQueue<>(10);
+        this.queue      = new PriorityBlockingQueue<>(10);
     }
 
     /**
@@ -52,18 +59,15 @@ public class SyncEventQueue {
             SyncEvent existing = it.next();
             if (existing.getType() == event.getType()) {
                 if (event.getTimestamp() > existing.getTimestamp()) {
-                    // incoming event is newer — replace
                     it.remove();
                     queue.add(event);
                     logService.info("Queue: replaced " + existing + " with " + event);
                 } else {
-                    // incoming event is older — discard
                     logService.info("Queue: discarded outdated " + event);
                 }
-                return; // duplicate found — either replaced or discarded, stop
+                return;
             }
         }
-        // no duplicate found — enqueue
         queue.add(event);
         logService.info("Queue: published " + event);
     }
@@ -78,6 +82,20 @@ public class SyncEventQueue {
      */
     public synchronized int size() {
         return queue.size();
+    }
+
+    /**
+     * Returns {@code true} if the queue contains no pending events.
+     *
+     * <p>Used by {@code Main} in one-shot CLI mode to detect when all events
+     * have been consumed and the process can terminate cleanly.</p>
+     *
+     * <p>Synchronized for the same reason as {@link #size()}.</p>
+     *
+     * @return {@code true} if the queue is empty
+     */
+    public synchronized boolean isEmpty() {
+        return queue.isEmpty();
     }
 
     /**

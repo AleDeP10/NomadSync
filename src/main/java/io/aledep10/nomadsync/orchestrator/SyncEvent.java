@@ -39,7 +39,6 @@ public class SyncEvent implements Comparable<SyncEvent> {
      * @param type    the type of synchronization operation to perform
      * @param vaultId the target vault identifier, or {@code null} for broadcast events
      */
-    // costruttore esistente invariato (message = null)
     public SyncEvent(EventType type, String vaultId) {
         this(type, vaultId, null);
     }

@@ -1,17 +1,15 @@
 package io.aledep10.nomadsync.tray;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.orchestrator.*;
+import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.JsonMapper;
-import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
@@ -19,7 +17,7 @@ import java.util.concurrent.*;
 
 /**
  * Accepts incoming TCP connections from {@link SocketClient} instances,
- * deserializes JSON messages into {@link SyncEvent} objects, and routes
+ * deserialises JSON messages into {@link SyncEvent} objects, and routes
  * them to the appropriate per-vault {@link SyncEventQueue}.
  *
  * <h2>Threading model</h2>
@@ -44,10 +42,15 @@ import java.util.concurrent.*;
  * </ul>
  *
  * <h2>Broadcast events</h2>
- * <p>Events with {@code vaultId = null} are broadcast sentinels — the router expands
- * them into one targeted event per registered vault via {@link SyncEvent#forVault(String)}.
- * Used by {@link AutosaveScheduler} to trigger
- * autosave across all vaults without knowing the vault list at publish time.</p>
+ * <p>Events with {@code vaultId = null} are broadcast sentinels — the router
+ * expands them into one targeted event per registered vault via
+ * {@link SyncEvent#forVault(String)}. Used by {@link AutosaveScheduler} to
+ * trigger autosave across all vaults without knowing the vault list at
+ * publish time.</p>
+ *
+ * <h2>Configuration</h2>
+ * <p>Requires {@link NomadProperties.Socket#PORT} to be set in the provided
+ * {@link Properties}.</p>
  *
  * <h2>Lifecycle</h2>
  * <ol>
@@ -59,15 +62,15 @@ import java.util.concurrent.*;
  */
 public class SocketServer {
 
-    final LogService logService;
-    final GitService gitService;
-    final NotificationHook notificationHook;
-    final Map<String, VaultContext> vaults;
-    final PriorityBlockingQueue<SyncEvent> mainQueue;
-    final Thread receiver;
-    final Thread router;
-    final ServerSocket serverSocket;
-    final ScheduledExecutorService scheduler;
+    final LogService                         logService;
+    final GitService                         gitService;
+    final NotificationHook                   notificationHook;
+    final Map<String, VaultContext>          vaults;
+    final PriorityBlockingQueue<SyncEvent>   mainQueue;
+    final Thread                             receiver;
+    final Thread                             router;
+    final ServerSocket                       serverSocket;
+    final ScheduledExecutorService           scheduler;
 
     /**
      * Constructs the server and opens the {@link ServerSocket} on the configured port.
@@ -75,15 +78,18 @@ public class SocketServer {
      * <p>Does not start any threads — call {@link #register(Vault)} for each vault,
      * then {@link #start()}.</p>
      *
-     * @param properties      application properties containing {@code socket.port}
-     * @param logService      shared logging service
-     * @param gitService      stateless Git operations delegate
+     * @param properties       application properties — must contain
+     *                         {@link NomadProperties.Socket#PORT}
+     * @param logService       shared logging service
+     * @param gitService       stateless Git operations delegate
      * @param notificationHook hook invoked on unrecoverable failures
      * @throws IOException if the {@link ServerSocket} cannot be opened on the given port
      */
     public SocketServer(Properties properties, LogService logService,
-                        GitService gitService, NotificationHook notificationHook) throws IOException {
-        int port              = Integer.parseInt(properties.getProperty("socket.port"));
+                        GitService gitService, NotificationHook notificationHook)
+            throws IOException {
+        int port              = Integer.parseInt(
+                properties.getProperty(NomadProperties.Socket.PORT));
         this.logService       = logService;
         this.gitService       = gitService;
         this.notificationHook = notificationHook;
@@ -191,8 +197,8 @@ public class SocketServer {
     /**
      * Starts the receiver and router threads.
      *
-     * <p>Vaults registered before this call are already running (their orchestrators
-     * were scheduled in {@link #register(Vault)}). Vaults registered after this call
+     * <p>Vaults registered before this call are already running — their orchestrators
+     * were scheduled in {@link #register(Vault)}. Vaults registered after this call
      * are also supported.</p>
      */
     public void start() {
@@ -204,9 +210,9 @@ public class SocketServer {
      * Stops all orchestrator futures, interrupts receiver and router threads,
      * and shuts down the scheduler.
      *
-     * <p>{@code ScheduledFuture.cancel(true)} sends an interrupt to each orchestrator
-     * thread. No explicit {@code join()} is required — each thread's loop guard
-     * exits on the next iteration check.</p>
+     * <p>{@link ScheduledFuture#cancel(boolean) cancel(true)} sends an interrupt to
+     * each orchestrator thread. The receiver and router exit on the next iteration
+     * of their loop guard.</p>
      */
     public void stop() {
         vaults.values().stream()
@@ -227,22 +233,25 @@ public class SocketServer {
      * @param vault the vault to register
      */
     public void register(Vault vault) {
-        SyncEventQueue queue = new SyncEventQueue(logService);
+        SyncEventQueue   queue        = new SyncEventQueue(logService);
         SyncOrchestrator orchestrator = new SyncOrchestrator(
                 vault, gitService, logService, queue, notificationHook);
         ScheduledFuture<?> aggregatorFuture = scheduler.schedule(
                 orchestrator::start, 0, TimeUnit.MILLISECONDS);
-        vaults.put(vault.getId(), new VaultContext(vault, queue, orchestrator, aggregatorFuture));
+        vaults.put(vault.getId(),
+                new VaultContext(vault, queue, orchestrator, aggregatorFuture));
     }
 
     /**
-     * Publishes a {@link SyncEvent} directly to the per-vault queue,
-     * bypassing the socket layer. Used by the tray icon for same-JVM events
-     * (e.g. left-click SYNCHRONIZE).
+     * Publishes a {@link SyncEvent} directly to the per-vault queue, bypassing the
+     * socket layer.
+     *
+     * <p>Intended for same-JVM callers (e.g. tray icon left-click SYNCHRONIZE) that
+     * do not need the TCP round-trip.</p>
      *
      * @param vaultId the target vault identifier
      * @param event   the event to publish
-     * @throws IllegalArgumentException if {@code vaultId} is null or not registered
+     * @throws IllegalArgumentException if {@code vaultId} is {@code null} or not registered
      */
     public void publish(String vaultId, SyncEvent event) {
         if (vaultId == null || !vaults.containsKey(vaultId)) {

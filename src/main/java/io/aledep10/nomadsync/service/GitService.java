@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.GitException;
 import io.aledep10.nomadsync.exception.NetworkException;
 import io.aledep10.nomadsync.exception.VaultException;
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 /**
  * Wraps Git CLI operations via {@link ProcessBuilder}.
@@ -38,13 +40,18 @@ import java.util.Properties;
  * error on a local operation indicates an unexpected condition, not a transient
  * connectivity failure.</p>
  *
- * <h2>Credential bootstrap</h2>
- * <p>{@link #bootstrapVault(Vault)} must be called once per vault at process
- * startup (and re-called whenever credentials change via {@code NomadSync config}).
- * It writes per-vault {@code user.name}, {@code user.email}, and the authenticated
- * remote URL to the vault's local {@code .git/config}, ensuring all subsequent
- * Git operations use the correct identity and authentication without relying on
- * global system configuration.</p>
+ * <h2>Authentication strategy</h2>
+ * <p>Credentials are applied <em>once</em> at bootstrap via
+ * {@link #bootstrapVault(Vault)}, which writes {@code user.name},
+ * {@code user.email}, and an authenticated remote URL
+ * ({@code https://<token>@github.com/<owner>/<name>}) into the vault's local
+ * {@code .git/config}. All subsequent remote operations ({@link #pull},
+ * {@link #push}) use plain {@code git pull} / {@code git push} with no
+ * credential arguments — Git reads the token from the already-configured URL.</p>
+ *
+ * <p>This approach is cross-platform, does not depend on any OS credential
+ * manager, and ensures the token never appears in log output (it is written
+ * to {@code .git/config}, not passed as a command-line argument).</p>
  *
  * <h2>Constructor argument order</h2>
  * <p>Follows the project convention: {@link Properties} first, dependencies in
@@ -53,24 +60,29 @@ import java.util.Properties;
 public class GitService {
 
     private final Properties properties;
-    private final String gitExecutable;
+    private final String     gitExecutable;
     private final VaultService vaultService;
-    private final LogService logService;
+    private final LogService   logService;
 
     /**
      * Constructs the service from the provided configuration.
      *
-     * @param properties   application properties — must contain {@code git.executable};
-     *                     may contain global Git credential defaults ({@code git.name},
-     *                     {@code git.email}, {@code git.username}, {@code git.token},
-     *                     {@code git.remote}, {@code git.branch})
-     * @param vaultService vault lifecycle service — used for snapshot creation and
-     *                     conflict file persistence in {@link #synchronize(Vault)}
+     * @param properties   application properties — must contain
+     *                     {@link NomadProperties.Git#EXECUTABLE};
+     *                     may contain global Git credential defaults
+     *                     ({@link NomadProperties.Git#NAME},
+     *                     {@link NomadProperties.Git#EMAIL},
+     *                     {@link NomadProperties.Git#USERNAME},
+     *                     {@link NomadProperties.Git#TOKEN},
+     *                     {@link NomadProperties.Git#REMOTE},
+     *                     {@link NomadProperties.Git#BRANCH})
+     * @param vaultService vault lifecycle service — used for snapshot creation
+     *                     and conflict file persistence in {@link #synchronize(Vault)}
      * @param logService   shared logging service
      */
     public GitService(Properties properties, VaultService vaultService, LogService logService) {
         this.properties    = properties;
-        this.gitExecutable = properties.getProperty("git.executable", "git");
+        this.gitExecutable = properties.getProperty(NomadProperties.Git.EXECUTABLE, "git");
         this.vaultService  = vaultService;
         this.logService    = logService;
     }
@@ -87,15 +99,17 @@ public class GitService {
      * to apply the new values immediately without restarting the process.</p>
      *
      * <h2>Credential resolution order</h2>
-     * <p>For each credential field: per-vault value (from {@link Vault}) →
-     * global value (from {@code config.properties}) → system default
+     * <p>For each field: per-vault value ({@link Vault}) → global value
+     * ({@link NomadProperties.Git} in {@code config.properties}) → system default
      * ({@code ~/.gitconfig} — no action taken, Git handles it automatically).</p>
      *
-     * <h2>Remote URL</h2>
-     * <p>If a token is available (per-vault or global), the remote URL is set to
-     * {@code https://<username>@github.com/<owner>/<name>} with the token embedded
-     * via the {@code credential.helper} approach. This is cross-platform and does
-     * not depend on any shell-specific syntax or OS keychain integration.</p>
+     * <h2>Remote URL and token security</h2>
+     * <p>If a token is available (per-vault or global), the authenticated remote
+     * URL ({@code https://<token>@github.com/<owner>/<name>}) is written to the
+     * vault's local {@code .git/config} via {@code git remote set-url}. The token
+     * is stored in {@code .git/config} — never passed as a command-line argument
+     * and therefore never logged. {@code .git/} is excluded from Git tracking by
+     * design, so the token is never committed to the repository.</p>
      *
      * @param vault the vault to configure
      * @throws GitException         if a Git config command fails
@@ -105,9 +119,9 @@ public class GitService {
         String path = vault.getPath();
 
         String name  = StringUtil.coalesce(vault.getGitName(),
-                properties.getProperty("git.name"));
+                properties.getProperty(NomadProperties.Git.NAME));
         String email = StringUtil.coalesce(vault.getGitEmail(),
-                properties.getProperty("git.email"));
+                properties.getProperty(NomadProperties.Git.EMAIL));
 
         try {
             if (name != null) {
@@ -120,18 +134,23 @@ public class GitService {
             }
 
             String token    = StringUtil.coalesce(vault.getGitToken(),
-                    properties.getProperty("git.token"));
+                    properties.getProperty(NomadProperties.Git.TOKEN));
             String username = StringUtil.coalesce(vault.getGitUsername(),
-                    properties.getProperty("git.username"));
+                    properties.getProperty(NomadProperties.Git.USERNAME));
             String remote   = StringUtil.coalesce(vault.getGitRemote(),
-                    properties.getProperty("git.remote", "origin"));
+                    properties.getProperty(NomadProperties.Git.REMOTE, "origin"));
 
             if (token != null && username != null) {
+                // Token embedded in URL — written to .git/config, never logged.
+                // .git/ is never committed, so the token stays local.
                 String remoteUrl = "https://" + token + "@github.com/"
                         + vault.getOwner() + "/" + vault.getName();
                 CommandUtil.runCommand(path,
                         List.of(gitExecutable, "remote", "set-url", remote, remoteUrl),
+                        Set.of(remoteUrl),   // remoteUrl logged as <hidden>
                         logService);
+                logService.info("bootstrapVault: remote URL configured for "
+                        + vault.getRepoSlug());
             }
 
             logService.info("bootstrapVault: configured " + vault.getRepoSlug());
@@ -146,6 +165,10 @@ public class GitService {
     /**
      * Pushes committed changes to the remote repository.
      *
+     * <p>Authentication is handled transparently by the remote URL written to
+     * {@code .git/config} during {@link #bootstrapVault(Vault)} — no credential
+     * arguments are passed to {@code git push}.</p>
+     *
      * @param vault the vault to push
      * @throws NetworkException     if a network connectivity failure is detected
      * @throws GitException         if a local Git error occurs
@@ -153,9 +176,9 @@ public class GitService {
      */
     public void push(Vault vault) throws GitException, NetworkException, InterruptedException {
         String remote = StringUtil.coalesce(vault.getGitRemote(),
-                properties.getProperty("git.remote", "origin"));
+                properties.getProperty(NomadProperties.Git.REMOTE, "origin"));
         String branch = StringUtil.coalesce(vault.getGitBranch(),
-                properties.getProperty("git.branch", "main"));
+                properties.getProperty(NomadProperties.Git.BRANCH, "main"));
         CommandUtil.runCommand(vault.getPath(),
                 List.of(gitExecutable, "push", remote, branch), logService);
     }
@@ -163,6 +186,10 @@ public class GitService {
     /**
      * Pulls the latest changes from the remote repository,
      * preferring the remote version on conflicts ({@code -X theirs}).
+     *
+     * <p>Authentication is handled transparently by the remote URL written to
+     * {@code .git/config} during {@link #bootstrapVault(Vault)} — no credential
+     * arguments are passed to {@code git pull}.</p>
      *
      * @param vault the vault to pull
      * @throws NetworkException     if a network connectivity failure is detected
@@ -268,6 +295,29 @@ public class GitService {
         }
     }
 
+    /**
+     * Returns the human-readable output of {@code git status} for the given vault.
+     *
+     * <p>Intended for interactive CLI use ({@code NomadSync status}) — the output
+     * is meant to be printed directly to {@code stdout} for the user to read, not
+     * logged. Unlike {@link #hasUncommittedChanges(Vault)}, which uses
+     * {@code --porcelain} to produce machine-readable output for boolean checks,
+     * this method returns the full human-readable format.</p>
+     *
+     * @param vault the vault to inspect
+     * @return trimmed output of {@code git status}, never {@code null}
+     * @throws GitException         if a Git error occurs
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    public String status(Vault vault) throws GitException, InterruptedException {
+        try {
+            return CommandUtil.runCommandWithLines(vault.getPath(),
+                    List.of(gitExecutable, "status"));
+        } catch (NetworkException e) {
+            throw new GitException("Unexpected network error on local status operation", e);
+        }
+    }
+
     // ── Synchronize ───────────────────────────────────────────────────────────
 
     /**
@@ -334,7 +384,7 @@ public class GitService {
             if (pullExitCode == 0) {
                 push(vault);
             } else {
-                // abort any in-progress merge — non-zero exit is normal if no merge was running
+                // Abort any in-progress merge — non-zero exit is normal if no merge was running.
                 CommandUtil.runCommand(
                         vaultPath, List.of(gitExecutable, "merge", "--abort"), logService);
 
@@ -365,7 +415,8 @@ public class GitService {
                     try {
                         int showExitCode = CommandUtil.runCommandToFile(
                                 vaultPath,
-                                List.of(gitExecutable, "--no-pager", "show", "FETCH_HEAD:" + file),
+                                List.of(gitExecutable, "--no-pager", "show",
+                                        "FETCH_HEAD:" + file),
                                 tempFile);
                         logService.debug("show " + file + " exit code: " + showExitCode);
                         vaultService.saveConflict(conflictDirName, basename, tempFile);

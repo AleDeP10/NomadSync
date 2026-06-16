@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.logging.ConsoleLogWriter;
 import io.aledep10.nomadsync.logging.FileLogWriter;
 import io.aledep10.nomadsync.logging.LogLevel;
@@ -19,14 +20,14 @@ import java.util.stream.Collectors;
  * Levelled, append-only logging service with fan-out to multiple {@link LogWriter} targets.
  *
  * <h2>Writer configuration</h2>
- * <p>Writers are built from the {@code log.writers} property
+ * <p>Writers are built from the {@link NomadProperties.Log#WRITERS} property
  * (comma-separated, default {@code "console,file"}). Supported tokens:</p>
  * <ul>
  *   <li>{@code console} — writes to stdout/stderr via {@link ConsoleLogWriter}</li>
- *   <li>{@code file}    — appends to {@code log.path} via {@link FileLogWriter};
- *       skipped with a warning if {@code log.path} is absent</li>
+ *   <li>{@code file}    — appends to {@link NomadProperties.Log#PATH} via
+ *       {@link FileLogWriter}; skipped with a warning if the key is absent</li>
  *   <li>{@code seq}     — ships CLEF events to Seq via {@link SeqHttpLogWriter};
- *       skipped with a warning if {@code log.seq.url} is absent</li>
+ *       skipped with a warning if {@link NomadProperties.Log#SEQ_URL} is absent</li>
  * </ul>
  *
  * <h2>Vault scoping</h2>
@@ -35,7 +36,14 @@ import java.util.stream.Collectors;
  * Per-vault instances are obtained via {@link #withVault(String)} — they share the
  * same underlying writers and only differ in the slug written to each line.</p>
  *
- * <h2>Threading</h2>
+ * <h2>Configuration loading</h2>
+ * <p>At boot, {@code Main} loads {@code config.properties} from the filesystem via
+ * {@link java.io.FileInputStream} and passes the resulting {@link Properties} here.
+ * Built-in defaults are available via {@link io.aledep10.nomadsync.config.NomadPropertiesLoader},
+ * which reads from the classpath — the two sources are complementary.
+ * All property keys are declared as constants in
+ * {@link io.aledep10.nomadsync.config.NomadProperties.Log}.</p>
+ *
  * <p>Thread safety is delegated to each {@link LogWriter} implementation:
  * {@link FileLogWriter} uses {@code synchronized}; {@link SeqHttpLogWriter}
  * uses a {@link java.util.concurrent.BlockingQueue}.</p>
@@ -57,11 +65,12 @@ public class LogService {
     /**
      * Constructs a system-level {@code LogService} with {@code repoSlug = "SYSTEM"}.
      *
-     * <p>Writers are built from {@code log.writers}. Use this constructor at boot,
-     * before any vault is loaded.</p>
+     * <p>Writers are built from {@link NomadProperties.Log#WRITERS}.
+     * Use this constructor at boot, before any vault is loaded.</p>
      *
-     * @param properties application properties containing at minimum
-     *                   {@code log.level} and {@code log.writers}
+     * @param properties application properties — must contain at minimum
+     *                   {@link NomadProperties.Log#LEVEL} and
+     *                   {@link NomadProperties.Log#WRITERS}
      */
     public LogService(Properties properties) {
         this(properties, buildWriters(properties), "SYSTEM");
@@ -95,7 +104,8 @@ public class LogService {
     private LogService(Properties properties, List<LogWriter> writers, String repoSlug) {
         this.properties = properties;
         this.writers    = List.copyOf(writers);
-        this.minLevel   = LogLevel.valueOf(properties.getProperty("log.level"));
+        this.minLevel   = LogLevel.valueOf(
+                properties.getProperty(NomadProperties.Log.LEVEL, LogLevel.INFO.name()));
         this.repoSlug   = repoSlug;
     }
 
@@ -150,12 +160,13 @@ public class LogService {
     // ── Writer factory ────────────────────────────────────────────────────────
 
     /**
-     * Builds the list of {@link LogWriter} instances from the {@code log.writers}
-     * property.
+     * Builds the list of {@link LogWriter} instances from the
+     * {@link NomadProperties.Log#WRITERS} property.
      *
      * <p>Tokens are parsed in alphabetical order (via {@link TreeSet}) to ensure
      * deterministic writer initialisation across runs. Unknown tokens and missing
-     * required properties ({@code log.path}, {@code log.seq.url}) are reported to
+     * required properties ({@link NomadProperties.Log#PATH} for {@code file},
+     * {@link NomadProperties.Log#SEQ_URL} for {@code seq}) are reported to
      * {@code stderr} and skipped — the service starts even if some writers cannot
      * be initialised.</p>
      *
@@ -169,7 +180,8 @@ public class LogService {
     private static List<LogWriter> buildWriters(Properties properties) {
         List<LogWriter> result = new ArrayList<>();
         Set<String> tokens = Arrays.stream(
-                        properties.getProperty("log.writers", "console,file").split(","))
+                        properties.getProperty(NomadProperties.Log.WRITERS, "console,file")
+                                .split(","))
                 .map(String::trim)
                 .collect(Collectors.toCollection(TreeSet::new));
 
@@ -177,20 +189,24 @@ public class LogService {
             switch (token) {
                 case "console" -> result.add(new ConsoleLogWriter());
                 case "file" -> {
-                    if (properties.containsKey("log.path")) {
+                    if (properties.containsKey(NomadProperties.Log.PATH)) {
                         result.add(new FileLogWriter(
-                                Path.of(properties.getProperty("log.path"))));
+                                Path.of(properties.getProperty(NomadProperties.Log.PATH))));
                     } else {
-                        System.err.println("[LogService] log.path missing — file writer skipped");
+                        System.err.println("[LogService] "
+                                + NomadProperties.Log.PATH
+                                + " missing — file writer skipped");
                     }
                 }
                 case "seq" -> {
-                    if (properties.containsKey("log.seq.url")) {
+                    if (properties.containsKey(NomadProperties.Log.SEQ_URL)) {
                         result.add(new SeqHttpLogWriter(
-                                properties.getProperty("log.seq.url"),
-                                properties.getProperty("seq.apiKey", "")));
+                                properties.getProperty(NomadProperties.Log.SEQ_URL),
+                                properties.getProperty(NomadProperties.Log.SEQ_API_KEY, "")));
                     } else {
-                        System.err.println("[LogService] log.seq.url missing — seq writer skipped");
+                        System.err.println("[LogService] "
+                                + NomadProperties.Log.SEQ_URL
+                                + " missing — seq writer skipped");
                     }
                 }
                 default -> System.err.println("[LogService] unknown writer: " + token);

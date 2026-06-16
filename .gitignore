@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════
-# Build output
+# Build Output
 # ══════════════════════════════════════════
 target/
 *.class
@@ -17,24 +17,31 @@ target/
 !**/src/test/**/target/
 
 # ══════════════════════════════════════════
-# Configuration files with credentials
+# Application Runtime Configuration & Secrets
 # ══════════════════════════════════════════
-config.dev.properties
-config.prod.properties
-config.properties
-vaults.json
+# Ignore active local configuration files at the project root
+/src/main/resources/config.properties
+/src/main/resources/config.dev.properties
+/src/main/resources/config.prod.properties
+/src/main/resources/vaults.json
+
+# Explicitly ensure resource templates are ALWAYS tracked in Git
+!src/main/resources/config.template.properties
+!src/main/resources/vaults.template.json
 
 # ══════════════════════════════════════════
-# Logs & JVM
+# Logs & JVM Diagnostics
 # ══════════════════════════════════════════
 *.log
 logs/
+target/logs/
 hs_err_pid*
 replay_pid*
 
 # ══════════════════════════════════════════
-# IntelliJ IDEA
+# IDEs & Editors Configuration
 # ══════════════════════════════════════════
+# IntelliJ IDEA
 .idea/workspace.xml
 .idea/tasks.xml
 .idea/usage.statistics.xml
@@ -44,9 +51,7 @@ replay_pid*
 *.iml
 *.ipr
 
-# ══════════════════════════════════════════
 # Eclipse
-# ══════════════════════════════════════════
 .apt_generated
 .classpath
 .factorypath
@@ -55,9 +60,7 @@ replay_pid*
 .springBeans
 .sts4-cache
 
-# ══════════════════════════════════════════
 # NetBeans
-# ══════════════════════════════════════════
 /nbproject/private/
 /nbbuild/
 /dist/
@@ -67,12 +70,21 @@ build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 
-# ══════════════════════════════════════════
 # VS Code
-# ══════════════════════════════════════════
 .vscode/
 
 # ══════════════════════════════════════════
-# Mac OS
+# macOS System Junk (Complete Cleanup)
 # ══════════════════════════════════════════
-.DS_Store
+**/.DS_Store
+**/.AppleDouble
+**/.LSOverride
+**/Icon_
+**._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
