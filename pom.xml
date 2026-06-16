@@ -124,14 +124,57 @@
                                 <resource>
                                     <directory>src/main/resources</directory>
                                     <includes>
+                                        <!-- Automation & CLI CLI Wrappers (Windows) -->
                                         <include>NomadSync.bat</include>
+                                        <include>NomadSyncCommit.bat</include>
+                                        <include>NomadSyncConfig.bat</include>
+                                        <include>NomadSyncPull.bat</include>
                                         <include>NomadSyncPush.bat</include>
+                                        <include>NomadSyncStatus.bat</include>
+                                        <include>NomadSyncSync.bat</include>
+
+                                        <!-- Automation & CLI CLI Wrappers (Linux/macOS) -->
+                                        <include>NomadSync.sh</include>
+                                        <include>NomadSyncCommit.sh</include>
+                                        <include>NomadSyncConfig.sh</include>
+                                        <include>NomadSyncPull.sh</include>
+                                        <include>NomadSyncPush.sh</include>
+                                        <include>NomadSyncStatus.sh</include>
+                                        <include>NomadSyncSync.sh</include>
+
+                                        <!-- Environment Configuration Profiles -->
+                                        <include>config.properties</include>
                                         <include>config.dev.properties</include>
                                         <include>config.prod.properties</include>
+                                        <include>config.template.properties</include>
+
+                                        <!-- Application Vault Registries -->
+                                        <include>vaults.json</include>
+                                        <include>vaults.template.json</include>
                                     </includes>
                                     <filtering>false</filtering>
                                 </resource>
                             </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>create-log-directory</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <!-- Ensures target/logs exists for local IntelliJ execution contexts -->
+                                <mkdir dir="${project.build.directory}/logs" />
+                            </target>
                         </configuration>
                     </execution>
                 </executions>

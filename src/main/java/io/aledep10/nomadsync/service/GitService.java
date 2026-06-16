@@ -1,12 +1,15 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.GitException;
 import io.aledep10.nomadsync.exception.NetworkException;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
-import io.aledep10.nomadsync.util.CommandUtil;
 import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
+import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.util.CommandUtil;
 import io.aledep10.nomadsync.util.DateFormats;
+import io.aledep10.nomadsync.util.StringUtil;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -16,6 +19,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 /**
  * Wraps Git CLI operations via {@link ProcessBuilder}.
@@ -24,12 +28,30 @@ import java.util.Properties;
  * Sequencing and error handling are the caller's responsibility
  * ({@link SyncOrchestrator}).</p>
  *
- * <p>Operations that are strictly local ({@link #stash}, {@link #commitLocal},
- * {@link #hasChanges}, {@link #hasUncommittedChanges}) wrap any unexpected
- * {@link NetworkException} as {@link GitException} — a network error on a local
- * operation indicates an unexpected condition, not a transient connectivity failure.</p>
+ * <p>All methods receive a {@link Vault} instead of a raw path string —
+ * this gives each method access to per-vault Git configuration ({@code gitBranch},
+ * {@code gitRemote}) and credentials ({@code gitName}, {@code gitEmail},
+ * {@code gitToken}) alongside the vault path, without requiring additional
+ * parameters.</p>
  *
- * <p>All operations run in the vault directory passed as {@code vaultPath}.</p>
+ * <p>Operations that are strictly local ({@link #stash}, {@link #stashPop},
+ * {@link #commitLocal}, {@link #hasChanges}, {@link #hasUncommittedChanges})
+ * wrap any unexpected {@link NetworkException} as {@link GitException} — a network
+ * error on a local operation indicates an unexpected condition, not a transient
+ * connectivity failure.</p>
+ *
+ * <h2>Authentication strategy</h2>
+ * <p>Credentials are applied <em>once</em> at bootstrap via
+ * {@link #bootstrapVault(Vault)}, which writes {@code user.name},
+ * {@code user.email}, and an authenticated remote URL
+ * ({@code https://<token>@github.com/<owner>/<name>}) into the vault's local
+ * {@code .git/config}. All subsequent remote operations ({@link #pull},
+ * {@link #push}) use plain {@code git pull} / {@code git push} with no
+ * credential arguments — Git reads the token from the already-configured URL.</p>
+ *
+ * <p>This approach is cross-platform, does not depend on any OS credential
+ * manager, and ensures the token never appears in log output (it is written
+ * to {@code .git/config}, not passed as a command-line argument).</p>
  *
  * <h2>Constructor argument order</h2>
  * <p>Follows the project convention: {@link Properties} first, dependencies in
@@ -37,22 +59,105 @@ import java.util.Properties;
  */
 public class GitService {
 
-    private final String gitExecutable;
+    private final Properties properties;
+    private final String     gitExecutable;
     private final VaultService vaultService;
-    private final LogService logService;
+    private final LogService   logService;
 
     /**
      * Constructs the service from the provided configuration.
      *
-     * @param properties   application properties containing {@code git.executable}
-     * @param vaultService vault lifecycle service — used for snapshot creation and
-     *                     conflict file persistence in {@link #synchronize(String)}
+     * @param properties   application properties — must contain
+     *                     {@link NomadProperties.Git#EXECUTABLE};
+     *                     may contain global Git credential defaults
+     *                     ({@link NomadProperties.Git#NAME},
+     *                     {@link NomadProperties.Git#EMAIL},
+     *                     {@link NomadProperties.Git#USERNAME},
+     *                     {@link NomadProperties.Git#TOKEN},
+     *                     {@link NomadProperties.Git#REMOTE},
+     *                     {@link NomadProperties.Git#BRANCH})
+     * @param vaultService vault lifecycle service — used for snapshot creation
+     *                     and conflict file persistence in {@link #synchronize(Vault)}
      * @param logService   shared logging service
      */
     public GitService(Properties properties, VaultService vaultService, LogService logService) {
-        this.gitExecutable = properties.getProperty("git.executable");
+        this.properties    = properties;
+        this.gitExecutable = properties.getProperty(NomadProperties.Git.EXECUTABLE, "git");
         this.vaultService  = vaultService;
         this.logService    = logService;
+    }
+
+    // ── Bootstrap ─────────────────────────────────────────────────────────────
+
+    /**
+     * Applies per-vault Git identity and authentication to the vault's local
+     * {@code .git/config}.
+     *
+     * <p>Must be called once per vault at process startup — before any Git
+     * operation is performed on that vault. Re-call whenever vault credentials
+     * change (e.g. via {@code NomadSync config --vault=... --git.token=...})
+     * to apply the new values immediately without restarting the process.</p>
+     *
+     * <h2>Credential resolution order</h2>
+     * <p>For each field: per-vault value ({@link Vault}) → global value
+     * ({@link NomadProperties.Git} in {@code config.properties}) → system default
+     * ({@code ~/.gitconfig} — no action taken, Git handles it automatically).</p>
+     *
+     * <h2>Remote URL and token security</h2>
+     * <p>If a token is available (per-vault or global), the authenticated remote
+     * URL ({@code https://<token>@github.com/<owner>/<name>}) is written to the
+     * vault's local {@code .git/config} via {@code git remote set-url}. The token
+     * is stored in {@code .git/config} — never passed as a command-line argument
+     * and therefore never logged. {@code .git/} is excluded from Git tracking by
+     * design, so the token is never committed to the repository.</p>
+     *
+     * @param vault the vault to configure
+     * @throws GitException         if a Git config command fails
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    public void bootstrapVault(Vault vault) throws GitException, InterruptedException {
+        String path = vault.getPath();
+
+        String name  = StringUtil.coalesce(vault.getGitName(),
+                properties.getProperty(NomadProperties.Git.NAME));
+        String email = StringUtil.coalesce(vault.getGitEmail(),
+                properties.getProperty(NomadProperties.Git.EMAIL));
+
+        try {
+            if (name != null) {
+                CommandUtil.runCommand(path,
+                        List.of(gitExecutable, "config", "user.name", name), logService);
+            }
+            if (email != null) {
+                CommandUtil.runCommand(path,
+                        List.of(gitExecutable, "config", "user.email", email), logService);
+            }
+
+            String token    = StringUtil.coalesce(vault.getGitToken(),
+                    properties.getProperty(NomadProperties.Git.TOKEN));
+            String username = StringUtil.coalesce(vault.getGitUsername(),
+                    properties.getProperty(NomadProperties.Git.USERNAME));
+            String remote   = StringUtil.coalesce(vault.getGitRemote(),
+                    properties.getProperty(NomadProperties.Git.REMOTE, "origin"));
+
+            if (token != null && username != null) {
+                // Token embedded in URL — written to .git/config, never logged.
+                // .git/ is never committed, so the token stays local.
+                String remoteUrl = "https://" + token + "@github.com/"
+                        + vault.getOwner() + "/" + vault.getName();
+                CommandUtil.runCommand(path,
+                        List.of(gitExecutable, "remote", "set-url", remote, remoteUrl),
+                        Set.of(remoteUrl),   // remoteUrl logged as <hidden>
+                        logService);
+                logService.info("bootstrapVault: remote URL configured for "
+                        + vault.getRepoSlug());
+            }
+
+            logService.info("bootstrapVault: configured " + vault.getRepoSlug());
+
+        } catch (NetworkException e) {
+            throw new GitException("Unexpected network error during vault bootstrap", e);
+        }
     }
 
     // ── Remote operations ─────────────────────────────────────────────────────
@@ -60,27 +165,41 @@ public class GitService {
     /**
      * Pushes committed changes to the remote repository.
      *
-     * @param vaultPath absolute path to the vault directory
+     * <p>Authentication is handled transparently by the remote URL written to
+     * {@code .git/config} during {@link #bootstrapVault(Vault)} — no credential
+     * arguments are passed to {@code git push}.</p>
+     *
+     * @param vault the vault to push
      * @throws NetworkException     if a network connectivity failure is detected
      * @throws GitException         if a local Git error occurs
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public void push(String vaultPath) throws GitException, NetworkException, InterruptedException {
-        CommandUtil.runCommand(vaultPath, List.of(gitExecutable, "push"), logService);
+    public void push(Vault vault) throws GitException, NetworkException, InterruptedException {
+        String remote = StringUtil.coalesce(vault.getGitRemote(),
+                properties.getProperty(NomadProperties.Git.REMOTE, "origin"));
+        String branch = StringUtil.coalesce(vault.getGitBranch(),
+                properties.getProperty(NomadProperties.Git.BRANCH, "main"));
+        CommandUtil.runCommand(vault.getPath(),
+                List.of(gitExecutable, "push", remote, branch), logService);
     }
 
     /**
      * Pulls the latest changes from the remote repository,
      * preferring the remote version on conflicts ({@code -X theirs}).
      *
-     * @param vaultPath absolute path to the vault directory
+     * <p>Authentication is handled transparently by the remote URL written to
+     * {@code .git/config} during {@link #bootstrapVault(Vault)} — no credential
+     * arguments are passed to {@code git pull}.</p>
+     *
+     * @param vault the vault to pull
      * @throws NetworkException     if a network connectivity failure is detected
      * @throws GitException         if a local Git error occurs
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public void pull(String vaultPath) throws GitException, NetworkException, InterruptedException {
-        logService.info("Pulling vault: " + vaultPath);
-        CommandUtil.runCommand(vaultPath, List.of(gitExecutable, "pull", "-X", "theirs"), logService);
+    public void pull(Vault vault) throws GitException, NetworkException, InterruptedException {
+        logService.info("Pulling vault: " + vault.getRepoSlug());
+        CommandUtil.runCommand(vault.getPath(),
+                List.of(gitExecutable, "pull", "-X", "theirs"), logService);
     }
 
     // ── Local operations ──────────────────────────────────────────────────────
@@ -88,13 +207,14 @@ public class GitService {
     /**
      * Shelves uncommitted local changes via {@code git stash}.
      *
-     * @param vaultPath absolute path to the vault directory
+     * @param vault the vault to stash
      * @throws GitException         if a Git error occurs
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public void stash(String vaultPath) throws GitException, InterruptedException {
+    public void stash(Vault vault) throws GitException, InterruptedException {
         try {
-            CommandUtil.runCommand(vaultPath, List.of(gitExecutable, "stash"), logService);
+            CommandUtil.runCommand(vault.getPath(),
+                    List.of(gitExecutable, "stash"), logService);
         } catch (NetworkException e) {
             throw new GitException("Unexpected network error on local stash operation", e);
         }
@@ -103,13 +223,14 @@ public class GitService {
     /**
      * Restores shelved changes via {@code git stash pop}.
      *
-     * @param vaultPath absolute path to the vault directory
+     * @param vault the vault to restore
      * @throws GitException         if a Git error occurs
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public void stashPop(String vaultPath) throws GitException, InterruptedException {
+    public void stashPop(Vault vault) throws GitException, InterruptedException {
         try {
-            CommandUtil.runCommand(vaultPath, List.of(gitExecutable, "stash", "pop"), logService);
+            CommandUtil.runCommand(vault.getPath(),
+                    List.of(gitExecutable, "stash", "pop"), logService);
         } catch (NetworkException e) {
             throw new GitException("Unexpected network error on local stash pop operation", e);
         }
@@ -118,16 +239,17 @@ public class GitService {
     /**
      * Stages all changes and commits locally with the given message.
      *
-     * @param vaultPath absolute path to the vault directory
-     * @param message   the commit message
+     * @param vault   the vault to commit in
+     * @param message the commit message
      * @return exit code — {@code 0} on success, non-zero if nothing to commit
      * @throws GitException         if a Git error occurs
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public int commitLocal(String vaultPath, String message) throws GitException, InterruptedException {
+    public int commitLocal(Vault vault, String message) throws GitException, InterruptedException {
         try {
-            CommandUtil.runCommand(vaultPath, List.of(gitExecutable, "add", "-A"), logService);
-            return CommandUtil.runCommand(vaultPath,
+            CommandUtil.runCommand(vault.getPath(),
+                    List.of(gitExecutable, "add", "-A"), logService);
+            return CommandUtil.runCommand(vault.getPath(),
                     List.of(gitExecutable, "commit", "-m", message), logService);
         } catch (NetworkException e) {
             throw new GitException("Unexpected network error on local commit operation", e);
@@ -139,13 +261,13 @@ public class GitService {
      *
      * <p>Uses {@code git diff --quiet} — exit code {@code 1} means unstaged changes.</p>
      *
-     * @param vaultPath absolute path to the vault directory
+     * @param vault the vault to check
      * @throws GitException         if a Git error occurs
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public boolean hasChanges(String vaultPath) throws GitException, InterruptedException {
+    public boolean hasChanges(Vault vault) throws GitException, InterruptedException {
         try {
-            return CommandUtil.runCommand(vaultPath,
+            return CommandUtil.runCommand(vault.getPath(),
                     List.of(gitExecutable, "diff", "--quiet"), logService) != 0;
         } catch (NetworkException e) {
             throw new GitException("Unexpected network error on local diff operation", e);
@@ -156,16 +278,41 @@ public class GitService {
      * Returns {@code true} if the working tree contains any uncommitted changes —
      * staged or unstaged, tracked or untracked.
      *
-     * <p>Uses {@code git status --porcelain} — empty output means clean tree.</p>
+     * <p>Uses {@code git status --porcelain} — empty output means clean tree.
+     * This is more thorough than {@link #hasChanges(Vault)}, which only checks
+     * unstaged modifications to tracked files.</p>
      *
-     * @param vaultPath absolute path to the vault directory
+     * @param vault the vault to check
      * @throws GitException         if a Git error occurs
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public boolean hasUncommittedChanges(String vaultPath) throws GitException, InterruptedException {
+    public boolean hasUncommittedChanges(Vault vault) throws GitException, InterruptedException {
         try {
-            return !CommandUtil.runCommandWithOutput(vaultPath,
+            return !CommandUtil.runCommandWithOutput(vault.getPath(),
                     List.of(gitExecutable, "status", "--porcelain")).isEmpty();
+        } catch (NetworkException e) {
+            throw new GitException("Unexpected network error on local status operation", e);
+        }
+    }
+
+    /**
+     * Returns the human-readable output of {@code git status} for the given vault.
+     *
+     * <p>Intended for interactive CLI use ({@code NomadSync status}) — the output
+     * is meant to be printed directly to {@code stdout} for the user to read, not
+     * logged. Unlike {@link #hasUncommittedChanges(Vault)}, which uses
+     * {@code --porcelain} to produce machine-readable output for boolean checks,
+     * this method returns the full human-readable format.</p>
+     *
+     * @param vault the vault to inspect
+     * @return trimmed output of {@code git status}, never {@code null}
+     * @throws GitException         if a Git error occurs
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    public String status(Vault vault) throws GitException, InterruptedException {
+        try {
+            return CommandUtil.runCommandWithLines(vault.getPath(),
+                    List.of(gitExecutable, "status"));
         } catch (NetworkException e) {
             throw new GitException("Unexpected network error on local status operation", e);
         }
@@ -182,37 +329,49 @@ public class GitService {
      *   <li>{@code git pull} — if successful → push → done.</li>
      *   <li>On conflict:
      *     <ol>
-     *       <li>{@code git merge --abort} (exit code ignored).</li>
+     *       <li>{@code git merge --abort} (exit code ignored — may be non-zero
+     *           if no merge was in progress).</li>
      *       <li>FIFO snapshot via {@link VaultService#makeVaultSnapshot(String)}.</li>
-     *       <li>{@code git pull -X ours --no-edit}.</li>
-     *       <li>Extract conflicted files from {@code "Auto-merging"} lines in stdout.</li>
-     *       <li>For each conflicted file: fetch remote version via
-     *           {@link CommandUtil#runCommandToFile} to a temp file, then move to
-     *           {@code conflictsRoot} via {@link VaultService#saveConflict}.</li>
+     *       <li>{@code git pull -X ours --no-edit} — local version wins.</li>
+     *       <li>Parse {@code "Auto-merging"} lines from stdout to identify
+     *           conflicted files.</li>
+     *       <li>For each conflicted file: extract the remote version via
+     *           {@link CommandUtil#runCommandToFile} ({@code git show FETCH_HEAD:<file>})
+     *           to a temp file, then persist via {@link VaultService#saveConflict}.</li>
      *       <li>Push.</li>
      *     </ol>
      *   </li>
      * </ol>
      *
+     * <h2>Snapshot and conflict directory naming</h2>
+     * <p>Both use {@link Vault#getRepoSlug()} with {@code /} replaced by {@code _}
+     * as the prefix — e.g. {@code AleDeP10_public-vault_2026-06-16_10-30}.
+     * This avoids collisions between two vaults with the same {@code name} but
+     * different {@code owner}s sharing the same {@code backupsRoot} or
+     * {@code conflictsRoot}.</p>
+     *
+     * <h2>Exception wrapping</h2>
      * <p>{@link GitignoreException} from the snapshot step is wrapped as
      * {@link GitException} — the orchestrator handles a single exception hierarchy
      * and applies its retry + backoff strategy uniformly.</p>
      *
-     * @param vaultPath absolute path to the vault directory
-     * @return list of relative paths of conflicted files, empty if no conflict
+     * @param vault the vault to synchronise
+     * @return list of relative paths of conflicted files, empty if no conflict occurred
      * @throws GitException         if an unrecoverable Git error occurs
      * @throws NetworkException     if a network connectivity failure is detected
      * @throws VaultException       if snapshot or conflict persistence fails
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public List<String> synchronize(String vaultPath)
+    public List<String> synchronize(Vault vault)
             throws GitException, NetworkException, VaultException, InterruptedException {
-        logService.info("Synchronizing vault: " + vaultPath);
+        String vaultPath      = vault.getPath();
+        String snapshotPrefix = vault.getRepoSlug().replace("/", "_");
+        logService.info("Synchronizing vault: " + vault.getRepoSlug());
         List<String> result = new ArrayList<>();
 
         try {
             String timestamp   = DateFormats.nowLog();
-            int commitExitCode = commitLocal(vaultPath, timestamp + ", synchronize");
+            int commitExitCode = commitLocal(vault, timestamp + ", synchronize");
             logService.debug("Commit exit code: " + commitExitCode);
 
             StringWriter sw1 = new StringWriter();
@@ -223,13 +382,9 @@ public class GitService {
             logService.debug(pullOutput);
 
             if (pullExitCode == 0) {
-                int pushExitCode = CommandUtil.runCommand(
-                        vaultPath, List.of(gitExecutable, "push"), logService);
-                if (pushExitCode != 0) {
-                    logService.warn("git push failed with code " + pushExitCode);
-                }
+                push(vault);
             } else {
-                // abort any in-progress merge — non-zero exit is normal if no merge was running
+                // Abort any in-progress merge — non-zero exit is normal if no merge was running.
                 CommandUtil.runCommand(
                         vaultPath, List.of(gitExecutable, "merge", "--abort"), logService);
 
@@ -252,8 +407,7 @@ public class GitService {
                         .map(l -> l.replace("Auto-merging ", "").trim())
                         .toList();
 
-                String vaultName       = Path.of(vaultPath).getFileName().toString();
-                String conflictDirName = vaultName + "_" + DateFormats.nowLog();
+                String conflictDirName = snapshotPrefix + "_" + DateFormats.nowLog();
 
                 for (String file : conflicted) {
                     String basename = Path.of(file).getFileName().toString();
@@ -261,21 +415,18 @@ public class GitService {
                     try {
                         int showExitCode = CommandUtil.runCommandToFile(
                                 vaultPath,
-                                List.of(gitExecutable, "--no-pager", "show", "FETCH_HEAD:" + file),
+                                List.of(gitExecutable, "--no-pager", "show",
+                                        "FETCH_HEAD:" + file),
                                 tempFile);
                         logService.debug("show " + file + " exit code: " + showExitCode);
                         vaultService.saveConflict(conflictDirName, basename, tempFile);
                     } finally {
-                        Files.deleteIfExists(tempFile); // no-op if saveConflict already moved it
+                        Files.deleteIfExists(tempFile);
                     }
                     result.add(file);
                 }
 
-                int pushExitCode = CommandUtil.runCommand(
-                        vaultPath, List.of(gitExecutable, "push"), logService);
-                if (pushExitCode != 0) {
-                    logService.warn("git push failed with code " + pushExitCode);
-                }
+                push(vault);
             }
             return result;
 

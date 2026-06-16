@@ -16,9 +16,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.io.IOException;
-import java.util.Properties;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -36,20 +36,25 @@ import static org.mockito.MockitoAnnotations.openMocks;
  *
  * <p><strong>Matcher rule</strong>: whenever a stubbed method mixes a literal argument
  * with a wildcard, all arguments must use explicit matchers —
- * {@code eq(testVault)} for the literal, {@code anyString()} for the wildcard.</p>
+ * {@code eq(vault)} for the literal, {@code anyString()} for the wildcard.</p>
  *
  * <p><strong>SYNCHRONIZE scope</strong>: the orchestrator delegates the entire
- * SYNCHRONIZE workflow to {@link GitService#synchronize(String)}. Tests for this
+ * SYNCHRONIZE workflow to {@link GitService#synchronize(Vault)}. Tests for this
  * event type verify the delegation boundary only — internal Git operations
  * (commit, pull, backup, push) are covered by {@code GitServiceTest}.</p>
+ *
+ * <p><strong>COMMIT_MANUAL scope</strong>: tests verify that the user-provided
+ * message from {@link SyncEvent#getMessage()} is passed to {@link GitService#commitLocal},
+ * and that a blank message triggers the fallback.</p>
  */
 class SyncOrchestratorTest {
 
     private static TestVault testVault;
     private static LogService logService;
+
     private String vaultId;
+    private Vault vault;
     private AutoCloseable mocks;
-    private String testVaultPath;
     private NotificationHook notificationHook;
     private GitService gitService;
     private SyncOrchestrator orchestrator;
@@ -62,14 +67,16 @@ class SyncOrchestratorTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        Properties properties = TestUtil.forOrchestrator(testVault);
         vaultId          = UUID.randomUUID().toString();
         mocks            = openMocks(this);
         notificationHook = mock(NotificationHook.class);
         gitService       = mock(GitService.class);
-        testVaultPath = properties.getProperty("vault.path");
-        orchestrator     = new SyncOrchestrator(
-                properties, gitService, logService,
+
+        vault = new Vault(vaultId, "AleDeP10", "test-vault",
+                testVault.vaultPath().toString());
+
+        orchestrator = new SyncOrchestrator(
+                vault, gitService, logService,
                 new SyncEventQueue(logService), notificationHook);
     }
 
@@ -83,29 +90,29 @@ class SyncOrchestratorTest {
     @Test
     void pullLogon_dirtyTree_executesStashPullStashPop()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(true);
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(true);
 
         orchestrator.execute(new SyncEvent(EventType.PULL_LOGON, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).hasUncommittedChanges(testVaultPath);
-        inOrder.verify(gitService).stash(testVaultPath);
-        inOrder.verify(gitService).pull(testVaultPath);
-        inOrder.verify(gitService).stashPop(testVaultPath);
+        inOrder.verify(gitService).hasUncommittedChanges(vault);
+        inOrder.verify(gitService).stash(vault);
+        inOrder.verify(gitService).pull(vault);
+        inOrder.verify(gitService).stashPop(vault);
     }
 
     @Test
     void pullLogon_cleanTree_executesPullOnly()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(false);
 
         orchestrator.execute(new SyncEvent(EventType.PULL_LOGON, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).hasUncommittedChanges(testVaultPath);
-        inOrder.verify(gitService).pull(testVaultPath);
-        verify(gitService, never()).stash(testVaultPath);
-        verify(gitService, never()).stashPop(testVaultPath);
+        inOrder.verify(gitService).hasUncommittedChanges(vault);
+        inOrder.verify(gitService).pull(vault);
+        verify(gitService, never()).stash(vault);
+        verify(gitService, never()).stashPop(vault);
     }
 
     // ── SYNCHRONIZE ───────────────────────────────────────────────────────────
@@ -115,7 +122,7 @@ class SyncOrchestratorTest {
             throws GitException, NetworkException, InterruptedException, VaultException {
         orchestrator.execute(new SyncEvent(EventType.SYNCHRONIZE, vaultId));
 
-        verify(gitService).synchronize(testVaultPath);
+        verify(gitService).synchronize(vault);
     }
 
     @Test
@@ -123,8 +130,8 @@ class SyncOrchestratorTest {
             throws GitException, NetworkException, InterruptedException, VaultException {
         orchestrator.execute(new SyncEvent(EventType.SYNCHRONIZE, vaultId));
 
-        verify(gitService, never()).stash(testVaultPath);
-        verify(gitService, never()).stashPop(testVaultPath);
+        verify(gitService, never()).stash(vault);
+        verify(gitService, never()).stashPop(vault);
     }
 
     // ── PUSH_LOGOFF ───────────────────────────────────────────────────────────
@@ -132,24 +139,61 @@ class SyncOrchestratorTest {
     @Test
     void pushLogoff_withChanges_commitsAndPushes()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.commitLocal(eq(testVaultPath), anyString())).thenReturn(0);
+        when(gitService.commitLocal(eq(vault), anyString())).thenReturn(0);
 
         orchestrator.execute(new SyncEvent(EventType.PUSH_LOGOFF, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).commitLocal(eq(testVaultPath), anyString());
-        inOrder.verify(gitService).push(testVaultPath);
+        inOrder.verify(gitService).commitLocal(eq(vault), anyString());
+        inOrder.verify(gitService).push(vault);
     }
 
     @Test
     void pushLogoff_alwaysPushes()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.commitLocal(eq(testVaultPath), anyString())).thenReturn(1);
+        when(gitService.commitLocal(eq(vault), anyString())).thenReturn(1);
 
         orchestrator.execute(new SyncEvent(EventType.PUSH_LOGOFF, vaultId));
 
-        verify(gitService).commitLocal(eq(testVaultPath), anyString());
-        verify(gitService).push(testVaultPath);
+        verify(gitService).commitLocal(eq(vault), anyString());
+        verify(gitService).push(vault);
+    }
+
+    // ── COMMIT_MANUAL ─────────────────────────────────────────────────────────
+
+    @Test
+    void commitManual_withChangesAndMessage_commitsWithUserMessage()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(true);
+
+        orchestrator.execute(new SyncEvent(EventType.COMMIT_MANUAL, vaultId, "my commit message"));
+
+        verify(gitService).commitLocal(vault, "my commit message");
+        verify(gitService, never()).push(vault);
+    }
+
+    @Test
+    void commitManual_withChangesAndBlankMessage_usesTimestampFallback()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(true);
+
+        orchestrator.execute(new SyncEvent(EventType.COMMIT_MANUAL, vaultId, "  "));
+
+        // message was blank — fallback used, should contain "manual commit"
+        verify(gitService).commitLocal(eq(vault), contains("manual commit"));
+        verify(gitService, never()).push(vault);
+    }
+
+    @Test
+    void commitManual_noChanges_skipsCommit()
+            throws GitException, NetworkException, InterruptedException {
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(false);
+
+        orchestrator.execute(new SyncEvent(EventType.COMMIT_MANUAL, vaultId, "irrelevant"));
+
+        verify(gitService).hasUncommittedChanges(vault);
+        verify(gitService, never()).commitLocal(any(), anyString());
+        verify(gitService, never()).push(vault);
     }
 
     // ── AUTOSAVE ──────────────────────────────────────────────────────────────
@@ -157,26 +201,26 @@ class SyncOrchestratorTest {
     @Test
     void autosave_withChanges_commitsLocally()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(true);
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(true);
 
         orchestrator.execute(new SyncEvent(EventType.AUTOSAVE, vaultId));
 
         InOrder inOrder = inOrder(gitService);
-        inOrder.verify(gitService).hasUncommittedChanges(testVaultPath);
-        inOrder.verify(gitService).commitLocal(eq(testVaultPath), anyString());
-        verify(gitService, never()).push(testVaultPath);
+        inOrder.verify(gitService).hasUncommittedChanges(vault);
+        inOrder.verify(gitService).commitLocal(eq(vault), anyString());
+        verify(gitService, never()).push(vault);
     }
 
     @Test
     void autosave_noChanges_skipsCommit()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(false);
 
         orchestrator.execute(new SyncEvent(EventType.AUTOSAVE, vaultId));
 
-        verify(gitService).hasUncommittedChanges(testVaultPath);
-        verify(gitService, never()).commitLocal(eq(testVaultPath), anyString());
-        verify(gitService, never()).push(testVaultPath);
+        verify(gitService).hasUncommittedChanges(vault);
+        verify(gitService, never()).commitLocal(any(), anyString());
+        verify(gitService, never()).push(vault);
     }
 
     // ── Error handling ────────────────────────────────────────────────────────
@@ -184,10 +228,10 @@ class SyncOrchestratorTest {
     @Test
     void execute_networkException_schedulesRetry()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
-        doThrow(new NetworkException("timeout", null)).when(gitService).pull(testVaultPath);
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(false);
+        doThrow(new NetworkException("timeout", null)).when(gitService).pull(vault);
 
-        SyncEvent event = new SyncEvent(EventType.PULL_LOGON, vaultId,
+        SyncEvent event = new SyncEvent(EventType.PULL_LOGON, vaultId, null,
                 System.currentTimeMillis(), 10);
         orchestrator.execute(event);
 
@@ -197,11 +241,21 @@ class SyncOrchestratorTest {
     @Test
     void execute_gitException_notifiesImmediately()
             throws GitException, NetworkException, InterruptedException {
-        when(gitService.hasUncommittedChanges(testVaultPath)).thenReturn(false);
-        doThrow(new GitException("conflict", null)).when(gitService).pull(testVaultPath);
+        when(gitService.hasUncommittedChanges(vault)).thenReturn(false);
+        doThrow(new GitException("conflict", null)).when(gitService).pull(vault);
 
         orchestrator.execute(new SyncEvent(EventType.PULL_LOGON, vaultId));
 
         verify(notificationHook).onFailure(any(), anyString());
+    }
+
+    @Test
+    void execute_vaultException_isSwallowedAndDoesNotNotify()
+            throws GitException, NetworkException, InterruptedException, VaultException {
+        doThrow(new VaultException("snapshot failed")).when(gitService).synchronize(vault);
+
+        orchestrator.execute(new SyncEvent(EventType.SYNCHRONIZE, vaultId));
+
+        verify(notificationHook, never()).onFailure(any(), anyString());
     }
 }

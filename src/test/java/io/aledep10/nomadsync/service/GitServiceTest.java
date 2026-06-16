@@ -3,6 +3,7 @@ package io.aledep10.nomadsync.service;
 import io.aledep10.nomadsync.exception.GitException;
 import io.aledep10.nomadsync.exception.NetworkException;
 import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.orchestrator.Vault;
 import io.aledep10.nomadsync.util.CommandUtil;
 import io.aledep10.nomadsync.util.TestConstants;
 import io.aledep10.nomadsync.util.TestUtil;
@@ -16,6 +17,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Properties;
+import java.util.UUID;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import static org.mockito.Mockito.mock;
@@ -28,37 +30,40 @@ import static org.mockito.Mockito.mock;
  * {@code @BeforeEach} and deleted in {@code @AfterEach}, guaranteeing full isolation
  * between test cases.</p>
  *
- * <p>{@link LogService} and the {@link TestVault} are shared across all tests
- * ({@code @BeforeAll}) — they carry no mutable state relevant to Git operations.</p>
+ * <p>{@link LogService} is shared across all tests ({@code @BeforeAll}) —
+ * it carries no mutable state relevant to Git operations.</p>
  *
  * <p>{@link VaultService} is mocked — snapshot creation is not under test here.
  * The snapshot workflow is covered by {@code VaultServiceTest}.</p>
  *
- * <p>All {@link GitService} methods under test accept a {@code String vaultPath}
- * argument taken from {@link TestVault#vaultPath()}.</p>
+ * <p>All {@link GitService} methods under test receive a {@link Vault} built from
+ * {@link TestVault#vaultPath()} — matching the production contract established
+ * in GRM M7 Sprint B.</p>
  */
 class GitServiceTest {
 
-    static TestVault testVault;
     static LogService logService;
 
-    String vaultPath;
+    TestVault testVault;
+    Vault vault;
     GitService gitService;
 
     // ── Shared setup ──────────────────────────────────────────────────────────
 
     @BeforeAll
     static void prepareSharedState() throws IOException {
-        TestVault testVault  = TestUtil.getTestVault("GitServiceTest");
-        logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG));
+        TestVault shared = TestUtil.getTestVault("GitServiceTest-shared");
+        logService = new LogService(TestUtil.forLogService(shared, LogLevel.DEBUG));
     }
 
     // ── Per-test setup / teardown ─────────────────────────────────────────────
 
     @BeforeEach
     void setUp() throws GitException, NetworkException, IOException, InterruptedException {
-        testVault  = TestUtil.getTestVault("GitServiceTest");
-        vaultPath = testVault.vaultPath().toString();
+        testVault = TestUtil.getTestVault("GitServiceTest");
+        String vaultPath = testVault.vaultPath().toString();
+
+        vault = new Vault(UUID.randomUUID().toString(), "AleDeP10", "test-vault", vaultPath);
 
         CommandUtil.runCommand(vaultPath, List.of(TestConstants.GIT_EXECUTABLE, "init"));
         CommandUtil.runCommand(vaultPath, List.of(TestConstants.GIT_EXECUTABLE,
@@ -83,10 +88,11 @@ class GitServiceTest {
      * no unstaged modifications in tracked files.
      */
     @Test
-    void hasChanges_noChanges_returnsFalse() throws GitException, NetworkException, IOException, InterruptedException {
+    void hasChanges_noChanges_returnsFalse()
+            throws GitException, NetworkException, IOException, InterruptedException {
         createAndCommitFile("tmp.txt", "initial content");
 
-        assertThat(gitService.hasChanges(vaultPath)).isFalse();
+        assertThat(gitService.hasChanges(vault)).isFalse();
     }
 
     /**
@@ -94,11 +100,12 @@ class GitServiceTest {
      * has been modified but not staged.
      */
     @Test
-    void hasChanges_withUnstagedModification_returnsTrue() throws GitException, NetworkException, IOException, InterruptedException {
+    void hasChanges_withUnstagedModification_returnsTrue()
+            throws GitException, NetworkException, IOException, InterruptedException {
         createAndCommitFile("tmp.txt", "initial content");
         Files.writeString(testVault.vaultPath().resolve("tmp.txt"), "updated content");
 
-        assertThat(gitService.hasChanges(vaultPath)).isTrue();
+        assertThat(gitService.hasChanges(vault)).isTrue();
     }
 
     // ── hasUncommittedChanges() ───────────────────────────────────────────────
@@ -108,10 +115,11 @@ class GitServiceTest {
      * clean working tree with no staged or unstaged changes.
      */
     @Test
-    void hasUncommittedChanges_cleanTree_returnsFalse() throws GitException, NetworkException, IOException, InterruptedException {
+    void hasUncommittedChanges_cleanTree_returnsFalse()
+            throws GitException, NetworkException, IOException, InterruptedException {
         createAndCommitFile("tmp.txt", "initial content");
 
-        assertThat(gitService.hasUncommittedChanges(vaultPath)).isFalse();
+        assertThat(gitService.hasUncommittedChanges(vault)).isFalse();
     }
 
     /**
@@ -119,11 +127,12 @@ class GitServiceTest {
      * tracked file has been modified but not staged.
      */
     @Test
-    void hasUncommittedChanges_withUnstagedModification_returnsTrue() throws GitException, NetworkException, IOException, InterruptedException {
+    void hasUncommittedChanges_withUnstagedModification_returnsTrue()
+            throws GitException, NetworkException, IOException, InterruptedException {
         createAndCommitFile("tmp.txt", "initial content");
         Files.writeString(testVault.vaultPath().resolve("tmp.txt"), "updated content");
 
-        assertThat(gitService.hasUncommittedChanges(vaultPath)).isTrue();
+        assertThat(gitService.hasUncommittedChanges(vault)).isTrue();
     }
 
     /**
@@ -132,11 +141,13 @@ class GitServiceTest {
      * from {@code hasChanges()}.
      */
     @Test
-    void hasUncommittedChanges_withStagedNotCommitted_returnsTrue() throws GitException, NetworkException, IOException, InterruptedException {
+    void hasUncommittedChanges_withStagedNotCommitted_returnsTrue()
+            throws GitException, NetworkException, IOException, InterruptedException {
         Files.writeString(testVault.vaultPath().resolve("new.txt"), "staged content");
-        CommandUtil.runCommand(vaultPath, List.of(TestConstants.GIT_EXECUTABLE, "add", "."));
+        CommandUtil.runCommand(testVault.vaultPath().toString(),
+                List.of(TestConstants.GIT_EXECUTABLE, "add", "."));
 
-        assertThat(gitService.hasUncommittedChanges(vaultPath)).isTrue();
+        assertThat(gitService.hasUncommittedChanges(vault)).isTrue();
     }
 
     // ── commitLocal() ─────────────────────────────────────────────────────────
@@ -146,13 +157,14 @@ class GitServiceTest {
      * the working tree when there are changes to commit.
      */
     @Test
-    void commitLocal_withChanges_returnsZeroAndClearsChanges() throws GitException, NetworkException, IOException, InterruptedException {
+    void commitLocal_withChanges_returnsZeroAndClearsChanges()
+            throws GitException, NetworkException, IOException, InterruptedException {
         Files.writeString(testVault.vaultPath().resolve("tmp.txt"), "content");
 
-        int exitCode = gitService.commitLocal(vaultPath, "test commit");
+        int exitCode = gitService.commitLocal(vault, "test commit");
 
         assertThat(exitCode).isEqualTo(0);
-        assertThat(gitService.hasChanges(vaultPath)).isFalse();
+        assertThat(gitService.hasChanges(vault)).isFalse();
     }
 
     /**
@@ -160,8 +172,9 @@ class GitServiceTest {
      * is nothing to commit.
      */
     @Test
-    void commitLocal_withNoChanges_returnsNonZero() throws GitException, NetworkException, InterruptedException {
-        int exitCode = gitService.commitLocal(vaultPath, "empty commit");
+    void commitLocal_withNoChanges_returnsNonZero()
+            throws GitException, NetworkException, InterruptedException {
+        int exitCode = gitService.commitLocal(vault, "empty commit");
 
         assertThat(exitCode).isNotEqualTo(0);
     }
@@ -173,16 +186,17 @@ class GitServiceTest {
      * stash pop restores them.
      */
     @Test
-    void stash_shelvesThenPopRestores() throws GitException, NetworkException, IOException, InterruptedException {
+    void stash_shelvesThenPopRestores()
+            throws GitException, NetworkException, IOException, InterruptedException {
         createAndCommitFile("tmp.txt", "initial content");
         Files.writeString(testVault.vaultPath().resolve("tmp.txt"), "modified content");
-        assertThat(gitService.hasUncommittedChanges(vaultPath)).isTrue();
+        assertThat(gitService.hasUncommittedChanges(vault)).isTrue();
 
-        gitService.stash(vaultPath);
-        assertThat(gitService.hasUncommittedChanges(vaultPath)).isFalse();
+        gitService.stash(vault);
+        assertThat(gitService.hasUncommittedChanges(vault)).isFalse();
 
-        gitService.stashPop(vaultPath);
-        assertThat(gitService.hasUncommittedChanges(vaultPath)).isTrue();
+        gitService.stashPop(vault);
+        assertThat(gitService.hasUncommittedChanges(vault)).isTrue();
     }
 
     /**
@@ -191,8 +205,91 @@ class GitServiceTest {
      * this in production, but {@link GitService} must not crash if called directly.
      */
     @Test
-    void stash_onCleanTree_doesNotThrow() throws GitException, NetworkException, InterruptedException {
-        gitService.stash(vaultPath);
+    void stash_onCleanTree_doesNotThrow()
+            throws GitException, NetworkException, InterruptedException {
+        gitService.stash(vault);
+    }
+
+    // ── bootstrapVault() ──────────────────────────────────────────────────────
+
+    /**
+     * Verifies that {@code bootstrapVault()} completes without throwing when
+     * no per-vault credentials are set and no global credentials are in properties.
+     *
+     * <p>When all credential fields are {@code null}, the method is expected to
+     * be a no-op — no Git config commands are executed, no exception is thrown.</p>
+     */
+    @Test
+    void bootstrapVault_noCredentials_doesNotThrow()
+            throws GitException, InterruptedException {
+        Vault noCredVault = new Vault(UUID.randomUUID().toString(),
+                "AleDeP10", "no-cred-vault", testVault.vaultPath().toString());
+
+        gitService.bootstrapVault(noCredVault);
+        // no exception = pass
+    }
+
+    /**
+     * Verifies that {@code bootstrapVault()} writes {@code user.name} to the vault's
+     * local {@code .git/config} when a per-vault {@code gitName} is set.
+     */
+    @Test
+    void bootstrapVault_withVaultGitName_setsLocalUserName()
+            throws GitException, NetworkException, IOException, InterruptedException {
+        Vault named = new Vault(UUID.randomUUID().toString(),
+                "AleDeP10", "named-vault", testVault.vaultPath().toString(),
+                "Vault User", null, null, null, null, null);
+
+        gitService.bootstrapVault(named);
+
+        String result = CommandUtil.runCommandWithOutput(testVault.vaultPath().toString(),
+                List.of(TestConstants.GIT_EXECUTABLE, "config", "user.name"));
+        assertThat(result.trim()).isEqualTo("Vault User");
+    }
+
+    /**
+     * Verifies that {@code bootstrapVault()} falls back to the global {@code git.name}
+     * property when no per-vault {@code gitName} is set.
+     */
+    @Test
+    void bootstrapVault_vaultNameNull_fallsBackToGlobalProperty()
+            throws GitException, NetworkException, IOException, InterruptedException {
+        Properties props = new Properties();
+        props.setProperty("git.executable", TestConstants.GIT_EXECUTABLE);
+        props.setProperty("git.name", "Global User");
+        GitService gs = new GitService(props, mock(VaultService.class), logService);
+
+        Vault noNameVault = new Vault(UUID.randomUUID().toString(),
+                "AleDeP10", "fallback-vault", testVault.vaultPath().toString());
+
+        gs.bootstrapVault(noNameVault);
+
+        String result = CommandUtil.runCommandWithOutput(testVault.vaultPath().toString(),
+                List.of(TestConstants.GIT_EXECUTABLE, "config", "user.name"));
+        assertThat(result.trim()).isEqualTo("Global User");
+    }
+
+    /**
+     * Verifies that per-vault {@code gitName} takes precedence over
+     * the global {@code git.name} property.
+     */
+    @Test
+    void bootstrapVault_vaultNameOverridesGlobal()
+            throws GitException, NetworkException, IOException, InterruptedException {
+        Properties props = new Properties();
+        props.setProperty("git.executable", TestConstants.GIT_EXECUTABLE);
+        props.setProperty("git.name", "Global User");
+        GitService gs = new GitService(props, mock(VaultService.class), logService);
+
+        Vault overrideVault = new Vault(UUID.randomUUID().toString(),
+                "AleDeP10", "override-vault", testVault.vaultPath().toString(),
+                "Per-Vault User", null, null, null, null, null);
+
+        gs.bootstrapVault(overrideVault);
+
+        String result = CommandUtil.runCommandWithOutput(testVault.vaultPath().toString(),
+                List.of(TestConstants.GIT_EXECUTABLE, "config", "user.name"));
+        assertThat(result.trim()).isEqualTo("Per-Vault User");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -200,8 +297,9 @@ class GitServiceTest {
     private void createAndCommitFile(String filename, String content)
             throws GitException, NetworkException, IOException, InterruptedException {
         Files.writeString(testVault.vaultPath().resolve(filename), content);
-        CommandUtil.runCommand(vaultPath, List.of(TestConstants.GIT_EXECUTABLE, "add", "."));
-        CommandUtil.runCommand(vaultPath, List.of(TestConstants.GIT_EXECUTABLE,
-                "commit", "-m", "test: initial commit"));
+        CommandUtil.runCommand(testVault.vaultPath().toString(),
+                List.of(TestConstants.GIT_EXECUTABLE, "add", "."));
+        CommandUtil.runCommand(testVault.vaultPath().toString(),
+                List.of(TestConstants.GIT_EXECUTABLE, "commit", "-m", "test: initial commit"));
     }
 }

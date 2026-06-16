@@ -9,6 +9,8 @@ import java.io.*;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Utility class for executing shell commands via {@link ProcessBuilder}.
@@ -22,6 +24,13 @@ import java.util.List;
  * <p>Network-related failures are distinguished from local Git errors by matching
  * the exception message against {@link #NETWORK_PATTERNS}. Matched patterns produce
  * a {@link NetworkException}; everything else produces a {@link GitException}.</p>
+ *
+ * <h2>Sensitive argument masking</h2>
+ * <p>The overload {@link #runCommand(String, List, Set, LogService)} accepts a set
+ * of sensitive argument values. Any command argument whose value appears in that set
+ * is replaced with {@code <hidden>} in the log line — the actual process receives
+ * the real value unchanged. Used by {@link GitService#bootstrapVault} to prevent
+ * GitHub tokens from appearing in log output.</p>
  */
 public final class CommandUtil {
 
@@ -38,14 +47,19 @@ public final class CommandUtil {
             "Network is unreachable"
     };
 
+    /** Placeholder logged in place of sensitive argument values. */
+    private static final String HIDDEN = "<hidden>";
+
     private CommandUtil() {}
+
+    // ── runCommand overloads ──────────────────────────────────────────────────
 
     /**
      * Executes a command in the given directory and streams output to the log.
      *
-     * @param directory  working directory for the command
-     * @param command    command and arguments as a list of strings
-     * @param logService logging service — may be {@code null} to suppress output
+     * @param directory     working directory for the command
+     * @param command       command and arguments as a list of strings
+     * @param logService    logging service — may be {@code null} to suppress output
      * @return process exit code
      * @throws GitException         if the process fails with a local error
      * @throws NetworkException     if the process fails with a network error
@@ -53,9 +67,49 @@ public final class CommandUtil {
      */
     public static int runCommand(String directory, List<String> command, LogService logService)
             throws GitException, NetworkException, InterruptedException {
+        return runCommand(directory, command, Set.of(), logService);
+    }
+
+    /**
+     * Executes a command in the given directory, masking sensitive argument values
+     * in the log while passing them unchanged to the process.
+     *
+     * <p>Any argument whose exact string value appears in {@code sensitiveArgs}
+     * is replaced with {@value #HIDDEN} in the logged command line. The process
+     * always receives the original, unmasked arguments.</p>
+     *
+     * <p>Example — masking a GitHub token embedded in a remote URL:</p>
+     * <pre>{@code
+     * String remoteUrl = "https://" + token + "@github.com/owner/repo";
+     * CommandUtil.runCommand(path,
+     *         List.of("git", "remote", "set-url", "origin", remoteUrl),
+     *         Set.of(remoteUrl),   // ← remoteUrl logged as <hidden>
+     *         logService);
+     * }</pre>
+     *
+     * @param directory     working directory for the command
+     * @param command       command and arguments as a list of strings
+     * @param sensitiveArgs argument values to mask in log output
+     * @param logService    logging service — may be {@code null} to suppress output
+     * @return process exit code
+     * @throws GitException         if the process fails with a local error
+     * @throws NetworkException     if the process fails with a network error
+     * @throws InterruptedException if the current thread is interrupted while waiting
+     */
+    public static int runCommand(String directory, List<String> command,
+                                 Set<String> sensitiveArgs, LogService logService)
+            throws GitException, NetworkException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(new File(directory));
         pb.redirectErrorStream(true);
+
+        if (logService != null && !sensitiveArgs.isEmpty()) {
+            String masked = command.stream()
+                    .map(arg -> sensitiveArgs.contains(arg) ? HIDDEN : arg)
+                    .collect(Collectors.joining(" "));
+            logService.debug("[cmd] " + masked);
+        }
+
         try {
             Process process = pb.start();
             try (BufferedReader reader = new BufferedReader(
@@ -85,14 +139,57 @@ public final class CommandUtil {
      */
     public static int runCommand(String directory, List<String> command)
             throws GitException, NetworkException, InterruptedException {
-        return runCommand(directory, command, null);
+        return runCommand(directory, command, Set.of(), null);
+    }
+
+    /**
+     * Executes a command in the given directory and returns its stdout as a string,
+     * preserving line breaks.
+     *
+     * <p>Unlike {@link #runCommandWithOutput(String, List)}, which joins lines
+     * without separators (suited for machine-readable single-line output such as
+     * {@code git status --porcelain}), this method joins lines with
+     * {@link System#lineSeparator()} — suited for human-readable multi-line output
+     * such as {@code git status}.</p>
+     *
+     * @param directory working directory for the command
+     * @param command   command and arguments as a list of strings
+     * @return stdout output with line breaks preserved, empty string if no output
+     * @throws GitException         if the process fails with a local error
+     * @throws NetworkException     if the process fails with a network error
+     * @throws InterruptedException if the current thread is interrupted while waiting
+     */
+    public static String runCommandWithLines(String directory, List<String> command)
+            throws GitException, NetworkException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.directory(new File(directory));
+        pb.redirectErrorStream(true);
+        StringBuilder output = new StringBuilder();
+        try {
+            Process process = pb.start();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (output.length() > 0) output.append(System.lineSeparator());
+                    output.append(line);
+                }
+            }
+            process.waitFor();
+        } catch (IOException e) {
+            if (isNetworkError(e)) throw asNetworkException(e);
+            throw asGitException(e);
+        }
+        return output.toString();
     }
 
     /**
      * Executes a command in the given directory and returns its stdout as a string.
      *
-     * <p>Used when the content of the output matters, not just the exit code.
-     * Not suitable for binary output — use {@link #runCommandToFile} instead.</p>
+     * <p>Lines are joined without separators — suited for machine-readable
+     * single-line output such as {@code git status --porcelain} or
+     * {@code git diff --quiet}. For human-readable multi-line output, use
+     * {@link #runCommandWithLines(String, List)} instead.</p>
      *
      * @param directory working directory for the command
      * @param command   command and arguments as a list of strings

@@ -15,7 +15,8 @@ package io.aledep10.nomadsync.util;
 public final class StringUtil {
 
     // Non-instantiable utility class.
-    private StringUtil() {}
+    private StringUtil() {
+    }
 
     /**
      * Returns {@code true} if the string is {@code null} or contains only whitespace.
@@ -48,5 +49,27 @@ public final class StringUtil {
      */
     public static String nullToEmpty(String str) {
         return str == null ? "" : str;
+    }
+
+    /**
+     * Returns the first non-null value in the given sequence,
+     * or {@code null} if all values are null.
+     *
+     * <p>Intended for credential resolution chains where vault-level
+     * values take precedence over global config, which in turn takes
+     * precedence over the system Git configuration:
+     * <pre>
+     *   StringUtil.coalesce(vault.getGitToken(),
+     *                        properties.getProperty("git.token"))
+     * </pre>
+     *
+     * @param values the values to evaluate in order
+     * @return the first non-null value, or {@code null}
+     */
+    public static String coalesce(String... values) {
+        for (String v : values) {
+            if (v != null) return v;
+        }
+        return null;
     }
 }

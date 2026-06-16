@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.orchestrator.Vault;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -28,13 +30,19 @@ import java.util.stream.Stream;
  * application working directory ({@code user.dir}), keeping the layout
  * self-contained without requiring explicit configuration in simple deployments.</p>
  *
- * <h2>Vault name uniqueness</h2>
- * <p>Vault {@code name} must be unique across all registered vaults — it determines
- * the {@code backups/<name>_<timestamp>/} and {@code remote-conflicts/<name>_<timestamp>/}
- * directory names. Two vaults sharing a {@code name} (even under different {@code owner}s)
- * would silently collide on the same snapshot/conflict directories. {@link #load()},
- * {@link #create(String, String, String)} and {@link #update(Vault)} all enforce this
- * constraint by throwing {@link VaultException}.</p>
+ * <h2>Vault identity and uniqueness constraints</h2>
+ * <p>Each vault is uniquely identified by its {@code repoSlug} — the composite
+ * {@code <owner>/<name>} string derived from {@link Vault#getRepoSlug()}. This
+ * mirrors GitHub's own uniqueness guarantee: two repositories on different accounts
+ * may share the same {@code name}, but the {@code owner/name} combination is always
+ * globally unique.</p>
+ *
+ * <p>Additionally, no two vaults may point to the same local {@code path}. A vault
+ * with a duplicate {@code path} would cause two orchestrators to operate on the same
+ * Git repository concurrently, producing undefined behaviour.</p>
+ *
+ * <p>{@link #load()}, {@link #create(String, String, String)} and {@link #update(Vault)}
+ * all enforce both constraints by throwing {@link VaultException} on violation.</p>
  *
  * <h2>Defensive copies</h2>
  * <p>{@link #findAll()} returns a new {@link ArrayList} on every call — structural
@@ -74,13 +82,13 @@ public class VaultService {
     public VaultService(Properties properties,
                         GitignoreService gitignoreService,
                         LogService logService) {
-        this.vaultFile        = new File(properties.getProperty("path.vaults"));
+        this.vaultFile        = new File(properties.getProperty(NomadProperties.Path.VAULTS));
         this.gitignoreService = gitignoreService;
         this.logService       = logService;
         this.backupsRoot      = Path.of(properties.getProperty(
-                "path.backup", FALLBACK_ROOT + "/backups"));
+                NomadProperties.Path.BACKUP, FALLBACK_ROOT + "/backups"));
         this.conflictsRoot    = Path.of(properties.getProperty(
-                "path.conflicts", FALLBACK_ROOT + "/remote-conflicts"));
+                NomadProperties.Path.CONFLICTS, FALLBACK_ROOT + "/remote-conflicts"));
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -91,13 +99,23 @@ public class VaultService {
      * <p>If the file does not exist, the in-memory state is cleared and an empty list
      * is returned — no exception is thrown.</p>
      *
+     * <p>Two validations are run before the in-memory state is replaced:</p>
+     * <ol>
+     *   <li>No two vaults share the same {@code repoSlug} ({@code <owner>/<name>}).</li>
+     *   <li>No two vaults share the same local {@code path}.</li>
+     * </ol>
+     * <p>If either validation fails, the in-memory state is left unchanged and a
+     * {@link VaultException} is thrown — the caller can inspect the exception message
+     * to identify the offending value.</p>
+     *
      * @return the list of loaded vaults
      * @throws IOException    if the file exists but cannot be read or parsed
-     * @throws VaultException if two or more vaults share the same {@code name}
+     * @throws VaultException if two or more vaults share the same {@code repoSlug} or {@code path}
      */
     public List<Vault> load() throws IOException, VaultException {
         List<Vault> loaded = JsonMapper.loadVaultsFromFile(vaultFile);
-        validateUniqueNames(loaded);
+        validateUniqueRepoSlugs(loaded);
+        validateUniquePaths(loaded);
         vaults.clear();
         loaded.forEach(v -> vaults.put(v.getId(), v));
         return new ArrayList<>(vaults.values());
@@ -120,17 +138,30 @@ public class VaultService {
     /**
      * Creates a new vault with a generated UUID, registers it in memory, and persists.
      *
+     * <p>Two pre-conditions are checked before registration:</p>
+     * <ol>
+     *   <li>No existing vault shares the same {@code repoSlug} ({@code <owner>/<name>}).
+     *       Two vaults with the same {@code name} but different {@code owner}s are
+     *       explicitly allowed.</li>
+     *   <li>No existing vault shares the same local {@code path}.</li>
+     * </ol>
+     *
      * @param owner GitHub account that owns the remote repository
-     * @param name  human-readable vault name, also the remote repository name —
-     *              must be unique across all registered vaults
-     * @param path  absolute path to the vault directory on the local filesystem
+     * @param name  remote repository name — combined with {@code owner} to form the
+     *              {@code repoSlug}; the combination must be unique among registered vaults
+     * @param path  absolute path to the vault directory on the local filesystem;
+     *              must be unique among registered vaults
      * @return the created {@link Vault} with its generated id
-     * @throws VaultException if a vault with the same {@code name} already exists
+     * @throws VaultException if a vault with the same {@code repoSlug} or {@code path} already exists
      * @throws IOException    if persistence fails
      */
     public Vault create(String owner, String name, String path) throws IOException, VaultException {
-        if (findByName(name).isPresent()) {
-            throw new VaultException("duplicated vault name: " + name);
+        String repoSlug = owner + "/" + name;
+        if (findByRepoSlug(repoSlug).isPresent()) {
+            throw new VaultException("duplicated repoSlug: " + repoSlug);
+        }
+        if (findByPath(path).isPresent()) {
+            throw new VaultException("duplicated path: " + path);
         }
         Vault vault = new Vault(UUID.randomUUID().toString(), owner, name, path);
         vaults.put(vault.getId(), vault);
@@ -142,21 +173,35 @@ public class VaultService {
      * Updates an existing vault in memory and persists.
      *
      * <p>The vault is identified by its {@code id} — both the vault and its id
-     * must not be {@code null}. If {@code vault.getName()} is being changed to a
-     * name already used by a <em>different</em> vault, the update is rejected.</p>
+     * must not be {@code null}.</p>
+     *
+     * <p>Two constraints are checked before persisting:</p>
+     * <ol>
+     *   <li>The resulting {@code repoSlug} must not collide with a <em>different</em>
+     *       vault's {@code repoSlug}. A no-op rename (same {@code owner} and {@code name})
+     *       is always allowed.</li>
+     *   <li>The {@code path} must not collide with a <em>different</em> vault's
+     *       {@code path}. A no-op path update is always allowed.</li>
+     * </ol>
      *
      * @param vault the vault to update
      * @throws IllegalArgumentException if {@code vault} or {@code vault.getId()} is {@code null}
-     * @throws VaultException           if {@code vault.getName()} collides with a different vault's name
+     * @throws VaultException           if the resulting {@code repoSlug} or {@code path}
+     *                                   collides with a different vault's value
      * @throws IOException              if persistence fails
      */
     public void update(Vault vault) throws IOException, VaultException {
         ValidationUtil.requireNonNull(vault, "vault");
         ValidationUtil.requireNonNull(vault.getId(), "vault.id");
 
-        Optional<Vault> existing = findByName(vault.getName());
-        if (existing.isPresent() && !existing.get().getId().equals(vault.getId())) {
-            throw new VaultException("duplicated vault name: " + vault.getName());
+        Optional<Vault> slugConflict = findByRepoSlug(vault.getRepoSlug());
+        if (slugConflict.isPresent() && !slugConflict.get().getId().equals(vault.getId())) {
+            throw new VaultException("duplicated repoSlug: " + vault.getRepoSlug());
+        }
+
+        Optional<Vault> pathConflict = findByPath(vault.getPath());
+        if (pathConflict.isPresent() && !pathConflict.get().getId().equals(vault.getId())) {
+            throw new VaultException("duplicated path: " + vault.getPath());
         }
 
         vaults.put(vault.getId(), vault);
@@ -206,14 +251,63 @@ public class VaultService {
     }
 
     /**
-     * Returns the first vault with the given name, or {@link Optional#empty()} if not found.
+     * Returns the vault whose {@code repoSlug} ({@code <owner>/<name>}) matches exactly,
+     * or {@link Optional#empty()} if not found.
      *
-     * @param name the vault name to look up
+     * <p>{@code repoSlug} is the canonical unique identifier (DTR-031, DTR-046) —
+     * at most one vault can match.</p>
+     *
+     * @param repoSlug full identifier in {@code "<owner>/<name>"} form,
+     *                 e.g. {@code "AleDeP10/public-vault"}
      * @return an {@link Optional} containing the vault, or empty if not registered
      */
-    public Optional<Vault> findByName(String name) {
+    public Optional<Vault> findByRepoSlug(String repoSlug) {
+        return vaults.values().stream()
+                .filter(v -> v.getRepoSlug().equals(repoSlug))
+                .findFirst();
+    }
+
+    /**
+     * Returns all vaults whose {@code name} matches, regardless of {@code owner}.
+     *
+     * <p>{@code name} alone is <strong>not</strong> a unique identifier — two vaults
+     * belonging to different owners may share the same {@code name}
+     * (e.g. {@code "AleDeP10/public-vault"} and {@code "Belmani/public-vault"}).</p>
+     *
+     * <p>This method is intended exclusively for CLI vault resolution
+     * ({@code --vault=<name>} argument parsing, GRM M7 Step D5). It must
+     * <strong>not</strong> be used for uniqueness checks — use
+     * {@link #findByRepoSlug(String)} for that purpose.</p>
+     *
+     * <p>The returned list size drives the resolution logic:</p>
+     * <ul>
+     *   <li>{@code 0} — vault not found</li>
+     *   <li>{@code 1} — unambiguous match, regardless of owner</li>
+     *   <li>{@code >1} — ambiguous; caller should request {@code <owner>/<name>}</li>
+     * </ul>
+     *
+     * @param name the vault name to look up — matched against {@link Vault#getName()}
+     * @return a new list of all vaults with this {@code name}; empty if none match
+     */
+    public List<Vault> findAllByName(String name) {
         return vaults.values().stream()
                 .filter(v -> v.getName().equals(name))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Returns the vault whose local {@code path} matches exactly,
+     * or {@link Optional#empty()} if not found.
+     *
+     * <p>Used internally by {@link #create} and {@link #update} to enforce
+     * path uniqueness, and by {@link #validateUniquePaths} during {@link #load}.</p>
+     *
+     * @param path the absolute path to look up
+     * @return an {@link Optional} containing the vault, or empty if not registered
+     */
+    private Optional<Vault> findByPath(String path) {
+        return vaults.values().stream()
+                .filter(v -> v.getPath().equals(path))
                 .findFirst();
     }
 
@@ -249,7 +343,6 @@ public class VaultService {
 
         try {
             Files.createDirectories(backupsRoot);
-
             List<PathMatcher> matchers = gitignoreService.forSnapshot(vaultDir);
 
             List<Path> snapshots;
@@ -267,7 +360,6 @@ public class VaultService {
             Path   snapshotDir = backupsRoot.resolve(vaultName + "_" + timestamp);
 
             Files.walkFileTree(vaultDir, new SimpleFileVisitor<>() {
-
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs)
                         throws IOException {
@@ -354,21 +446,41 @@ public class VaultService {
     }
 
     /**
-     * Validates that no two vaults in the given list share the same {@code name}.
+     * Validates that no two vaults in the given list share the same {@code repoSlug}.
      *
-     * <p>Vault names are used to derive {@code backups/<name>_<timestamp>/} and
-     * {@code remote-conflicts/<name>_<timestamp>/} directory names. Two vaults with
-     * the same {@code name} — even under different {@code owner}s — would collide
-     * on the same snapshot/conflict directories, silently mixing their contents.</p>
+     * <p>Two vaults with the same {@code name} but different {@code owner}s —
+     * e.g. {@code "AleDeP10/public-vault"} and {@code "Belmani/public-vault"} —
+     * are distinct and explicitly allowed.</p>
      *
      * @param loaded vaults freshly deserialised from {@code vaults.json}
-     * @throws VaultException if any name appears more than once
+     * @throws VaultException if any {@code repoSlug} appears more than once
      */
-    private void validateUniqueNames(List<Vault> loaded) throws VaultException {
+    private void validateUniqueRepoSlugs(List<Vault> loaded) throws VaultException {
         Set<String> seen = new HashSet<>();
         for (Vault vault : loaded) {
-            if (!seen.add(vault.getName())) {
-                throw new VaultException("duplicated vault name in vaults.json: " + vault.getName());
+            if (!seen.add(vault.getRepoSlug())) {
+                throw new VaultException(
+                        "duplicated repoSlug in vaults.json: " + vault.getRepoSlug());
+            }
+        }
+    }
+
+    /**
+     * Validates that no two vaults in the given list share the same local {@code path}.
+     *
+     * <p>Two orchestrators operating on the same local Git repository concurrently
+     * would produce undefined behaviour — this constraint prevents that scenario
+     * from being registered in the first place.</p>
+     *
+     * @param loaded vaults freshly deserialised from {@code vaults.json}
+     * @throws VaultException if any {@code path} appears more than once
+     */
+    private void validateUniquePaths(List<Vault> loaded) throws VaultException {
+        Set<String> seen = new HashSet<>();
+        for (Vault vault : loaded) {
+            if (!seen.add(vault.getPath())) {
+                throw new VaultException(
+                        "duplicated path in vaults.json: " + vault.getPath());
             }
         }
     }
