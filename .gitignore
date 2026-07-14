@@ -1,6 +1,6 @@
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 # Build Output
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 target/
 *.class
 *.jar
@@ -13,34 +13,44 @@ target/
 
 # Maven wrapper exception
 !.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
 
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
+# jpackage installers (M8+)
+# ------------------------------------------------------------
+installer/
+*.exe
+*.pkg
+*.dmg
+
+# ------------------------------------------------------------
 # Application Runtime Configuration & Secrets
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 # Ignore active local configuration files at the project root
 /src/main/resources/config.properties
 /src/main/resources/config.dev.properties
 /src/main/resources/config.prod.properties
 /src/main/resources/vaults.json
 
+# Editor backup files of the above
+/src/main/resources/*.properties.bak
+/src/main/resources/vaults.json.bak
+
 # Explicitly ensure resource templates are ALWAYS tracked in Git
 !src/main/resources/config.template.properties
 !src/main/resources/vaults.template.json
 
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 # Logs & JVM Diagnostics
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 *.log
 logs/
 target/logs/
 hs_err_pid*
 replay_pid*
 
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 # IDEs & Editors Configuration
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 # IntelliJ IDEA
 .idea/workspace.xml
 .idea/tasks.xml
@@ -66,16 +76,13 @@ replay_pid*
 /dist/
 /nbdist/
 /.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
 
 # VS Code
 .vscode/
 
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 # macOS System Junk (Complete Cleanup)
-# ══════════════════════════════════════════
+# ------------------------------------------------------------
 **/.DS_Store
 **/.AppleDouble
 **/.LSOverride

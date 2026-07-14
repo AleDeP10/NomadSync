@@ -71,7 +71,7 @@ public final class NomadPropertiesLoader {
 
         } catch (IOException e) {
             LOGGER.log(System.Logger.Level.WARNING,
-                    "config.properties not readable — using built-in defaults", e);
+                    "config.properties not readable - using built-in defaults", e);
         }
 
         return properties;
@@ -121,7 +121,7 @@ public final class NomadPropertiesLoader {
         if ("false".equalsIgnoreCase(value))    return false;
         LOGGER.log(System.Logger.Level.WARNING,
                 "config.properties: unrecognised boolean value ''{0}'' for key ''{1}'' " +
-                        "— using default ''{2}''", value, key, defaultValue);
+                        "- using default ''{2}''", value, key, defaultValue);
         return defaultValue;
     }
 
@@ -145,7 +145,7 @@ public final class NomadPropertiesLoader {
         }
         LOGGER.log(System.Logger.Level.WARNING,
                 "config.properties: unrecognised value ''{0}'' for key ''{1}'' " +
-                        "— using default ''{2}''", value, key, defaultValue);
+                        "- using default ''{2}''", value, key, defaultValue);
         return defaultValue;
     }
 }

@@ -6,6 +6,7 @@ import io.aledep10.nomadsync.logging.FileLogWriter;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.logging.LogWriter;
 import io.aledep10.nomadsync.logging.SeqHttpLogWriter;
+import io.aledep10.nomadsync.util.PropertiesUtil;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -55,40 +56,53 @@ import java.util.stream.Collectors;
  */
 public class LogService {
 
-    private final Properties properties;
+    private final Properties     properties;
+    private final Path           configDir;
     private final List<LogWriter> writers;
-    private final LogLevel minLevel;
-    private final String repoSlug;
+    private final LogLevel       minLevel;
+    private final String         repoSlug;
 
     // ── Public constructors ───────────────────────────────────────────────────
 
     /**
      * Constructs a system-level {@code LogService} with {@code repoSlug = "SYSTEM"}.
      *
-     * <p>Writers are built from {@link NomadProperties.Log#WRITERS}.
-     * Use this constructor at boot, before any vault is loaded.</p>
+     * <p>Writers are built from {@link NomadProperties.Log#WRITERS}. {@code log.path}
+     * (when the {@code file} writer is active) is resolved via
+     * {@link io.aledep10.nomadsync.util.PropertiesUtil#resolvePath} against
+     * {@code configDir} — the directory containing the {@code config.properties}
+     * file in use — not the process's working directory. An already-absolute value
+     * is left untouched. Use this constructor at boot, before any vault is loaded.</p>
      *
      * @param properties application properties — must contain at minimum
      *                   {@link NomadProperties.Log#LEVEL} and
      *                   {@link NomadProperties.Log#WRITERS}
+     * @param configDir  directory containing the {@code config.properties} file
+     *                   in use — base for resolving a relative or absent
+     *                   {@link NomadProperties.Log#PATH}
      */
-    public LogService(Properties properties) {
-        this(properties, buildWriters(properties), "SYSTEM");
+    public LogService(Properties properties, Path configDir) {
+        this(properties, configDir, buildWriters(properties, configDir), "SYSTEM");
     }
 
     /**
      * Constructs a vault-scoped {@code LogService} with the given {@code repoSlug}.
      *
-     * <p>Writers are built fresh from properties. Prefer {@link #withVault(String)}
-     * when deriving a per-vault instance from an existing one — it reuses writers
-     * without reopening files or reconnecting to Seq.</p>
+     * <p>Writers are built fresh from properties — same {@code configDir}-relative
+     * resolution of {@code log.path} as the system-level constructor. Prefer
+     * {@link #withVault(String)} when deriving a per-vault instance from an
+     * existing one — it reuses writers (and the already-resolved paths within
+     * them) without reopening files or reconnecting to Seq.</p>
      *
      * @param properties application properties
+     * @param configDir  directory containing the {@code config.properties} file
+     *                   in use — base for resolving a relative or absent
+     *                   {@link NomadProperties.Log#PATH}
      * @param repoSlug   vault identifier in {@code <owner>/<name>} form,
      *                   e.g. {@code AleDeP10/public-vault}
      */
-    public LogService(Properties properties, String repoSlug) {
-        this(properties, buildWriters(properties), repoSlug);
+    public LogService(Properties properties, Path configDir, String repoSlug) {
+        this(properties, configDir, buildWriters(properties, configDir), repoSlug);
     }
 
     // ── Private constructor — single construction point ───────────────────────
@@ -97,12 +111,19 @@ public class LogService {
      * Internal constructor — single construction point for all public constructors
      * and {@link #withVault(String)}.
      *
+     * <p>{@code configDir} is retained as an instance field solely so
+     * {@link #withVault(String)} can be extended in the future without changing
+     * its signature again — the writer list passed in has already been built
+     * (and any relative {@code log.path} already resolved) by the time this
+     * constructor runs, so {@code configDir} is not re-consulted here.</p>
+     *
      * <p>{@link List#copyOf} is applied here for defensive immutability —
      * the caller cannot modify the writer list after construction regardless
      * of how the list was built.</p>
      */
-    private LogService(Properties properties, List<LogWriter> writers, String repoSlug) {
+    private LogService(Properties properties, Path configDir, List<LogWriter> writers, String repoSlug) {
         this.properties = properties;
+        this.configDir  = configDir;
         this.writers    = List.copyOf(writers);
         this.minLevel   = LogLevel.valueOf(
                 properties.getProperty(NomadProperties.Log.LEVEL, LogLevel.INFO.name()));
@@ -123,7 +144,7 @@ public class LogService {
      * @return a new {@code LogService} instance scoped to the vault
      */
     public LogService withVault(String repoSlug) {
-        return new LogService(this.properties, this.writers, repoSlug);
+        return new LogService(this.properties, configDir, this.writers, repoSlug);
     }
 
     // ── API ───────────────────────────────────────────────────────────────────
@@ -177,10 +198,12 @@ public class LogService {
      * @param properties application properties
      * @return mutable list of initialised writers
      */
-    private static List<LogWriter> buildWriters(Properties properties) {
+    private static List<LogWriter> buildWriters(Properties properties, Path configDir) {
         List<LogWriter> result = new ArrayList<>();
+        LogLevel minLevel = LogLevel.valueOf(
+                properties.getProperty(NomadProperties.Log.LEVEL, LogLevel.INFO.name()));
         Set<String> tokens = Arrays.stream(
-                        properties.getProperty(NomadProperties.Log.WRITERS, "console,file")
+                        PropertiesUtil.get(properties, NomadProperties.Log.WRITERS, "console,file")
                                 .split(","))
                 .map(String::trim)
                 .collect(Collectors.toCollection(TreeSet::new));
@@ -189,24 +212,31 @@ public class LogService {
             switch (token) {
                 case "console" -> result.add(new ConsoleLogWriter());
                 case "file" -> {
-                    if (properties.containsKey(NomadProperties.Log.PATH)) {
-                        result.add(new FileLogWriter(
-                                Path.of(properties.getProperty(NomadProperties.Log.PATH))));
+                    String rawLogPath = properties.getProperty(NomadProperties.Log.PATH);
+                    if (rawLogPath == null || rawLogPath.isBlank()) {
+                        System.err.println("[LogService] " + NomadProperties.Log.PATH
+                                + " missing - file writer skipped");
                     } else {
-                        System.err.println("[LogService] "
-                                + NomadProperties.Log.PATH
-                                + " missing — file writer skipped");
+                        Path logPath = PropertiesUtil.resolvePath(properties, NomadProperties.Log.PATH,
+                                rawLogPath, configDir);
+                        if (!Path.of(rawLogPath).isAbsolute()
+                                && minLevel.ordinal() <= LogLevel.DEBUG.ordinal()) {
+                            System.err.println("[LogService] " + NomadProperties.Log.PATH + "='" + rawLogPath
+                                    + "' is relative - resolved to " + logPath);
+                        }
+                        result.add(new FileLogWriter(logPath));
                     }
                 }
                 case "seq" -> {
-                    if (properties.containsKey(NomadProperties.Log.SEQ_URL)) {
+                    String seqUrl = PropertiesUtil.get(properties, NomadProperties.Log.SEQ_URL, null);
+                    if (seqUrl != null) {
                         result.add(new SeqHttpLogWriter(
-                                properties.getProperty(NomadProperties.Log.SEQ_URL),
-                                properties.getProperty(NomadProperties.Log.SEQ_API_KEY, "")));
+                                seqUrl,
+                                PropertiesUtil.get(properties, NomadProperties.Log.SEQ_API_KEY, "")));
                     } else {
                         System.err.println("[LogService] "
                                 + NomadProperties.Log.SEQ_URL
-                                + " missing — seq writer skipped");
+                                + " missing - seq writer skipped");
                     }
                 }
                 default -> System.err.println("[LogService] unknown writer: " + token);

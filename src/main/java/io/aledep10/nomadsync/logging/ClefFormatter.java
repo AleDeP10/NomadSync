@@ -52,10 +52,11 @@ public class ClefFormatter implements LogFormatter {
         node.put("@l", level.toClef());
         node.put("@m", message);
         node.put("vault", universalId);
-        if (cause != null) {
+        while (cause != null) {
             StringWriter sw = new StringWriter();
             cause.printStackTrace(new PrintWriter(sw));
             node.put("@x", sw.toString());
+            cause = cause.getCause();
         }
         return List.of(node.toString());
     }

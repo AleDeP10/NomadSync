@@ -34,8 +34,8 @@ import java.time.LocalDateTime;
  *       {@link #MAX_RETRIES} attempts, then {@link NotificationHook#onFailure}.</li>
  *   <li>{@link GitException} → immediate {@link NotificationHook#onFailure},
  *       no retry — local Git errors are not transient.</li>
- *   <li>{@link VaultException} → logged and swallowed — snapshot/conflict
- *       failures are non-blocking; sync continues.</li>
+ *   <li>{@link VaultException} → logged at {@code WARN} and swallowed — snapshot/
+ *       conflict failures are non-blocking; sync continues.</li>
  * </ul>
  *
  * <h2>Constructor argument order</h2>
@@ -43,6 +43,23 @@ import java.time.LocalDateTime;
  * then services in descending order of complexity, {@link LogService} last
  * among services, then infrastructure ({@link SyncEventQueue},
  * {@link NotificationHook}).</p>
+ *
+ * <h2>Logging conventions</h2>
+ * <p>The {@code logService} instance injected here is already vault-scoped
+ * (via {@code LogService#withVault}, applied by the caller before construction) —
+ * individual log lines do not need to repeat the vault identity, unlike the
+ * stateless multi-vault services ({@link GitService}, {@link
+ * io.aledep10.nomadsync.service.VaultService}).</p>
+ * <p>{@link #execute(SyncEvent)} emits a single {@code INFO} line announcing the
+ * event at the start; which branch was taken and its outcome (nothing to commit,
+ * no changes detected, completion) are logged at {@code DEBUG} — the intro line
+ * is the single point of "this happened" observability, per the project's
+ * logging conventions. {@link #stop()} follows the same pattern: its own
+ * {@code INFO} intro announces the shutdown request, while the worker's
+ * acknowledgement of the resulting interrupt is {@code DEBUG} detail, not a
+ * second intro. A caught {@link VaultException} and an interruption that reaches
+ * {@link #start()} outside the normal {@link #stop()} path are both anomalies,
+ * not ordinary outcomes, and are logged at {@code WARN} accordingly.</p>
  */
 public class SyncOrchestrator {
 
@@ -81,7 +98,9 @@ public class SyncOrchestrator {
                     SyncEvent event = queue.consume();
                     execute(event);
                 } catch (InterruptedException e) {
-                    logService.info("Worker interrupted, shutting down.");
+                    // Acknowledgement of the interrupt() sent by stop() — stop()
+                    // already logged its own INFO intro; this is outcome detail.
+                    logService.debug("Worker interrupted, shutting down.");
                     Thread.currentThread().interrupt();
                     break;
                 }
@@ -95,13 +114,17 @@ public class SyncOrchestrator {
      * <p>Must be called on a dedicated thread — it will block until {@link #stop()}
      * is called from another thread (e.g. the JVM shutdown hook registered in
      * {@code Main}).</p>
+     *
+     * <p>Logging: an interruption reaching this method directly (i.e. not via the
+     * normal {@link #stop()} path) is an anomalous, unexpected condition and is
+     * logged at {@code WARN}.</p>
      */
     public void start() {
         worker.start();
         try {
             worker.join();
         } catch (InterruptedException e) {
-            logService.info("Main thread interrupted while waiting for worker");
+            logService.warn("Main thread interrupted while waiting for worker");
             Thread.currentThread().interrupt();
         }
     }
@@ -113,9 +136,13 @@ public class SyncOrchestrator {
      * (which internally calls {@link java.util.concurrent.PriorityBlockingQueue#take()})
      * and {@code join()} to wait for clean termination — never kills the thread
      * mid-operation. The current task completes before the worker exits.</p>
+     *
+     * <p>Logging: a single {@code INFO} line announces the shutdown request at
+     * the start — the worker's own acknowledgement of the resulting interrupt is
+     * logged at {@code DEBUG}, not as a second intro.</p>
      */
     public void stop() {
-        logService.info("Shutdown requested — waiting for worker to finish.");
+        logService.info("Shutdown requested - waiting for worker to finish.");
         worker.interrupt();
         try {
             worker.join();
@@ -144,6 +171,14 @@ public class SyncOrchestrator {
      *       message if dirty; no-op otherwise. Never pushes.</li>
      * </ul>
      *
+     * <p>Logging: a single {@code INFO} line announces the event at the start.
+     * Which branch was taken, whether it turned out to be a no-op, and the final
+     * completion are all logged at {@code DEBUG} — the intro line is the single
+     * point of observability for "this event ran"; a caught {@link VaultException}
+     * is the one exception to this, logged at {@code WARN} as an anomaly rather
+     * than ordinary outcome detail, since it represents a real failure that is
+     * deliberately swallowed rather than a normal branch outcome.</p>
+     *
      * @param event the event to process
      * @throws InterruptedException if the thread is interrupted during execution
      */
@@ -161,7 +196,7 @@ public class SyncOrchestrator {
                 case PUSH_LOGOFF -> {
                     int commitExit = gitService.commitLocal(vault, "push " + LocalDateTime.now());
                     if (commitExit != 0) {
-                        logService.info("Nothing to commit, pushing existing commits.");
+                        logService.debug("Nothing to commit, pushing existing commits.");
                     }
                     gitService.push(vault);
                 }
@@ -174,21 +209,22 @@ public class SyncOrchestrator {
                         }
                         gitService.commitLocal(vault, message);
                     } else {
-                        logService.info("No changes detected, skipping manual commit.");
+                        logService.debug("No changes detected, skipping manual commit.");
                     }
                 }
                 case AUTOSAVE -> {
                     if (gitService.hasUncommittedChanges(vault)) {
                         gitService.commitLocal(vault, "autosave " + LocalDateTime.now());
                     } else {
-                        logService.info("No changes detected, skipping autosave.");
+                        logService.debug("No changes detected, skipping autosave.");
                     }
                 }
             }
-            logService.info("-> " + event + " completed");
+            logService.debug("-> " + event + " completed");
         } catch (VaultException e) {
-            // Snapshot/conflict failure is non-blocking — log and continue.
-            logService.info("-> " + event + " failed: " + e.getMessage());
+            // Snapshot/conflict failure is non-blocking — logged as an anomaly
+            // (WARN), then swallowed; sync continues.
+            logService.warn("-> " + event + " failed: " + e.getMessage());
         } catch (NetworkException e) {
             logService.error("Network error while performing " + event + ": " + e.getMessage());
             retry(event, e);
@@ -210,6 +246,10 @@ public class SyncOrchestrator {
      * <p>If the thread is interrupted during the sleep, the notification hook is
      * invoked, the interrupt flag is restored, and the {@link InterruptedException}
      * is rethrown — the worker loop will catch it and shut down cleanly.</p>
+     *
+     * <p>Logging: unaffected by the intro/outro convention — every line here
+     * ({@code WARN} per attempt, {@code ERROR} on final discard) reports an
+     * actual anomaly, not routine flow.</p>
      *
      * @param event the event to retry
      * @param cause the network exception that caused the failure

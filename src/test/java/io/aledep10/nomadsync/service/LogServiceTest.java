@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Properties;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
@@ -19,6 +20,13 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  * <p>Each test writes to the shared {@link TestVault#logFilePath()} — log entries
  * are isolated by level and content assertions rather than by separate files.
  * The test vault is cleaned in {@code @AfterEach}.</p>
+ *
+ * <p>{@link TestVault#rootPath()} is used as {@code configDir} throughout —
+ * it is the base directory against which a relative {@code log.path} is
+ * resolved; most tests supply an already-absolute {@code log.path}
+ * ({@link TestVault#logFilePath()}), so {@code configDir} is inert for them.
+ * The {@code configDir}-specific tests below are the ones that actually
+ * exercise resolution against it.</p>
  */
 class LogServiceTest {
 
@@ -37,9 +45,6 @@ class LogServiceTest {
 
     // ── log() — level filtering ───────────────────────────────────────────────
 
-    /**
-     * Verifies that events below the configured minimum level are not written to the file.
-     */
     @Test
     void log_belowMinLevel_doesNotWrite() {
         LogService logService = createLogService(LogLevel.INFO);
@@ -49,9 +54,6 @@ class LogServiceTest {
         assertThat(readLogFile()).doesNotContain("should not appear");
     }
 
-    /**
-     * Verifies that an event at exactly the minimum level is written with level tag and message.
-     */
     @Test
     void log_atMinLevel_writes() {
         LogService logService = createLogService(LogLevel.INFO);
@@ -63,9 +65,6 @@ class LogServiceTest {
         assertThat(content).contains("expected message");
     }
 
-    /**
-     * Verifies that an event above the minimum level is written.
-     */
     @Test
     void log_aboveMinLevel_writes() {
         LogService logService = createLogService(LogLevel.INFO);
@@ -79,10 +78,6 @@ class LogServiceTest {
 
     // ── log() — format ────────────────────────────────────────────────────────
 
-    /**
-     * Verifies that every log line includes a timestamp in the format
-     * {@code [yyyy-MM-dd HH:mm:ss.SSS]}.
-     */
     @Test
     void log_alwaysIncludesTimestamp() {
         LogService logService = createLogService(LogLevel.DEBUG);
@@ -93,10 +88,6 @@ class LogServiceTest {
                 .containsPattern("\\[\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\]");
     }
 
-    /**
-     * Verifies that every log line includes the repoSlug field.
-     * Default constructor uses "SYSTEM" as repoSlug.
-     */
     @Test
     void log_defaultConstructor_usesSystemRepoSlug() {
         LogService logService = createLogService(LogLevel.DEBUG);
@@ -108,10 +99,6 @@ class LogServiceTest {
 
     // ── log() — append mode ───────────────────────────────────────────────────
 
-    /**
-     * Verifies that two {@link LogService} instances writing to the same file
-     * both append — neither truncates the existing content.
-     */
     @Test
     void log_appendMode_preservesPreviousSessions() throws InterruptedException {
         createLogService(LogLevel.DEBUG).info("first session");
@@ -123,29 +110,22 @@ class LogServiceTest {
         assertThat(content).contains("second session");
     }
 
-    // ── constructor(Properties, String repoSlug) ──────────────────────────────
+    // ── constructor(Properties, Path configDir, String repoSlug) ──────────────
 
-    /**
-     * Verifies that the vault-scoped constructor writes the provided repoSlug
-     * to every log line.
-     */
     @Test
     void constructor_withRepoSlug_writesRepoSlugToLog() {
         Properties properties = baseProperties(LogLevel.DEBUG);
-        LogService logService = new LogService(properties, "AleDeP10/public-vault");
+        LogService logService = new LogService(properties, testVault.rootPath(), "Alice/portfolio");
 
         logService.info("vault message");
 
-        assertThat(readLogFile()).contains("AleDeP10/public-vault");
+        assertThat(readLogFile()).contains("Alice/portfolio");
     }
 
-    /**
-     * Verifies that the vault-scoped constructor still filters by level.
-     */
     @Test
     void constructor_withRepoSlug_respectsMinLevel() {
         Properties properties = baseProperties(LogLevel.WARN);
-        LogService logService = new LogService(properties, "AleDeP10/public-vault");
+        LogService logService = new LogService(properties, testVault.rootPath(), "Alice/portfolio");
 
         logService.info("below threshold");
 
@@ -154,74 +134,54 @@ class LogServiceTest {
 
     // ── withVault() ───────────────────────────────────────────────────────────
 
-    /**
-     * Verifies that {@code withVault()} returns a new instance scoped to the
-     * given repoSlug — the slug appears in every subsequent log line.
-     */
     @Test
     void withVault_writesNewRepoSlugToLog() {
         LogService system = createLogService(LogLevel.DEBUG);
-        LogService vaultScoped = system.withVault("AleDeP10/private-vault");
+        LogService vaultScoped = system.withVault("Alice/portfolio");
 
         vaultScoped.info("vault-scoped message");
 
-        assertThat(readLogFile()).contains("AleDeP10/private-vault");
+        assertThat(readLogFile()).contains("Alice/portfolio");
     }
 
-    /**
-     * Verifies that the original {@code LogService} instance retains its own
-     * repoSlug after {@code withVault()} is called — instances are independent.
-     */
     @Test
     void withVault_originalInstanceRetainsSystemSlug() {
         LogService system = createLogService(LogLevel.DEBUG);
-        system.withVault("AleDeP10/private-vault");  // discard result
+        system.withVault("Alice/portfolio");  // discard result
 
         system.info("system message");
 
         assertThat(readLogFile()).contains("SYSTEM");
-        assertThat(readLogFile()).doesNotContain("AleDeP10/private-vault");
+        assertThat(readLogFile()).doesNotContain("Alice/portfolio");
     }
 
-    /**
-     * Verifies that two vault-scoped instances derived from the same system
-     * instance are independent — each writes its own slug.
-     */
     @Test
     void withVault_twoScopedInstances_writeDistinctSlugs() {
         LogService system  = createLogService(LogLevel.DEBUG);
-        LogService vaultA  = system.withVault("AleDeP10/public-vault");
-        LogService vaultB  = system.withVault("AleDeP10/private-vault");
+        LogService vaultA  = system.withVault("Alice/portfolio");
+        LogService vaultB  = system.withVault("Alice/portfolio");
 
         vaultA.info("from A");
         vaultB.info("from B");
 
         String content = readLogFile();
-        assertThat(content).contains("AleDeP10/public-vault");
-        assertThat(content).contains("AleDeP10/private-vault");
+        assertThat(content).contains("Alice/portfolio");
+        assertThat(content).contains("Alice/portfolio");
     }
 
     // ── buildWriters — unknown token ──────────────────────────────────────────
 
-    /**
-     * Verifies that an unknown writer token in {@code log.writers} does not throw —
-     * the service starts with the remaining valid writers.
-     */
     @Test
     void buildWriters_unknownToken_doesNotThrow() {
         Properties properties = baseProperties(LogLevel.DEBUG);
         properties.setProperty("log.writers", "console,unknown-writer,file");
 
-        LogService logService = new LogService(properties);
+        LogService logService = new LogService(properties, testVault.rootPath());
         logService.info("still works");
 
         assertThat(readLogFile()).contains("still works");
     }
 
-    /**
-     * Verifies that requesting the {@code file} writer without {@code log.path}
-     * does not throw — the writer is skipped and console remains active.
-     */
     @Test
     void buildWriters_fileWriterMissingPath_doesNotThrow() {
         Properties properties = new Properties();
@@ -230,13 +190,25 @@ class LogServiceTest {
         // log.path intentionally absent
 
         // must not throw
-        new LogService(properties);
+        new LogService(properties, testVault.rootPath());
     }
 
     /**
-     * Verifies that requesting the {@code seq} writer without {@code log.seq.url}
-     * does not throw — the writer is skipped.
+     * Verifies that {@code log.path} present but blank is treated the same as
+     * absent — the file writer is skipped, not pointed at a nonsense path
+     * derived from an empty string.
      */
+    @Test
+    void buildWriters_blankLogPath_treatedAsAbsent_doesNotThrow() {
+        Properties properties = new Properties();
+        properties.setProperty("log.level",   LogLevel.DEBUG.name());
+        properties.setProperty("log.writers", "file");
+        properties.setProperty("log.path",    "   ");
+
+        // must not throw
+        new LogService(properties, testVault.rootPath());
+    }
+
     @Test
     void buildWriters_seqWriterMissingUrl_doesNotThrow() {
         Properties properties = baseProperties(LogLevel.DEBUG);
@@ -244,13 +216,55 @@ class LogServiceTest {
         // log.seq.url intentionally absent
 
         // must not throw
-        new LogService(properties);
+        new LogService(properties, testVault.rootPath());
+    }
+
+    // ── buildWriters — configDir resolution ────────────────────────────────────
+
+    /**
+     * Verifies that a relative {@code log.path} is resolved against
+     * {@code configDir} — not the JVM's working directory — and that the
+     * resulting file actually receives the log line.
+     */
+    @Test
+    void buildWriters_relativeLogPath_resolvesAgainstConfigDir() throws IOException {
+        Properties properties = new Properties();
+        properties.setProperty("log.level",   LogLevel.DEBUG.name());
+        properties.setProperty("log.writers", "file");
+        properties.setProperty("log.path",    "relative-test.log");
+
+        Path expected = testVault.rootPath().resolve("relative-test.log");
+        try {
+            LogService logService = new LogService(properties, testVault.rootPath());
+            logService.info("resolved against configDir");
+
+            assertThat(Files.exists(expected)).isTrue();
+            assertThat(Files.readString(expected)).contains("resolved against configDir");
+        } finally {
+            Files.deleteIfExists(expected);
+        }
+    }
+
+    /**
+     * Verifies that an already-absolute {@code log.path} is used exactly as
+     * given, ignoring {@code configDir} entirely — even a deliberately
+     * nonexistent {@code configDir} must not affect resolution.
+     */
+    @Test
+    void buildWriters_absoluteLogPath_ignoresConfigDir() {
+        Path bogusConfigDir = testVault.rootPath().resolve("nonexistent-config-dir");
+        Properties properties = baseProperties(LogLevel.DEBUG); // log.path is already absolute
+
+        LogService logService = new LogService(properties, bogusConfigDir);
+        logService.info("absolute path wins");
+
+        assertThat(readLogFile()).contains("absolute path wins");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private LogService createLogService(LogLevel level) {
-        return new LogService(baseProperties(level));
+        return new LogService(baseProperties(level), testVault.rootPath());
     }
 
     private Properties baseProperties(LogLevel level) {

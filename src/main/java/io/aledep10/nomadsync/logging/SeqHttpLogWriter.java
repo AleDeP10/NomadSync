@@ -1,6 +1,7 @@
 package io.aledep10.nomadsync.logging;
 
 import io.aledep10.nomadsync.config.NomadProperties;
+import io.aledep10.nomadsync.util.StringUtil;
 
 import java.io.IOException;
 import java.net.URI;
@@ -45,8 +46,11 @@ import java.util.concurrent.LinkedBlockingQueue;
  * interrupted.</p>
  *
  * <h2>HTTP failure handling</h2>
- * <p>Non-2xx responses and {@link IOException} are written to {@code stderr}; the
- * event is lost but the worker continues — subsequent events are unaffected.</p>
+ * <p>When Seq is unreachable, the first failure is reported to {@code stderr};
+ * subsequent failures are suppressed until connectivity is restored. When the
+ * server becomes reachable again, a single recovery notice is written to
+ * {@code stderr}. This circuit-breaker pattern prevents log flooding when Seq
+ * is intentionally offline (e.g. Docker Desktop not running).</p>
  *
  * <h2>URL normalisation</h2>
  * <p>The constructor accepts the base URL (e.g. {@code http://localhost:5341}),
@@ -66,6 +70,12 @@ public class SeqHttpLogWriter implements LogWriter {
     private final ClefFormatter         formatter = new ClefFormatter();
     private final String                ingestUrl;
     private final String                apiKey;
+
+    /**
+     * {@code true} while Seq is unreachable — suppresses repeated error output
+     * after the first failure until connectivity is restored.
+     */
+    private boolean seqDown = false;
 
     /**
      * Constructs the writer and starts the background daemon thread.
@@ -102,7 +112,7 @@ public class SeqHttpLogWriter implements LogWriter {
     public void write(LogLevel level, String universalId, String message, Throwable cause) {
         String clef = formatter.format(level, universalId, message, cause).getFirst();
         if (!queue.offer(clef)) {
-            System.err.println("[SeqHttpLogWriter] queue full — event dropped: " + message);
+            System.err.println("[SeqHttpLogWriter] queue full - event dropped: " + message);
         }
     }
 
@@ -116,7 +126,7 @@ public class SeqHttpLogWriter implements LogWriter {
      */
     @Override
     public void close() {
-        queue.clear();
+        // Do NOT clear — let the worker drain all pending events first
         if (!queue.offer(POISON_PILL)) {
             // Should never happen after clear() — force-interrupt as last resort.
             worker.interrupt();
@@ -136,9 +146,13 @@ public class SeqHttpLogWriter implements LogWriter {
     /**
      * Background loop — consumes CLEF events from the queue and POSTs them to Seq.
      *
-     * <p>Exits cleanly on {@link #POISON_PILL} or {@link InterruptedException}.
-     * {@link IOException} is written to {@code stderr} and the loop continues —
-     * the failed event is lost but the writer remains operational.</p>
+     * <p>Exits cleanly on {@link #POISON_PILL} or {@link InterruptedException}.</p>
+     *
+     * <p>On the first {@link IOException} or non-2xx response, a single notice is
+     * written to {@code stderr} and {@link #seqDown} is set to {@code true} —
+     * subsequent failures are suppressed until the server responds successfully
+     * again. On recovery, a single notice is written to {@code stderr} and normal
+     * operation resumes.</p>
      */
     private void workerLoop() {
         while (!Thread.currentThread().isInterrupted()) {
@@ -157,15 +171,27 @@ public class SeqHttpLogWriter implements LogWriter {
                         client.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() / 100 != 2) {
-                    System.err.println("[SeqHttpLogWriter] POST failed — HTTP "
-                            + response.statusCode());
+                    if (!seqDown) {
+                        System.err.println("[SeqHttpLogWriter] Seq unreachable - HTTP "
+                                + response.statusCode() + ". Further errors suppressed.");
+                        seqDown = true;
+                    }
+                } else if (seqDown) {
+                    seqDown = false;
+                    System.err.println("[SeqHttpLogWriter] Seq connection restored.");
                 }
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } catch (IOException e) {
-                System.err.println("[SeqHttpLogWriter] POST failed — " + e.getMessage());
+                if (!seqDown) {
+                    String cause = e.getMessage();
+                    System.err.println("[SeqHttpLogWriter] Seq unreachable"
+                            + (cause != null ? " - " + cause : "")
+                            + ". Further errors suppressed.");
+                    seqDown = true;
+                }
             }
         }
     }

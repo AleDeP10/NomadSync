@@ -1,28 +1,37 @@
 {
   "vaults": [
     {
-      "id":    "A768-6CF3-10B-0000",
-      "owner": "AleDeP10",
+      "id":    "00000000-0000-0000-0000-000000000001",
+      "owner": "YOUR_GITHUB_USERNAME",
       "name":  "public-vault",
-      "path":  "C:\\Users\\aless\\vaults\\public"
+      "path":  "C:/Users/YOURUSER/vaults/public"
     },
     {
-      "id":    "A768-6CF3-10B-0001",
-      "owner": "AleDeP10",
+      "id":    "00000000-0000-0000-0000-000000000002",
+      "owner": "YOUR_GITHUB_USERNAME",
       "name":  "private-vault",
-      "path":  "C:\\Users\\aless\\vaults\\private"
+      "path":  "C:/Users/YOURUSER/vaults/private",
+      "gitBranch": "main",
+      "gitRemote": "origin"
     },
     {
-      "id":    "A768-6CF3-10B-0002",
-      "owner": "AleDeP10",
-      "name":  "nomad-test-vault",
-      "path":  "C:\\Users\\aless\\vaults\\nomad-test"
+      "id":    "00000000-0000-0000-0000-000000000003",
+      "owner": "ANOTHER_ORG_OR_USER",
+      "name":  "shared-vault",
+      "path":  "C:/Users/YOURUSER/vaults/shared",
+      "gitName":     "Your Display Name",
+      "gitEmail":    "your-contribution-email@example.com",
+      "gitUsername": "YOUR_GITHUB_USERNAME",
+      "gitToken":    "ghp_VAULT_SPECIFIC_TOKEN_HERE",
+      "gitBranch":   "main",
+      "gitRemote":   "upstream"
     },
     {
-      "id":    "A768-6CF3-10B-0003",
-      "owner": "Belmani",
-      "name":  "belmani-apex",
-      "path":  "C:\\Users\\aless\\vaults\\belmani-apex"
+      "id":    "00000000-0000-0000-0000-000000000004",
+      "owner": "LEGACY_OWNER",
+      "name":  "legacy-vault",
+      "path":  "C:/Users/YOURUSER/vaults/legacy",
+      "gitBranch": "master"
     }
   ]
 }

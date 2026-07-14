@@ -17,7 +17,7 @@ import java.util.List;
  * <pre>{@code
  * {
  *   "vaults": [
- *     { "id": "...", "owner": "AleDeP10", "name": "public-vault", "path": "..." },
+ *     { "id": "...", "owner": "Owner", "name": "portfolio", "path": "..." },
  *     ...
  *   ]
  * }

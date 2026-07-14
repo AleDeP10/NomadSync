@@ -58,6 +58,19 @@ import java.util.stream.Stream;
  *
  * <h2>Constructor argument order</h2>
  * <p>Follows the project convention: {@link LogService} last.</p>
+ *
+ * <h2>Logging conventions</h2>
+ * <p>A single {@code INFO}-level log line is emitted at the <em>start</em> of
+ * each public mutating operation — {@link #load(Path)} (which always rewrites
+ * {@code .gitignore} in canonical format before returning) and {@link #save}.
+ * {@link #forSnapshot(Path)} performs no write of its own — it derives its
+ * result entirely from {@link #load(Path)} — so it emits no log directly, but
+ * calling it will still surface {@code load()}'s own intro line. Private
+ * helpers ({@link #parseGitignoreFile}, {@link #writeGitignore}, etc.) are
+ * internal steps of an already-observable public operation and do not log
+ * independently. The existing {@code WARN} lines (missing SYSTEM pattern,
+ * illegal negation on a SYSTEM pattern) are anomaly reports, not normal-flow
+ * observability, and are unaffected by this convention.</p>
  */
 public class GitignoreService {
 
@@ -114,12 +127,22 @@ public class GitignoreService {
      * <p>If the file does not exist, it is created from scratch with all
      * SYSTEM and APP default patterns.</p>
      *
+     * <p>Logging: a single {@code INFO} line announces the operation at the
+     * start — this method always rewrites {@code .gitignore} before returning,
+     * so it is a mutation even on the read path.</p>
+     *
      * @param vaultPath absolute path to the vault directory
      * @return a {@link VaultPatterns} instance with all three sections populated
      * @throws GitignoreException if the file cannot be read or written
      */
     public VaultPatterns load(Path vaultPath) throws GitignoreException {
-        Map<String, ParsedLine> parsedLines = parseGitignoreFile(vaultPath.resolve(".gitignore"));
+        logService.info("load - " + vaultPath.getFileName()
+                + " - loading and normalising .gitignore");
+
+        Path gitignorePath = vaultPath.resolve(".gitignore");
+        String originalContent = readRawContent(gitignorePath); // null if the file does not exist yet
+
+        Map<String, ParsedLine> parsedLines = parseGitignoreFile(gitignorePath);
 
         // SYSTEM — restore any missing patterns, consume matched ones
         List<SystemPattern> system = cloneSystemPatterns();
@@ -139,7 +162,6 @@ public class GitignoreService {
                         pattern.setNegated(parsedLines.get(pattern.getPattern()).isNegated());
                         parsedLines.remove(pattern.getPattern());
                     }
-                    // if not found: keeps the APP_PATTERN_DEFINITIONS default
                 }));
 
         // USER — everything not consumed by SYSTEM or APP
@@ -147,10 +169,32 @@ public class GitignoreService {
                 .map(pl -> new GitignorePattern(pl.pattern(), PatternLevel.USER, null, pl.isNegated()))
                 .toList();
 
-        // rewrite in canonical format
-        writeGitignore(vaultPath, serializeGitignore(system, app, user));
+        String regenerated = serializeGitignore(system, app, user);
+        if (!regenerated.equals(originalContent)) {
+            writeGitignore(vaultPath, regenerated);
+        } else {
+            logService.debug("load - " + vaultPath.getFileName()
+                    + " - .gitignore already canonical, no rewrite needed");
+        }
 
         return new VaultPatterns(system, app, user);
+    }
+
+    /**
+     * Reads the raw, unparsed content of {@code gitignorePath} — used only to
+     * detect whether {@link #load} actually needs to rewrite the file, by exact
+     * textual comparison against the freshly serialised canonical form.
+     *
+     * @return the raw file content, or {@code null} if the file does not exist
+     * @throws GitignoreException if the file exists but cannot be read
+     */
+    private String readRawContent(Path gitignorePath) throws GitignoreException {
+        if (!Files.exists(gitignorePath)) return null;
+        try {
+            return Files.readString(gitignorePath);
+        } catch (IOException e) {
+            throw new GitignoreException("Unable to read .gitignore", e);
+        }
     }
 
     /**
@@ -163,12 +207,17 @@ public class GitignoreService {
      * {@link #APP_PATTERN_DEFINITIONS} to preserve grouping. USER patterns
      * replace the existing USER section entirely.</p>
      *
+     * <p>Logging: a single {@code INFO} line announces the operation at the start.</p>
+     *
      * @param vaultPath absolute path to the vault directory
      * @param patterns  the full pattern list to persist —
      *                  typically {@link VaultPatterns#allPatterns()}
      * @throws GitignoreException if the file cannot be written
      */
     public void save(Path vaultPath, List<GitignorePattern> patterns) throws GitignoreException {
+        logService.info("save - " + vaultPath.getFileName()
+                + " - persisting " + patterns.size() + " pattern(s)");
+
         Map<PatternLevel, List<GitignorePattern>> partitioned = patterns.stream()
                 .collect(Collectors.groupingBy(GitignorePattern::getLevel));
 
@@ -212,6 +261,10 @@ public class GitignoreService {
      * "do not ignore this" — it must be <em>included</em> in the snapshot,
      * so it is excluded from the matcher list.</p>
      *
+     * <p>Logging: this method performs no write of its own — it derives its
+     * result entirely from {@link #load(Path)} — so it emits no log directly.
+     * Calling it still surfaces {@code load()}'s own {@code INFO} intro line.</p>
+     *
      * @param vaultPath absolute path to the vault directory
      * @return matchers for all non-negated active patterns
      * @throws GitignoreException if {@link #load} fails
@@ -238,6 +291,9 @@ public class GitignoreService {
      * comment lines (including those with leading whitespace before {@code #})
      * are silently ignored. On duplicate keys, the last occurrence wins
      * ({@code TreeMap.put} overwrites).</p>
+     *
+     * <p>Internal step of {@link #load(Path)} — no log of its own; {@code load()}'s
+     * intro line already covers observability for this step.</p>
      *
      * @param gitignorePath absolute path to the {@code .gitignore} file
      * @return mutable map of pattern → {@link ParsedLine}
@@ -312,6 +368,8 @@ public class GitignoreService {
      * Serialises the three pattern sections into the canonical {@code .gitignore}
      * string format with section headers and blank line separators.
      *
+     * <p>Internal step of {@link #load(Path)} / {@link #save} — no log of its own.</p>
+     *
      * @param system SYSTEM patterns
      * @param apps   APP pattern groups
      * @param user   USER patterns
@@ -338,6 +396,10 @@ public class GitignoreService {
 
     /**
      * Writes the serialised content to {@code vaultPath/.gitignore}.
+     *
+     * <p>Private plumbing shared by {@link #load(Path)} and {@link #save} —
+     * no log of its own; the caller's intro line already covers observability
+     * for the write.</p>
      *
      * @param vaultPath absolute path to the vault directory
      * @param content   serialised file content

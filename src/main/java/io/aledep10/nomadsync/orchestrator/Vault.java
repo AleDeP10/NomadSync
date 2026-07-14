@@ -1,5 +1,7 @@
 package io.aledep10.nomadsync.orchestrator;
 
+import java.nio.file.Path;
+
 /**
  * Represents a registered vault — the static configuration loaded from
  * {@code vaults.json} via {@link io.aledep10.nomadsync.dto.VaultDto}.
@@ -98,7 +100,7 @@ public class Vault {
         this.id          = id;
         this.owner       = owner;
         this.name        = name;
-        this.path        = path;
+        this.path        = Path.of(path).toString();
         this.gitName     = gitName;
         this.gitEmail    = gitEmail;
         this.gitUsername = gitUsername;
@@ -179,7 +181,7 @@ public class Vault {
      * before calling
      * {@link io.aledep10.nomadsync.service.VaultService#update(Vault)}.</p>
      */
-    public void setPath(String path) { this.path = path; }
+    public void setPath(String path) { this.path = Path.of(path).toString(); }
 
     // ── Git configuration (optional, mutable) ─────────────────────────────────
 

@@ -50,10 +50,11 @@ public class LineFormatter implements LogFormatter {
         List<String> result = new ArrayList<>();
         String timestamp = LocalDateTime.now().format(FORMATTER);
         result.add("[%s] [%s] [%s] %s".formatted(timestamp, level, universalId, message));
-        if (cause != null) {
+        while (cause != null) {
             for (StackTraceElement element : cause.getStackTrace()) {
                 result.add("\tat " + element);
             }
+            cause  = cause.getCause();
         }
         return result;
     }
