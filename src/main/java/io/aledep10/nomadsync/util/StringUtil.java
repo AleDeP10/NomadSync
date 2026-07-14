@@ -1,5 +1,7 @@
 package io.aledep10.nomadsync.util;
 
+import org.jetbrains.annotations.NotNull;
+
 /**
  * Utility class providing common string operations used across the ForgeUI component hierarchy.
  *
@@ -52,24 +54,30 @@ public final class StringUtil {
     }
 
     /**
-     * Returns the first non-null value in the given sequence,
-     * or {@code null} if all values are null.
+     * Returns the first non-null value in the given sequence.
      *
      * <p>Intended for credential resolution chains where vault-level
      * values take precedence over global config, which in turn takes
      * precedence over the system Git configuration:
-     * <pre>
-     *   StringUtil.coalesce(vault.getGitToken(),
-     *                        properties.getProperty("git.token"))
-     * </pre>
+     * <pre>{@code
+     * String token = StringUtil.coalesce(vault.getGitToken(),
+     *                                    PropertiesUtil.get(properties, "git.token", null));
+     * }</pre>
      *
-     * @param values the values to evaluate in order
-     * @return the first non-null value, or {@code null}
+     * <p>All values being {@code null} is considered a caller error —
+     * the last argument should always be a non-null default. If all
+     * values are {@code null}, a {@link NullPointerException} is thrown
+     * to surface the misconfiguration early rather than propagating
+     * {@code null} silently through the call chain.</p>
+     *
+     * @param values the values to evaluate in order; at least one must be non-null
+     * @return the first non-null value
+     * @throws NullPointerException if all values are {@code null}
      */
-    public static String coalesce(String... values) {
+    public static @NotNull String coalesce(String... values) {
         for (String v : values) {
             if (v != null) return v;
         }
-        return null;
+        throw new NullPointerException("coalesce: all values are null - last argument must be a non-null default");
     }
 }

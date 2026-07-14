@@ -20,8 +20,8 @@ package io.aledep10.nomadsync.config;
  *
  * <h2>Usage</h2>
  * <pre>{@code
- * properties.getProperty(NomadProperties.Git.EXECUTABLE, "git");
- * properties.getProperty(NomadProperties.Autosave.INTERVAL_MINUTES, "15");
+ * PropertiesUtil.get(properties, NomadProperties.Git.EXECUTABLE, "git");
+ * PropertiesUtil.getLong(properties, NomadProperties.Autosave.INTERVAL_MINUTES, 15L);
  * }</pre>
  *
  * <h2>config.properties reference</h2>
@@ -164,6 +164,16 @@ public final class NomadProperties {
          * <br>Each conflict session is named {@code <owner>_<name>_<timestamp>/}.
          */
         public static final String CONFLICTS = "path.conflicts";
+
+        /**
+         * Maximum directory depth scanned downward from a candidate vault path when
+         * checking for nested {@code .vault} markers belonging to other vaults.
+         * <br>Default: {@code "6"}.
+         * <br>Upward scanning (ancestors of the candidate path) is unbounded — it is
+         * cheap by nature (at most a few dozen {@code Files.exists} checks up to the
+         * filesystem root) and does not need a configurable limit.
+         */
+        public static final String MAX_NESTING_DEPTH = "path.maxNestingDepth";
     }
 
 

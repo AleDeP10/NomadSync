@@ -74,7 +74,7 @@ public class FileLogWriter implements LogWriter {
             }
         } catch (IOException e) {
             System.err.println("[FileLogWriter] Unable to write log file: "
-                    + logFile.toAbsolutePath() + " — " + e.getMessage());
+                    + logFile.toAbsolutePath() + " - " + e.getMessage());
         }
     }
 

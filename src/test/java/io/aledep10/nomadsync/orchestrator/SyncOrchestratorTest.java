@@ -62,7 +62,7 @@ class SyncOrchestratorTest {
     @BeforeAll
     static void prepareLogService() throws IOException {
         testVault = TestUtil.getTestVault("SyncOrchestratorTest");
-        logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG));
+        logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
     }
 
     @BeforeEach
@@ -72,7 +72,7 @@ class SyncOrchestratorTest {
         notificationHook = mock(NotificationHook.class);
         gitService       = mock(GitService.class);
 
-        vault = new Vault(vaultId, "AleDeP10", "test-vault",
+        vault = new Vault(vaultId, "Alice", "test-vault",
                 testVault.vaultPath().toString());
 
         orchestrator = new SyncOrchestrator(

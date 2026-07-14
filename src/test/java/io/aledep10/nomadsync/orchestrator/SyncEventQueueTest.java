@@ -1,12 +1,10 @@
 package io.aledep10.nomadsync.orchestrator;
 
-import io.aledep10.nomadsync.orchestrator.EventType;
-import io.aledep10.nomadsync.orchestrator.SyncEvent;
-import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
-import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,18 +29,29 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  * </ul>
  *
  * <p>{@link LogService} is shared across all tests ({@code @BeforeAll}) since it
- * carries no mutable state relevant to queue operations.</p>
+ * carries no mutable state relevant to queue operations. No test inspects the
+ * log file's content, so a single {@code @AfterAll} cleanup is sufficient —
+ * unlike suites that assert on log content per test, there is no need to reset
+ * anything between individual {@code @Test} methods here.</p>
  */
 class SyncEventQueueTest {
 
-
+    static TestVault  testVault;
     static LogService logService;
     String vaultId;
     SyncEventQueue eventQueue;
 
     @BeforeAll
     static void prepareLogService() throws IOException {
-        logService = new LogService(TestUtil.forLogService(TestUtil.getTestVault("SyncEventQueueTest"), LogLevel.DEBUG));
+        testVault = TestUtil.getTestVault("SyncEventQueueTest");
+        logService = new LogService(
+                TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
+    }
+
+    @AfterAll
+    static void tearDownLogService() throws IOException {
+        logService.close();
+        TestUtil.cleanup(testVault);
     }
 
     @BeforeEach

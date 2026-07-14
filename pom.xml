@@ -69,6 +69,12 @@
             <version>4.2.1</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>22.0.0</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -132,15 +138,23 @@
                                         <include>NomadSyncPush.bat</include>
                                         <include>NomadSyncStatus.bat</include>
                                         <include>NomadSyncSync.bat</include>
+                                        <include>NomadSyncVault.bat</include>
+                                        <include>NomadSyncVaultAdd.bat</include>
+                                        <include>NomadSyncVaultCreate.bat</include>
+                                        <include>NomadSyncVaultList.bat</include>
+                                        <include>NomadSyncVaultRelocate.bat</include>
+                                        <include>NomadSyncVaultRemove.bat</include>
+                                        <include>NomadSyncVaultShow.bat</include>
+                                        <include>NomadSyncVaultUpdate.bat</include>
 
                                         <!-- Automation & CLI CLI Wrappers (Linux/macOS) -->
-                                        <include>NomadSync.sh</include>
+                                        <!--include>NomadSync.sh</include>
                                         <include>NomadSyncCommit.sh</include>
                                         <include>NomadSyncConfig.sh</include>
                                         <include>NomadSyncPull.sh</include>
                                         <include>NomadSyncPush.sh</include>
                                         <include>NomadSyncStatus.sh</include>
-                                        <include>NomadSyncSync.sh</include>
+                                        <include>NomadSyncSync.sh</include-->
 
                                         <!-- Environment Configuration Profiles -->
                                         <include>config.properties</include>

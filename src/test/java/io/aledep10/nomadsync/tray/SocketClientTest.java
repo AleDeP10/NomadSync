@@ -5,6 +5,7 @@ import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.TestUtil;
+import io.aledep10.nomadsync.util.TestVault;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +46,10 @@ class SocketClientTest {
 
     @BeforeAll
     static void prepareLogService() throws IOException {
-        logService = new LogService(TestUtil.forLogService(TestUtil.getTestVault("SocketClientTest"), LogLevel.DEBUG));
+        TestVault testVault = TestUtil.getTestVault("SocketClientTest");
+        logService = new LogService(
+                TestUtil.forLogService(
+                        testVault, LogLevel.DEBUG), testVault.rootPath());
     }
 
     @BeforeEach

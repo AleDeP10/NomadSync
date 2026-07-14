@@ -53,7 +53,7 @@ class GitignoreServiceTest {
     @BeforeAll
     static void prepareSharedState() throws IOException {
         testVault        = TestUtil.getTestVault("GitignoreServiceTest");
-        logService       = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG));
+        logService       = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
         gitignoreService = new GitignoreService(logService);
     }
 

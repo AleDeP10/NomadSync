@@ -59,6 +59,17 @@ import java.util.concurrent.*;
  *   <li>{@link #start()} — starts the receiver and router threads.</li>
  *   <li>{@link #stop()} — cancels all orchestrator futures and interrupts all threads.</li>
  * </ol>
+ *
+ * <h2>Logging conventions</h2>
+ * <p>A single {@code INFO} line announces each real mutation at the start —
+ * opening the server socket (constructor), {@link #start()}, {@link #stop()},
+ * and {@link #register(Vault)}. Once {@link #stop()} carries its own intro,
+ * the router's own acknowledgement of the resulting interrupt is {@code DEBUG}
+ * detail, not a second intro — same pattern as {@link SyncOrchestrator}.
+ * Client-protocol anomalies (an unrecognised event type, malformed JSON) are
+ * {@code WARN}, not ordinary flow. A received event and its subsequent routing
+ * are two distinct, meaningful steps and both remain {@code INFO} — this is
+ * not redundant intro/outro noise, it is two different actions completing.</p>
  */
 public class SocketServer {
 
@@ -78,6 +89,9 @@ public class SocketServer {
      * <p>Does not start any threads — call {@link #register(Vault)} for each vault,
      * then {@link #start()}.</p>
      *
+     * <p>Logging: a single {@code INFO} line announces the port before the socket
+     * is opened.</p>
+     *
      * @param properties       application properties — must contain
      *                         {@link NomadProperties.Socket#PORT}
      * @param logService       shared logging service
@@ -96,7 +110,10 @@ public class SocketServer {
         this.mainQueue        = new PriorityBlockingQueue<>();
         this.vaults           = new HashMap<>();
         this.scheduler        = Executors.newScheduledThreadPool(5);
+
+        logService.info("SocketServer - opening server socket on port " + port);
         this.serverSocket     = new ServerSocket(port);
+
         this.receiver         = new Thread(this::doReceive,  "nomadsync-receiver");
         this.router           = new Thread(this::doRedirect, "nomadsync-router");
     }
@@ -114,6 +131,12 @@ public class SocketServer {
      *
      * <p>Runs until the thread is interrupted. A single-connection error is logged
      * and the loop continues — the server stays alive.</p>
+     *
+     * <p>Logging: each successfully received event is announced at {@code INFO} —
+     * one line per connection, driven by client/user action rather than a tight
+     * poll, so this is not the kind of high-frequency noise the logging
+     * conventions guard against. Client-protocol anomalies (unrecognised event
+     * type, malformed JSON) are {@code WARN}.</p>
      */
     private void doReceive() {
         while (!Thread.currentThread().isInterrupted()) {
@@ -130,13 +153,13 @@ public class SocketServer {
                 mainQueue.offer(event);
                 writer.println(SocketResponse.ACK.name());
             } catch (IllegalArgumentException e) {
-                logService.info("Unable to recognise event type: " + e.getMessage());
+                logService.warn("Unable to recognise event type: " + e.getMessage());
                 if (writer != null) writer.println(SocketResponse.NACK.name());
-                else logService.error("Unable to send NACK — writer not initialised");
+                else logService.error("Unable to send NACK - writer not initialised");
             } catch (JsonProcessingException e) {
-                logService.info("Malformed JSON message: " + e.getMessage());
+                logService.warn("Malformed JSON message: " + e.getMessage());
                 if (writer != null) writer.println(SocketResponse.ERROR.name());
-                else logService.error("Unable to send ERROR — writer not initialised");
+                else logService.error("Unable to send ERROR - writer not initialised");
             } catch (IOException e) {
                 if (!Thread.currentThread().isInterrupted()) {
                     logService.error("Error while accepting connection or parsing event", e);
@@ -158,6 +181,10 @@ public class SocketServer {
      * {@link SyncEvent#forVault(String)}. Otherwise, routed to the specific vault.</p>
      *
      * <p>Uses {@code take()} instead of {@code poll()} + sleep — no busy-waiting.</p>
+     *
+     * <p>Logging: the interrupt that ends this loop is the outcome of {@link #stop()},
+     * which already carries its own {@code INFO} intro — so this is logged at
+     * {@code DEBUG}, not as a second intro.</p>
      */
     private void doRedirect() {
         while (!Thread.currentThread().isInterrupted()) {
@@ -170,7 +197,7 @@ public class SocketServer {
                     publishEvent(vaults.get(event.getVaultId()), event);
                 }
             } catch (InterruptedException e) {
-                logService.info("Router interrupted, shutting down.");
+                logService.debug("Router interrupted, shutting down.");
                 Thread.currentThread().interrupt();
             }
         }
@@ -181,6 +208,10 @@ public class SocketServer {
      *
      * <p>Logs a warning and returns silently if {@code ctx} is {@code null} —
      * this can happen if a targeted event arrives for an unregistered vault.</p>
+     *
+     * <p>Logging: a successful routing is announced at {@code INFO} — a distinct,
+     * meaningful step from "event received" ({@link #doReceive()}), not redundant
+     * outro noise. An unregistered target vault is an anomaly, logged at {@code WARN}.</p>
      */
     private void publishEvent(VaultContext ctx, SyncEvent event) {
         if (ctx == null) {
@@ -200,8 +231,11 @@ public class SocketServer {
      * <p>Vaults registered before this call are already running — their orchestrators
      * were scheduled in {@link #register(Vault)}. Vaults registered after this call
      * are also supported.</p>
+     *
+     * <p>Logging: a single {@code INFO} line announces the operation at the start.</p>
      */
     public void start() {
+        logService.info("start - starting receiver and router threads");
         receiver.start();
         router.start();
     }
@@ -213,8 +247,13 @@ public class SocketServer {
      * <p>{@link ScheduledFuture#cancel(boolean) cancel(true)} sends an interrupt to
      * each orchestrator thread. The receiver and router exit on the next iteration
      * of their loop guard.</p>
+     *
+     * <p>Logging: a single {@code INFO} line announces the shutdown request at the
+     * start — the router's own acknowledgement of the resulting interrupt is
+     * {@code DEBUG} detail, not a second intro.</p>
      */
     public void stop() {
+        logService.info("stop - shutting down socket server");
         vaults.values().stream()
                 .map(VaultContext::aggregatorFuture)
                 .forEach(f -> f.cancel(true));
@@ -230,9 +269,13 @@ public class SocketServer {
      * wraps them in a {@link VaultContext}, and schedules the orchestrator to start
      * immediately. Safe to call before or after {@link #start()}.</p>
      *
+     * <p>Logging: a single {@code INFO} line announces the operation at the start.</p>
+     *
      * @param vault the vault to register
      */
     public void register(Vault vault) {
+        logService.info("register - " + vault.getRepoSlug()
+                + " - registering vault and starting orchestrator");
         SyncEventQueue   queue        = new SyncEventQueue(logService);
         SyncOrchestrator orchestrator = new SyncOrchestrator(
                 vault, gitService, logService, queue, notificationHook);
@@ -248,6 +291,11 @@ public class SocketServer {
      *
      * <p>Intended for same-JVM callers (e.g. tray icon left-click SYNCHRONIZE) that
      * do not need the TCP round-trip.</p>
+     *
+     * <p>Logging: no log of its own — delegates entirely to {@link #publishEvent},
+     * whose {@code INFO}/{@code WARN} lines already cover observability, the same
+     * pattern as {@code forSnapshot} delegating to {@code load()} in
+     * {@link io.aledep10.nomadsync.service.GitignoreService}.</p>
      *
      * @param vaultId the target vault identifier
      * @param event   the event to publish

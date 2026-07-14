@@ -11,7 +11,7 @@ import java.util.List;
  *
  * <h2>Formatting</h2>
  * <p>Uses {@link LineFormatter} to produce human-readable timestamped lines —
- * e.g. {@code [2026-06-16 19:00:00.000] [INFO] [AleDeP10/public-vault] message}.</p>
+ * e.g. {@code [2026-06-16 19:00:00.000] [INFO] [Owner/portfolio] message}.</p>
  *
  * <h2>Exception output</h2>
  * <p>If a {@link Throwable} is present, its stack trace is printed immediately
@@ -34,14 +34,8 @@ public class ConsoleLogWriter implements LogWriter {
                       String message, Throwable cause) {
         List<String> lines = FORMATTER.format(level, universalId, message, cause);
         switch (level) {
-            case WARN, ERROR -> {
-                lines.forEach(System.err::println);
-                if (cause != null) cause.printStackTrace(System.err);
-            }
-            default -> {
-                lines.forEach(System.out::println);
-                if (cause != null) cause.printStackTrace(System.out);
-            }
+            case WARN, ERROR -> lines.forEach(System.err::println);
+            default -> lines.forEach(System.out::println);
         }
     }
 

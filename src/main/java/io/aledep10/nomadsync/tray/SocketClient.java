@@ -3,6 +3,7 @@ package io.aledep10.nomadsync.tray;
 import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.NomadSyncException;
 import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.util.PropertiesUtil;
 
 import java.io.*;
 import java.net.Socket;
@@ -34,6 +35,13 @@ import java.util.Properties;
  * <h2>Constructor argument order</h2>
  * <p>Follows the project convention: {@link Properties} first,
  * {@link LogService} last.</p>
+ *
+ * <h2>Logging conventions</h2>
+ * <p>A single {@code INFO} line announces {@link #send(String, String)} at the
+ * start. Each attempt's server response is logged at {@code DEBUG} — per-attempt
+ * detail within the same already-announced operation, not a new action. Retry
+ * warnings and the final "max retries reached" line are anomalies and remain
+ * {@code WARN}, unaffected by this convention.</p>
  */
 @SuppressWarnings("BusyWait")
 public class SocketClient {
@@ -55,9 +63,9 @@ public class SocketClient {
      * @param logService shared logging service
      */
     public SocketClient(Properties properties, LogService logService) {
-        this.host       = properties.getProperty(NomadProperties.Socket.HOST, "localhost");
-        this.port       = Integer.parseInt(properties.getProperty(NomadProperties.Socket.PORT));
-        this.retryDelay = Long.parseLong(properties.getProperty(NomadProperties.Socket.RETRY_DELAY));
+        this.host       = PropertiesUtil.get(properties, NomadProperties.Socket.HOST, "localhost");
+        this.port       = PropertiesUtil.getInt(properties, NomadProperties.Socket.PORT, 4242);
+        this.retryDelay = PropertiesUtil.getInt(properties, NomadProperties.Socket.RETRY_DELAY, 30000);
         this.logService = logService;
     }
 
@@ -70,6 +78,9 @@ public class SocketClient {
      * backoff. Throws {@link NomadSyncException} after {@link #MAX_RETRIES} failed
      * attempts.</p>
      *
+     * <p>Logging: a single {@code INFO} line announces the operation at the start;
+     * each attempt's server response is logged at {@code DEBUG}.</p>
+     *
      * @param eventType the event type name (e.g. {@code "PULL_LOGON"})
      * @param vaultId   the target vault identifier
      * @throws NomadSyncException   if the event cannot be delivered after all retries
@@ -77,6 +88,8 @@ public class SocketClient {
      */
     public void send(String eventType, String vaultId)
             throws NomadSyncException, InterruptedException {
+        logService.info("send - " + eventType + " - vault " + vaultId
+                + " - sending event to " + host + ":" + port);
         SocketMessage message = new SocketMessage(eventType, vaultId, retryDelay);
         String result = null;
         Socket socket = null;
@@ -91,7 +104,7 @@ public class SocketClient {
                 BufferedReader reader = new BufferedReader(
                         new InputStreamReader(socket.getInputStream()));
                 result = reader.readLine();
-                logService.info("Server response: " + result);
+                logService.debug("Server response: " + result);
 
                 // NACK treated as retryable failure — reuses the IOException retry path
                 if (result != null && result.equals(SocketResponse.NACK.name())) {
@@ -100,7 +113,7 @@ public class SocketClient {
 
             } catch (IOException e) {
                 if (message.getRetryCount() >= MAX_RETRIES) {
-                    logService.warn("Max retries reached — event discarded: " + eventType);
+                    logService.warn("Max retries reached - event discarded: " + eventType);
                     throw new NomadSyncException(
                             "Error sending event %s for vault %s"
                                     .formatted(eventType, vaultId), e);

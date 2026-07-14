@@ -8,10 +8,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.aledep10.nomadsync.dto.SocketMessageDto;
 import io.aledep10.nomadsync.dto.VaultDto;
+import io.aledep10.nomadsync.dto.VaultMarkerDto;
 import io.aledep10.nomadsync.dto.VaultRootDto;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEvent;
 import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.VaultMarker;
 
 import java.io.File;
 import java.io.IOException;
@@ -72,6 +74,31 @@ public final class JsonMapper {
         VaultRootDto root = new VaultRootDto(
                 vaults.stream().map(VaultDto::fromDomain).toList());
         MAPPER.writerWithDefaultPrettyPrinter().writeValue(vaultsFile, root);
+    }
+
+    /**
+     * Loads a {@code .vault} marker from the given file.
+     *
+     * @param file the marker file to read
+     * @return the deserialized {@link VaultMarker}, or {@code null} if the file
+     *         does not exist
+     * @throws IOException if the file exists but cannot be read or parsed
+     */
+    public static VaultMarker loadVaultMarkerFromFile(File file) throws IOException {
+        if (!file.exists()) return null;
+        return MAPPER.readValue(file, VaultMarkerDto.class).toDomain();
+    }
+
+    /**
+     * Writes a {@code .vault} marker to the given file, overwriting it if it
+     * already exists.
+     *
+     * @param file   the destination marker file
+     * @param marker the marker to persist
+     * @throws IOException if the file cannot be written
+     */
+    public static void saveVaultMarkerToFile(File file, VaultMarker marker) throws IOException {
+        MAPPER.writeValue(file, VaultMarkerDto.fromDomain(marker));
     }
 
     // ── Socket / event ────────────────────────────────────────────────────────

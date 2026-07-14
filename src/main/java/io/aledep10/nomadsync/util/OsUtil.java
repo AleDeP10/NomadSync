@@ -1,7 +1,8 @@
 package io.aledep10.nomadsync.util;
 
 /**
- * Utility class for detecting the host operating system at runtime.
+ * Utility class for detecting the host operating system at runtime and
+ * resolving OS-specific values such as the path separator.
  *
  * <p>Detection is based on the {@code os.name} system property, which is set by
  * the JVM on startup and never changes during the lifetime of the process.
@@ -9,7 +10,8 @@ package io.aledep10.nomadsync.util;
  *
  * <h2>Usage</h2>
  * <pre>{@code
- * String editor = OsUtil.isWindows() ? "notepad" : "nano";
+ * String editor    = OsUtil.isWindows() ? "notepad" : "nano";
+ * String separator = OsUtil.separator(); // "\\" on Windows, "/" elsewhere
  * }</pre>
  *
  * <p>Non-instantiable — all members are {@code static}.</p>
@@ -42,5 +44,19 @@ public final class OsUtil {
      */
     public static boolean isWindows() {
         return detect() == Os.WINDOWS;
+    }
+
+    /**
+     * Returns the path separator character for the host operating system,
+     * as a string ready for concatenation.
+     *
+     * <p>Equivalent to {@link java.io.File#separator}, exposed here for
+     * consistency with the rest of {@code OsUtil} and to keep all OS-detection
+     * logic centralised in one place.</p>
+     *
+     * @return {@code "\\"} on Windows, {@code "/"} on any Unix-like OS
+     */
+    public static String separator() {
+        return isWindows() ? "\\" : "/";
     }
 }

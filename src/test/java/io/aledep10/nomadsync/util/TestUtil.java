@@ -82,8 +82,8 @@ public final class TestUtil {
         Path gitignorePath = vaultPath.resolve(".gitignore");
         Path logsPath      = rootPath.resolve("logs");
         Path logFilePath   = logsPath.resolve(testName + ".log");
-        Path backupPath    = rootPath.resolve("backup");
-        Path conflictsPath = rootPath.resolve("conflict");
+        Path backupPath    = rootPath.resolve("backups");
+        Path conflictsPath = rootPath.resolve("remote-conflicts");
 
         Files.createDirectories(vaultPath);
         Files.createDirectories(logsPath);
@@ -108,10 +108,7 @@ public final class TestUtil {
     public static void cleanup(TestVault testVault) throws IOException {
         Path root = testVault.rootPath();
         if (!Files.exists(root)) return;
-        Files.walk(root)
-                .sorted(Comparator.reverseOrder())
-                .map(Path::toFile)
-                .forEach(File::delete);
+        FileUtil.deleteRecursively(root);
     }
 
     // ── Properties factories ──────────────────────────────────────────────────
@@ -211,5 +208,14 @@ public final class TestUtil {
         Properties properties = new Properties();
         properties.setProperty("socket.port", String.valueOf(port));
         return properties;
+    }
+
+    /**
+     * Computes the expected normalized, absolute form of a raw path literal —
+     * used to assert against values returned by {@code create()}/{@code update()}
+     * without hardcoding an OS-specific expectation.
+     */
+    public static String absolute(String raw) {
+        return java.nio.file.Path.of(raw).toAbsolutePath().normalize().toString();
     }
 }

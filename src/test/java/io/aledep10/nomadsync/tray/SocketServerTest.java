@@ -4,15 +4,11 @@ import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.Vault;
-import io.aledep10.nomadsync.orchestrator.VaultContext;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -51,7 +47,13 @@ class SocketServerTest {
     @BeforeAll
     static void prepareSharedState() throws IOException {
         testVault  = TestUtil.getTestVault("SocketServerTest");
-        logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG));
+
+        // InMemoryLogWriter — nessun file aperto, nessun problema di cleanup
+        Properties props = new Properties();
+        props.setProperty("log.writers", "console");
+        props.setProperty("log.level", LogLevel.DEBUG.name());
+        logService = new LogService(props, testVault.rootPath());
+
         gitService = mock(GitService.class);
 
         testVaults = new HashMap<>();

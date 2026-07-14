@@ -108,7 +108,7 @@ public class AutosaveScheduler {
                 logService.info("AutosaveScheduler: publishing " + event);
                 broadcastQueue.publish(event);
             } catch (Exception e) {
-                logService.error("AutosaveScheduler: unexpected error during publish: "
+                logService.error("AutosaveScheduler - runtime error during publish: "
                         + e.getMessage());
             }
         }, interval, interval, timeUnit);
@@ -136,7 +136,7 @@ public class AutosaveScheduler {
                 executor.shutdownNow();
             }
         } catch (InterruptedException e) {
-            logService.error("AutosaveScheduler: interrupted during shutdown: " + e.getMessage());
+            logService.error("AutosaveScheduler - interrupted during shutdown: " + e.getMessage());
             Thread.currentThread().interrupt();
             executor.shutdownNow();
         }

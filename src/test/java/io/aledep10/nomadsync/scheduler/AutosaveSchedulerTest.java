@@ -2,12 +2,16 @@ package io.aledep10.nomadsync.scheduler;
 
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
-import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
 import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.util.TestUtil;
+import io.aledep10.nomadsync.util.TestVault;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
@@ -21,20 +25,32 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  */
 class AutosaveSchedulerTest {
 
+    static TestVault  testVault;
     static LogService logService;
     SyncEventQueue queue;
 
     @BeforeAll
-    static void prepareLogService() {
+    static void prepareLogService() throws IOException {
+        testVault = TestUtil.getTestVault("AutosaveSchedulerTest");
         Properties properties = new Properties();
-        properties.setProperty("log.path",  System.getProperty("java.io.tmpdir") + "/nomadsync-test.log");
+        properties.setProperty("log.path",  testVault.logFilePath().toString());
         properties.setProperty("log.level", "DEBUG");
-        logService = new LogService(properties);
+        logService = new LogService(properties, testVault.rootPath());
+    }
+
+    @AfterAll
+    static void closeLogService() {
+        logService.close();
     }
 
     @BeforeEach
     void prepareQueue() {
         queue = new SyncEventQueue(logService);
+    }
+
+    @AfterEach
+    void cleanup() throws IOException {
+        TestUtil.cleanup(testVault);
     }
 
     @Test
@@ -59,7 +75,7 @@ class AutosaveSchedulerTest {
         scheduler.stop();
 
         // drain queue
-        while (queue.size() > 0) {
+        while (!queue.isEmpty()) {
             queue.consume();
         }
 
