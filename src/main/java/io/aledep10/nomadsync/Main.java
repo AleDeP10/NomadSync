@@ -59,7 +59,7 @@ import java.util.*;
  *       {@code --vault} is mandatory ({@link EventType#COMMIT_MANUAL}).</li>
  *   <li>{@code autosave} — no-op; the {@link AutosaveScheduler} handles periodic publishing.</li>
  *   <li>{@code status}   — prints {@code git status} output. Broadcasts if {@code --vault} is absent.</li>
- *   <li>{@code config}   — updates {@code config.properties} (global) or {@code vaults.json}
+ *   <li>{@code config}   — updates {@code config.properties} (global) or {@code catalog.json}
  *       (per-vault). Does not start orchestrators.</li>
  *   <li>{@code vault}    — manages registered vaults via subcommands:
  *       {@code create}, {@code add}, {@code update}, {@code remove}, {@code relocate}, {@code list}, {@code show}.</li>
@@ -88,9 +88,13 @@ import java.util.*;
  *   <li>Parse CLI flags and load configuration.</li>
  *   <li>Bootstrap shared dependencies.</li>
  *   <li>Load registered vaults and resolve {@code --vault} if present.</li>
+ *   <li>Handle early-exit commands ({@code vault}, {@code status}, {@code config})
+ *       that do not require orchestrators.</li>
  *   <li>Bootstrap per-vault Git credentials via {@link GitService#bootstrapVault(Vault)}.</li>
  *   <li>Wire one {@link SyncOrchestrator} + {@link SyncEventQueue} per vault.</li>
  *   <li>Wire a broadcast queue and dispatcher thread.</li>
+ *   <li>Configure the {@link AutosaveScheduler}.</li>
+ *   <li>Register a shutdown hook to stop schedulers/orchestrators and flush logs.</li>
  *   <li>Translate the command into a typed {@link SyncEvent} and publish it.</li>
  *   <li>Start the autosave scheduler, broadcaster, and all orchestrators.</li>
  * </ol>
@@ -107,40 +111,13 @@ public class Main {
     public static void main(String[] args) {
 
         // ── 1. Parse command and flags ────────────────────────────────────────
-        if (args.length < 1) {
-            System.err.println(
-                    "Usage: java -jar NomadSync.jar <pull|push|sync|commit|autosave|status|config|vault> " +
-                            "[subcommand] [--config=<path>] [--vault=<name|owner/name>] [--git.*=<value>]");
-            System.exit(1);
+        ParsedArgs parsed = parseArgs(args);
+        if (parsed.isFailure()) {
+            System.exit(parsed.errorExitCode());
+            return;
         }
-        String command = args[0];
-
-        // For commands that accept a positional subcommand (currently: vault),
-        // args[1] — if present and not a flag — is extracted as "sub" before
-        // the remaining flags are parsed. This keeps the public CLI surface clean:
-        // users write `vault add` rather than `vault --sub=add`.
-        Map<String, String> flags = new LinkedHashMap<>();
-        int flagOffset = 1;
-        if ("vault".equals(command) && args.length > 1 && !args[1].startsWith("--")) {
-            flags.put("sub", args[1]);
-            flagOffset = 2;
-        }
-        final int startFrom = flagOffset;
-        Arrays.stream(args).skip(startFrom)
-                .filter(a -> a.startsWith("--"))
-                .forEach(arg -> {
-                    String[] parts = arg.substring(2).split("=", 2);
-                    flags.put(parts[0], parts.length > 1 ? parts[1] : "");
-                });
-
-        List<String> strayArgs = Arrays.stream(args).skip(startFrom)
-                .filter(a -> !a.startsWith("--"))
-                .toList();
-        if (!strayArgs.isEmpty()) {
-            System.err.println("Unrecognized argument(s): " + String.join(", ", strayArgs)
-                    + " — did you forget '=' after a flag? (e.g. --path=<value>, not --path <value>)");
-            System.exit(1);
-        }
+        String command = parsed.command();
+        Map<String, String> flags = parsed.flags();
 
         String vaultFlag  = flags.get("vault");
         String configPath = flags.get("config");
@@ -372,6 +349,105 @@ public class Main {
         });
     }
 
+    /**
+     * Result of parsing raw CLI arguments into a command and its flags.
+     *
+     * <p>On failure, the error has already been printed to {@code stderr}
+     * ({@link LogService} does not exist yet at this point in startup) —
+     * the caller only needs to exit with {@link #errorExitCode()}.</p>
+     */
+    private record ParsedArgs(String command, Map<String, String> flags, Integer errorExitCode) {
+        static ParsedArgs failure(int exitCode) {
+            return new ParsedArgs(null, null, exitCode);
+        }
+        static ParsedArgs success(String command, Map<String, String> flags) {
+            return new ParsedArgs(command, flags, null);
+        }
+        boolean isFailure() {
+            return errorExitCode != null;
+        }
+    }
+
+    /**
+     * Parses raw CLI arguments into a positional command and a flag map.
+     *
+     * <p>For {@code vault}, a positional subcommand (e.g. {@code vault add}) is
+     * extracted into the internal {@code "sub"} key before remaining arguments
+     * are parsed as {@code --key=value} flags.</p>
+     *
+     * <p>Detects and reports (to {@code stderr}, non-fatal) any flag specified
+     * more than once — except {@link #DUPLICATE_CHECK_EXEMPT_FLAGS}, where
+     * repetition is harmless. Detects and rejects (fatal) any argument that does
+     * not start with {@code --}, most commonly caused by a missing {@code =}
+     * between a flag and its value (e.g. {@code --path /some/dir} instead of
+     * {@code --path=/some/dir}).</p>
+     *
+     * <p>Contains no side effects beyond {@code stderr} output — safe to call
+     * from a test without terminating the JVM, unlike the {@code System.exit}
+     * calls this logic previously made inline.</p>
+     *
+     * @param args raw {@code String[]} from {@code main}
+     * @return the parsed result, or a failure carrying the exit code to use
+     */
+    private static ParsedArgs parseArgs(String[] args) {
+        if (args.length < 1) {
+            System.err.println(
+                    "Usage: java -jar NomadSync.jar <pull|push|sync|commit|autosave|status|config|vault> " +
+                            "[subcommand] [--config=<path>] [--vault=<name|owner/name>] [--git.*=<value>]");
+            return ParsedArgs.failure(1);
+        }
+        String command = args[0];
+
+        // For commands that accept a positional subcommand (currently: vault),
+        // args[1] — if present and not a flag — is extracted as "sub" before
+        // the remaining flags are parsed. This keeps the public CLI surface clean:
+        // users write `vault add` rather than `vault --sub=add`.
+        Map<String, String> flags = new LinkedHashMap<>();
+        int flagOffset = 1;
+        if ("vault".equals(command) && args.length > 1 && !args[1].startsWith("--")) {
+            flags.put("sub", args[1]);
+            flagOffset = 2;
+        }
+        final int startFrom = flagOffset;
+
+        Set<String> seenKeys = new HashSet<>();
+        Set<String> duplicateKeys = new LinkedHashSet<>();
+
+        Arrays.stream(args).skip(startFrom)
+                .filter(a -> a.startsWith("--"))
+                .forEach(arg -> {
+                    String[] parts = arg.substring(2).split("=", 2);
+                    String key = parts[0];
+                    if (!DUPLICATE_CHECK_EXEMPT_FLAGS.contains(key) && !seenKeys.add(key)) {
+                        duplicateKeys.add(key);
+                    }
+                    flags.put(key, parts.length > 1 ? parts[1] : "");
+                });
+
+        duplicateKeys.forEach(key ->
+                System.err.println("Warning: --" + key + " was specified more than once - "
+                        + "using the last value provided."));
+
+        List<String> strayArgs = Arrays.stream(args).skip(startFrom)
+                .filter(a -> !a.startsWith("--"))
+                .toList();
+        if (!strayArgs.isEmpty()) {
+            System.err.println("Unrecognized argument(s): " + String.join(", ", strayArgs)
+                    + " - did you forget '=' after a flag? (e.g. --path=<value>, not --path <value>)");
+            return ParsedArgs.failure(1);
+        }
+
+        return ParsedArgs.success(command, flags);
+    }
+
+    /**
+     * Flags for which repeated occurrence is harmless and should never trigger
+     * the "specified more than once" warning — both are boolean/pure flags
+     * (presence-only, no value that could be silently overwritten by a
+     * duplicate) where repeating them changes nothing about the outcome.
+     */
+    private static final Set<String> DUPLICATE_CHECK_EXEMPT_FLAGS = Set.of("force", "config-normalize");
+
     // ── Default config path resolution ───────────────────────────────────────
 
     /**
@@ -385,7 +461,7 @@ public class Main {
      * value — relative or absolute — is unaffected: it is always resolved against
      * the process's actual working directory, exactly where the user is standing,
      * which is precisely what makes per-workspace layouts (e.g. a client's own
-     * {@code config.properties}/{@code vaults.json}/log file kept together in that
+     * {@code config.properties}/{@code catalog.json}/log file kept together in that
      * client's own vault folder) work predictably.</p>
      *
      * @return the default {@code config.properties} path next to the running JAR,
@@ -511,7 +587,7 @@ public class Main {
     // ── Vault loading ─────────────────────────────────────────────────────────
 
     /**
-     * Loads vaults from {@code vaults.json}.
+     * Loads vaults from {@code catalog.json}.
      *
      * <p>On {@link VaultParseException}: logs a warning and returns an empty list —
      * the application continues from a clean state without crashing.</p>
@@ -648,7 +724,7 @@ public class Main {
      * Handles the {@code config} command.
      *
      * <p>With {@code --vault}: updates the matching vault's per-vault fields in
-     * {@code vaults.json} and re-runs {@link GitService#bootstrapVault(Vault)}
+     * {@code catalog.json} and re-runs {@link GitService#bootstrapVault(Vault)}
      * to apply the changes immediately.</p>
      *
      * <p>Without {@code --vault}: updates matching {@code git.*} keys in
@@ -696,7 +772,7 @@ public class Main {
             try {
                 vaultService.update(vault);
                 logService.info("handleConfig - vault " + vault.getRepoSlug()
-                        + " updated in vaults.json");
+                        + " updated in catalog.json");
                 gitService.bootstrapVault(vault);
                 logService.info("handleConfig - bootstrapVault re-applied for "
                         + vault.getRepoSlug());
@@ -1198,7 +1274,7 @@ public class Main {
      * Handles {@code vault remove} — removes a vault from the registry.
      *
      * <p>The local directory and the remote repository are not affected —
-     * only the NomadSync registration is deleted from {@code vaults.json}.
+     * only the NomadSync registration is deleted from {@code catalog.json}.
      * Interactive confirmation is required; the default answer is {@code N}.
      * Declining the confirmation is a legitimate no-op, not an error.</p>
      *

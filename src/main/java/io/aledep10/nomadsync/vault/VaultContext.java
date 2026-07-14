@@ -22,7 +22,7 @@ import java.util.concurrent.ScheduledFuture;
  *
  * <h2>Lifecycle</h2>
  * <p>Created at startup (or when a vault is registered via the tray) for each
- * entry in {@code vaults.json}. The orchestrator is started immediately after
+ * entry in {@code catalog.json}. The orchestrator is started immediately after
  * construction. At shutdown, {@link #aggregatorFuture()} is cancelled to
  * interrupt the orchestrator's worker thread cleanly.</p>
  *
@@ -32,7 +32,7 @@ import java.util.concurrent.ScheduledFuture;
  * One orchestrator per vault guarantees serial Git execution per vault while
  * allowing concurrent execution across vaults.</p>
  *
- * @param vault            static vault configuration loaded from {@code vaults.json}
+ * @param vault            static vault configuration loaded from {@code catalog.json}
  * @param queue            per-vault priority queue for incoming {@link SyncEvent}s
  * @param orchestrator     per-vault orchestrator — consumes from {@code queue}
  *                         and delegates to {@link GitService}

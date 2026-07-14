@@ -21,7 +21,7 @@ import java.util.stream.Stream;
  * Manages the lifecycle of registered {@link Vault} instances — load, persist, and CRUD.
  *
  * <p>Vaults are stored in memory as a {@link HashMap} keyed by UUID for O(1) lookup.
- * Every mutation (create, update, delete) is immediately persisted to {@code vaults.json}
+ * Every mutation (create, update, delete) is immediately persisted to {@code catalog.json}
  * via {@link JsonMapper} to guarantee consistency between memory and disk.</p>
  *
  * <h2>Snapshot paths</h2>
@@ -91,7 +91,7 @@ public class VaultService {
      * directory containing the {@code config.properties} file actually in use for
      * this run, not the process's working directory nor the location of
      * {@code NomadSync.jar}. This keeps a workspace self-contained: a client's own
-     * {@code config.properties}, {@code vaults.json}, log file, and (by default)
+     * {@code config.properties}, {@code catalog.json}, log file, and (by default)
      * its backups/conflicts all live together, addressed relative to wherever that
      * workspace's config file lives. Absent, blank, or relative values are all
      * resolved uniformly; an already-absolute value is left untouched.</p>
@@ -109,7 +109,7 @@ public class VaultService {
                         GitignoreService gitignoreService,
                         LogService logService) {
         this.vaultFile = PropertiesUtil.resolvePath(properties, NomadProperties.Path.CATALOG,
-                "vaults.json", configDir, logService).toFile();
+                "catalog.json", configDir, logService).toFile();
         this.gitignoreService = gitignoreService;
         this.logService       = logService;
 
@@ -124,7 +124,7 @@ public class VaultService {
     // ── Persistence ───────────────────────────────────────────────────────────
 
     /**
-     * Loads all vaults from {@code vaults.json} and replaces the current in-memory state.
+     * Loads all vaults from {@code catalog.json} and replaces the current in-memory state.
      *
      * <p>If the file does not exist, the in-memory state is cleared and an empty list
      * is returned — no exception is thrown.</p>
@@ -211,7 +211,7 @@ public class VaultService {
     }
 
     /**
-     * Persists the current in-memory vault state to {@code vaults.json}.
+     * Persists the current in-memory vault state to {@code catalog.json}.
      *
      * <p>Called automatically by all mutating operations. Can be called explicitly
      * if external mutations to {@link Vault} objects need to be flushed to disk.</p>
@@ -811,7 +811,7 @@ public class VaultService {
      * as a thrown exception, and {@code load()}'s own intro line already covers
      * observability for this step.</p>
      *
-     * @param loaded vaults freshly deserialised from {@code vaults.json}
+     * @param loaded vaults freshly deserialised from {@code catalog.json}
      * @throws VaultException if any {@code repoSlug} appears more than once
      */
     private void validateUniqueRepoSlugs(List<Vault> loaded) throws VaultException {
@@ -819,7 +819,7 @@ public class VaultService {
         for (Vault vault : loaded) {
             if (!seen.add(vault.getRepoSlug())) {
                 throw new VaultIntegrityException(
-                        "duplicated repoSlug in vaults.json: " + vault.getRepoSlug());
+                        "duplicated repoSlug in catalog.json: " + vault.getRepoSlug());
             }
         }
     }
@@ -835,7 +835,7 @@ public class VaultService {
      * as a thrown exception, and {@code load()}'s own intro line already covers
      * observability for this step.</p>
      *
-     * @param loaded vaults freshly deserialised from {@code vaults.json}
+     * @param loaded vaults freshly deserialised from {@code catalog.json}
      * @throws VaultException if any {@code path} appears more than once
      */
     private void validateUniquePaths(List<Vault> loaded) throws VaultException {
@@ -843,7 +843,7 @@ public class VaultService {
         for (Vault vault : loaded) {
             if (!seen.add(vault.getPath())) {
                 throw new VaultIntegrityException(
-                        "duplicated path in vaults.json: " + vault.getPath());
+                        "duplicated path in catalog.json: " + vault.getPath());
             }
         }
     }

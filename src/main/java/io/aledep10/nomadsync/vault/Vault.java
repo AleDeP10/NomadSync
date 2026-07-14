@@ -4,7 +4,7 @@ import java.nio.file.Path;
 
 /**
  * Represents a registered vault — the static configuration loaded from
- * {@code vaults.json} via {@link io.aledep10.nomadsync.dto.VaultDto}.
+ * {@code catalog.json} via {@link io.aledep10.nomadsync.dto.VaultDto}.
  *
  * <h2>Identity</h2>
  * <p>{@link #id} is an opaque UUID generated at registration time and never
@@ -124,7 +124,7 @@ public class Vault {
      * e.g. {@code AleDeP10/public-vault}.
      *
      * <p>Derived from {@link #owner} and {@link #name} — not persisted separately
-     * in {@code vaults.json}. Used as:</p>
+     * in {@code catalog.json}. Used as:</p>
      * <ul>
      *   <li>the uniqueness constraint enforced by
      *       {@link io.aledep10.nomadsync.service.VaultService}</li>

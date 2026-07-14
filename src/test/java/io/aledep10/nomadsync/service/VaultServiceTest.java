@@ -59,7 +59,7 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
  * deliberate, contained trade-off to test real CWD-relative resolution rather
  * than mocking it away.</p>
  *
- * <p>Tests in {@link LoadTests} that seed {@code vaults.json} directly via
+ * <p>Tests in {@link LoadTests} that seed {@code catalog.json} directly via
  * {@link JsonMapper#saveVaultsToFile} (bypassing {@code create()} entirely) do
  * <strong>not</strong> need a real directory — {@code load()}'s marker refresh is
  * best-effort and degrades to a logged warning, never a thrown exception, when a
@@ -141,7 +141,7 @@ class VaultServiceTest {
     /**
      * Builds an OS-native, non-existent path literal — valid only for tests that
      * never call {@code create()}/{@code update()} on it (e.g. {@link LoadTests}
-     * seeding {@code vaults.json} directly, where no real directory is required).
+     * seeding {@code catalog.json} directly, where no real directory is required).
      */
     static String createPath(String... parts) {
         final StringBuilder buf = new StringBuilder();
@@ -241,7 +241,7 @@ class VaultServiceTest {
 
         @Test
         @DisplayName("writes a fresh marker for a vault with no existing marker — seeded directly "
-                + "into vaults.json, bypassing create()/claimVaultPath, since create() now claims "
+                + "into catalog.json, bypassing create()/claimVaultPath, since create() now claims "
                 + "its own marker immediately and can no longer produce a genuinely markerless vault")
         void load_noExistingMarker_writesFreshMarker() throws Exception {
             Path vaultContent = newVaultDir("marker-fresh");
@@ -291,7 +291,7 @@ class VaultServiceTest {
             Path markerPath = vaultContent.resolve(".vault");
 
             VaultMarker foreign = VaultMarker.create("some-other-id", "Bob/unrelated",
-                    "/some/other/vaults.json", "2020-01-01T00:00:00");
+                    "/some/other/catalog.json", "2020-01-01T00:00:00");
             JsonMapper.saveVaultMarkerToFile(markerPath.toFile(), foreign);
 
             vaultService.load();
@@ -372,7 +372,7 @@ class VaultServiceTest {
             Path parent = newVaultDir("nesting-ancestor");
             JsonMapper.saveVaultMarkerToFile(parent.resolve(".vault").toFile(),
                     VaultMarker.create("ancestor-id", "Alice/ancestor-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
             Path candidate = parent.resolve("child-vault");
 
             assertThatThrownBy(() -> vaultService.checkNoNestingConflict(candidate.toString()))
@@ -385,7 +385,7 @@ class VaultServiceTest {
             Path candidate = newVaultDir("nesting-self");
             JsonMapper.saveVaultMarkerToFile(candidate.resolve(".vault").toFile(),
                     VaultMarker.create("self-id", "Alice/self-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
 
             vaultService.checkNoNestingConflict(candidate.toString());
             // no exception = pass — the candidate's own marker is out of scope here
@@ -400,7 +400,7 @@ class VaultServiceTest {
             Files.createDirectories(deepChild);
             JsonMapper.saveVaultMarkerToFile(deepChild.resolve(".vault").toFile(),
                     VaultMarker.create("descendant-id", "Bob/descendant-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
 
             assertThatThrownBy(() -> gs.checkNoNestingConflict(candidate.toString()))
                     .isInstanceOf(VaultException.class);
@@ -415,7 +415,7 @@ class VaultServiceTest {
             Files.createDirectories(tooDeep);
             JsonMapper.saveVaultMarkerToFile(tooDeep.resolve(".vault").toFile(),
                     VaultMarker.create("toodeep-id", "Bob/toodeep-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
 
             gs.checkNoNestingConflict(candidate.toString());
             // no exception = pass — level3 marker is outside a depth-2 scan
@@ -430,7 +430,7 @@ class VaultServiceTest {
             Files.createDirectories(level6);
             JsonMapper.saveVaultMarkerToFile(level6.resolve(".vault").toFile(),
                     VaultMarker.create("level6-id", "Bob/level6-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
 
             assertThatThrownBy(() -> vaultService.checkNoNestingConflict(candidate.toString()))
                     .isInstanceOf(VaultException.class);
@@ -445,7 +445,7 @@ class VaultServiceTest {
             Files.createDirectories(level7);
             JsonMapper.saveVaultMarkerToFile(level7.resolve(".vault").toFile(),
                     VaultMarker.create("level7-id", "Bob/level7-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
 
             vaultService.checkNoNestingConflict(candidate.toString());
             // no exception = pass — level7 is beyond the default depth of 6
@@ -490,7 +490,7 @@ class VaultServiceTest {
         void exactPathAlreadyClaimed_throwsAndDoesNotOverwrite() throws Exception {
             Path vaultContent = newVaultDir("claim-exact-conflict");
             VaultMarker foreign = VaultMarker.create("foreign-id", "Bob/foreign-vault",
-                    "/some/other/vaults.json", "2020-01-01T00:00:00");
+                    "/some/other/catalog.json", "2020-01-01T00:00:00");
             JsonMapper.saveVaultMarkerToFile(vaultContent.resolve(".vault").toFile(), foreign);
 
             Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "claim-exact-conflict",
@@ -524,7 +524,7 @@ class VaultServiceTest {
             Path parent = newVaultDir("claim-ancestor");
             JsonMapper.saveVaultMarkerToFile(parent.resolve(".vault").toFile(),
                     VaultMarker.create("ancestor-id", "Bob/ancestor-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
             Path childContent = parent.resolve("child-vault");
             Files.createDirectories(childContent);
 
@@ -545,7 +545,7 @@ class VaultServiceTest {
             Files.createDirectories(nested);
             JsonMapper.saveVaultMarkerToFile(nested.resolve(".vault").toFile(),
                     VaultMarker.create("nested-id", "Bob/nested-vault",
-                            "/some/vaults.json", "2026-01-01T00:00:00"));
+                            "/some/catalog.json", "2026-01-01T00:00:00"));
 
             Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "claim-descendant-conflict",
                     vaultContent.toString());
@@ -633,7 +633,7 @@ class VaultServiceTest {
             Path content = newVaultDir("create-already-claimed");
             JsonMapper.saveVaultMarkerToFile(content.resolve(".vault").toFile(),
                     VaultMarker.create("foreign-id", "Bob/foreign",
-                            "/some/other/vaults.json", "2020-01-01T00:00:00"));
+                            "/some/other/catalog.json", "2020-01-01T00:00:00"));
 
             assertThatThrownBy(() -> vaultService.create("Alice", "create-already-claimed", content.toString()))
                     .isInstanceOf(VaultException.class);

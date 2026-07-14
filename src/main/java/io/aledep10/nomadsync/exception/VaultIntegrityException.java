@@ -3,14 +3,14 @@ package io.aledep10.nomadsync.exception;
 import io.aledep10.nomadsync.service.VaultService;
 
 /**
- * Thrown by {@link VaultService} when the {@code vaults.json} file is readable
+ * Thrown by {@link VaultService} when the {@code catalog.json} file is readable
  * but contains logically inconsistent data — for example, two vaults sharing
  * the same {@code repoSlug} or the same local {@code path}.
  *
  * <p>Callers that catch this exception must not silently discard the persisted
  * state. The inconsistency requires explicit user intervention — the application
  * should log a clear error and terminate, prompting the user to inspect and
- * correct {@code vaults.json} manually before restarting.</p>
+ * correct {@code catalog.json} manually before restarting.</p>
  *
  * @see VaultParseException
  */

@@ -14,7 +14,7 @@ package io.aledep10.nomadsync.vault;
  *
  * @param id         stable UUID of the owning vault — the authoritative identity check
  * @param repoSlug   {@code <owner>/<name>} at the time of writing, for human-readable diagnostics
- * @param jsonPath   absolute path to the {@code vaults.json} that registers this vault
+ * @param jsonPath   absolute path to the {@code catalog.json} that registers this vault
  * @param createdAt  ISO timestamp of first claim, never changed after creation
  * @param lastUpdate ISO timestamp of the most recent confirmation/claim
  */

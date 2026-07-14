@@ -7,7 +7,7 @@ import io.aledep10.nomadsync.service.VaultService;
  *
  * <p>Two specialisations exist for distinct failure modes:</p>
  * <ul>
- *   <li>{@link VaultParseException} — the {@code vaults.json} file could not be
+ *   <li>{@link VaultParseException} — the {@code catalog.json} file could not be
  *       read or deserialised; the persisted state is unknown.</li>
  *   <li>{@link VaultIntegrityException} — the file was read successfully but
  *       contains logically inconsistent data (e.g. duplicate {@code repoSlug}

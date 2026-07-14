@@ -134,7 +134,7 @@ public final class TestUtil {
     /**
      * Creates {@link Properties} configured for {@link io.aledep10.nomadsync.service.VaultService}.
      *
-     * <p>The {@code vaults.json} file is named with the {@link TestVault#timestamp()}
+     * <p>The {@code catalog.json} file is named with the {@link TestVault#timestamp()}
      * suffix — the same timestamp used to name the root directory. Since
      * {@link #getTestVault(String)} guarantees timestamp uniqueness via a 1 ms sleep,
      * this file name is unique across all test runs in the same JVM session.</p>

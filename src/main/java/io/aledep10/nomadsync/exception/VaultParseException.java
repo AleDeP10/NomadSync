@@ -3,7 +3,7 @@ package io.aledep10.nomadsync.exception;
 import io.aledep10.nomadsync.service.VaultService;
 
 /**
- * Thrown by {@link VaultService} when the {@code vaults.json} file cannot be
+ * Thrown by {@link VaultService} when the {@code catalog.json} file cannot be
  * read or deserialised — for example, if the file is malformed, locked, or
  * inaccessible due to filesystem permissions.
  *

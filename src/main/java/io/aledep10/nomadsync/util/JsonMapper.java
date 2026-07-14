@@ -43,13 +43,13 @@ public final class JsonMapper {
     // ── Vault persistence ─────────────────────────────────────────────────────
 
     /**
-     * Loads the list of vaults from {@code vaults.json}.
+     * Loads the list of vaults from {@code catalog.json}.
      *
      * <p>Deserialises via {@link VaultRootDto} → {@link VaultDto} → {@link Vault}
      * to keep Jackson annotations out of the domain class. Returns an empty list
      * if the file does not exist — no exception is thrown.</p>
      *
-     * @param file the {@code vaults.json} file
+     * @param file the {@code catalog.json} file
      * @return list of domain {@link Vault} objects, or empty list if file absent
      * @throws IOException if the file exists but cannot be read or parsed
      */
@@ -60,13 +60,13 @@ public final class JsonMapper {
     }
 
     /**
-     * Persists the list of vaults to {@code vaults.json}.
+     * Persists the list of vaults to {@code catalog.json}.
      *
      * <p>Serialises via {@link Vault} → {@link VaultDto} → {@link VaultRootDto}
      * to keep Jackson annotations out of the domain class. The file is written
      * with pretty-printing for human readability.</p>
      *
-     * @param vaultsFile the target {@code vaults.json} file
+     * @param vaultsFile the target {@code catalog.json} file
      * @param vaults     the current in-memory vault list
      * @throws IOException if the file cannot be written
      */

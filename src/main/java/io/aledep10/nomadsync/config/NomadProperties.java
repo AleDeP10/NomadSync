@@ -36,7 +36,7 @@ package io.aledep10.nomadsync.config;
  * git.token=ghp_...
  *
  * # ── Paths ────────────────────────────────────────────────────────────────────
- * path.catalog=./vaults.json
+ * path.catalog=./catalog.json
  * path.backups=./backup
  * path.conflicts=./remote_conflicts
  *
@@ -73,7 +73,7 @@ public final class NomadProperties {
      * Keys governing Git CLI configuration and global credentials.
      *
      * <p>All values can be overridden per-vault via the corresponding fields in
-     * {@code vaults.json} ({@code gitName}, {@code gitEmail}, etc.). Resolution
+     * {@code catalog.json} ({@code gitName}, {@code gitEmail}, etc.). Resolution
      * order: per-vault field → this global property → {@code ~/.gitconfig}.</p>
      */
     public static final class Git {
@@ -146,8 +146,8 @@ public final class NomadProperties {
         private Path() {}
 
         /**
-         * Path to the {@code vaults.json} file listing all registered vaults.
-         * <br>Default: {@code "./vaults.json"}.
+         * Path to the {@code catalog.json} file listing all registered vaults.
+         * <br>Default: {@code "./catalog.json"}.
          */
         public static final String CATALOG = "path.catalog";
 

@@ -48,7 +48,7 @@ class JsonMapperTest {
     void saveThenLoad_roundTripsAllFields() throws IOException {
         File markerFile = tempDir.resolve(".vault").toFile();
         VaultMarker original = VaultMarker.create("id-1", "Alice/vault",
-                tempDir.resolve("vaults.json").toString(), "2026-01-01T00:00:00");
+                tempDir.resolve("catalog.json").toString(), "2026-01-01T00:00:00");
 
         JsonMapper.saveVaultMarkerToFile(markerFile, original);
         VaultMarker loaded = JsonMapper.loadVaultMarkerFromFile(markerFile);
@@ -61,7 +61,7 @@ class JsonMapperTest {
     void save_overwritesExistingMarker() throws IOException {
         File markerFile = tempDir.resolve(".vault").toFile();
         VaultMarker first = VaultMarker.create("id-1", "Alice/vault",
-                tempDir.resolve("vaults.json").toString(), "2026-01-01T00:00:00");
+                tempDir.resolve("catalog.json").toString(), "2026-01-01T00:00:00");
         JsonMapper.saveVaultMarkerToFile(markerFile, first);
 
         VaultMarker refreshed = first.withRefreshedTimestamp("2026-01-02T00:00:00");

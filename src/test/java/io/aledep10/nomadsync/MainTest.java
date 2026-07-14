@@ -137,6 +137,189 @@ class MainTest {
         return buf.toString();
     }
 
+    // ── parseArgs ────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("parseArgs")
+    class ParseArgsTests {
+
+        // ── reflection helpers for the private ParsedArgs record ───────────────
+
+        private Object invokeParseArgs(String[] args) throws Exception {
+            return invoke("parseArgs", new Class<?>[]{String[].class}, (Object) args);
+        }
+
+        private boolean isFailure(Object parsedArgs) throws Exception {
+            Method m = parsedArgs.getClass().getDeclaredMethod("isFailure");
+            m.setAccessible(true);
+            return (boolean) m.invoke(parsedArgs);
+        }
+
+        private String getCommand(Object parsedArgs) throws Exception {
+            Method m = parsedArgs.getClass().getDeclaredMethod("command");
+            m.setAccessible(true);
+            return (String) m.invoke(parsedArgs);
+        }
+
+        @SuppressWarnings("unchecked")
+        private Map<String, String> getFlags(Object parsedArgs) throws Exception {
+            Method m = parsedArgs.getClass().getDeclaredMethod("flags");
+            m.setAccessible(true);
+            return (Map<String, String>) m.invoke(parsedArgs);
+        }
+
+        private Integer getErrorExitCode(Object parsedArgs) throws Exception {
+            Method m = parsedArgs.getClass().getDeclaredMethod("errorExitCode");
+            m.setAccessible(true);
+            return (Integer) m.invoke(parsedArgs);
+        }
+
+        // ── args.length < 1 ──────────────────────────────────────────────────
+
+        @Test
+        @DisplayName("returns failure(1) and prints usage when no arguments are given")
+        void emptyArgs_returnsFailureWithUsage() throws Exception {
+            Object result = invokeParseArgs(new String[]{});
+
+            assertThat(isFailure(result)).isTrue();
+            assertThat(getErrorExitCode(result)).isEqualTo(1);
+            assertThat(outputStream.toString()).contains("Usage: java -jar NomadSync.jar");
+        }
+
+        // ── basic parsing, non-vault command ────────────────────────────────
+
+        @Test
+        @DisplayName("parses a simple command with flags, no positional subcommand")
+        void simpleCommand_parsesFlags() throws Exception {
+            Object result = invokeParseArgs(new String[]{"pull", "--vault=Alice/portfolio", "--config=x.properties"});
+
+            assertThat(isFailure(result)).isFalse();
+            assertThat(getCommand(result)).isEqualTo("pull");
+            Map<String, String> flags = getFlags(result);
+            assertThat(flags.get("vault")).isEqualTo("Alice/portfolio");
+            assertThat(flags.get("config")).isEqualTo("x.properties");
+            assertThat(flags.containsKey("sub")).isFalse();
+        }
+
+        // ── "sub" extraction for vault subcommands ──────────────────────────
+
+        @Test
+        @DisplayName("injects \"sub\" when the second argument is a positional vault subcommand")
+        void vaultWithPositionalSubcommand_injectsSubKey() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault", "relocate", "--vault=x", "--path=/y"});
+
+            assertThat(isFailure(result)).isFalse();
+            Map<String, String> flags = getFlags(result);
+            assertThat(flags.get("sub")).isEqualTo("relocate");
+            assertThat(flags.get("vault")).isEqualTo("x");
+            assertThat(flags.get("path")).isEqualTo("/y");
+        }
+
+        @Test
+        @DisplayName("does not inject \"sub\" when the second argument is itself a flag")
+        void vaultWithFlagAsSecondArg_doesNotInjectSub() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault", "--vault=x"});
+
+            Map<String, String> flags = getFlags(result);
+            assertThat(flags.containsKey("sub")).isFalse();
+            assertThat(flags.get("vault")).isEqualTo("x");
+        }
+
+        @Test
+        @DisplayName("does not inject \"sub\" when \"vault\" is the only argument")
+        void vaultAlone_doesNotInjectSub() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault"});
+
+            assertThat(isFailure(result)).isFalse();
+            assertThat(getFlags(result).containsKey("sub")).isFalse();
+        }
+
+        // ── duplicate flag detection ────────────────────────────────────────
+
+        @Test
+        @DisplayName("last value wins on a duplicated flag, and a single warning is printed")
+        void duplicateFlag_lastValueWinsAndWarns() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault", "add", "--owner=Alice", "--owner=Bob"});
+
+            assertThat(getFlags(result).get("owner")).isEqualTo("Bob");
+            assertThat(outputStream.toString())
+                    .contains("Warning: --owner was specified more than once");
+        }
+
+        @Test
+        @DisplayName("prints exactly one warning line per duplicated key, not one per occurrence")
+        void tripleDuplicateFlag_printsOnlyOneWarningLine() throws Exception {
+            invokeParseArgs(new String[]{"vault", "add", "--owner=Alice", "--owner=Bob", "--owner=Carol"});
+
+            String output = outputStream.toString();
+            int occurrences = output.split("Warning: --owner was specified more than once", -1).length - 1;
+            assertThat(occurrences).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("does not warn when --force is repeated — exempt as a harmless pure flag")
+        void repeatedForce_doesNotWarn() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault", "relocate", "--vault=x", "--force", "--force"});
+
+            assertThat(isFailure(result)).isFalse();
+            assertThat(outputStream.toString()).doesNotContain("--force was specified more than once");
+        }
+
+        @Test
+        @DisplayName("does not warn when --config-normalize is repeated — exempt as a harmless pure flag")
+        void repeatedConfigNormalize_doesNotWarn() throws Exception {
+            invokeParseArgs(new String[]{"vault", "list", "--config-normalize", "--config-normalize"});
+
+            assertThat(outputStream.toString())
+                    .doesNotContain("--config-normalize was specified more than once");
+        }
+
+        // ── stray argument detection — the --path-without-'=' regression ───
+
+        @Test
+        @DisplayName("REGRESSION: a value with no leading '--' (missing '=' after a flag) "
+                + "is rejected as a stray argument, not silently swallowed as a flag's value")
+        void strayArgument_missingEquals_returnsFailure() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault", "relocate",
+                    "--vault=nomad-test-vault", "--path", "C:\\Users\\aless\\vaults\\nomad-test"});
+
+            assertThat(isFailure(result)).isTrue();
+            assertThat(getErrorExitCode(result)).isEqualTo(1);
+            String output = outputStream.toString();
+            assertThat(output).contains("Unrecognized argument(s)");
+            assertThat(output).contains("did you forget '='");
+        }
+
+        @Test
+        @DisplayName("a flag with '=' but no following stray token is fine, even if its value is blank")
+        void flagWithEqualsButBlankValue_isNotAStrayArgument() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault", "update", "--vault=x", "--git.token="});
+
+            assertThat(isFailure(result)).isFalse();
+            assertThat(getFlags(result).get("git.token")).isEqualTo("");
+        }
+
+        @Test
+        @DisplayName("a flag with no '=' at all captures a blank value — distinct from a stray token, "
+                + "which has no leading '--'")
+        void flagWithNoEqualsSign_capturesBlankValue() throws Exception {
+            Object result = invokeParseArgs(new String[]{"vault", "update", "--vault=x", "--git.token"});
+
+            assertThat(isFailure(result)).isFalse();
+            assertThat(getFlags(result).get("git.token")).isEqualTo("");
+        }
+
+        // ── value containing '=' ────────────────────────────────────────────
+
+        @Test
+        @DisplayName("splits only on the FIRST '=' — a value containing '=' is preserved whole")
+        void valueContainingEqualsSign_isPreservedWhole() throws Exception {
+            Object result = invokeParseArgs(new String[]{"pull", "--git.token=abc=def=ghi"});
+
+            assertThat(getFlags(result).get("git.token")).isEqualTo("abc=def=ghi");
+        }
+    }
+
     // ── operationToEventType ──────────────────────────────────────────────────
 
     @Nested

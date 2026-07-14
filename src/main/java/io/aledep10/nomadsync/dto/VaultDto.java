@@ -6,7 +6,7 @@ import io.aledep10.nomadsync.vault.Vault;
 
 /**
  * Jackson DTO for serialising and deserialising a single vault entry
- * in {@code vaults.json}.
+ * in {@code catalog.json}.
  *
  * <p>Keeps all Jackson annotations out of the {@link Vault} domain class.
  * Use {@link #toDomain()} after deserialisation to obtain the domain object,
@@ -22,7 +22,7 @@ import io.aledep10.nomadsync.vault.Vault;
  * <p>All Git credential and configuration fields ({@code gitName}, {@code gitEmail},
  * {@code gitUsername}, {@code gitToken}, {@code gitBranch}, {@code gitRemote}) are
  * optional — Jackson sets them to {@code null} if absent from the JSON. This allows
- * {@code vaults.json} entries to carry only the fields that differ from the global
+ * {@code catalog.json} entries to carry only the fields that differ from the global
  * configuration in {@code config.properties}.</p>
  */
 public class VaultDto {

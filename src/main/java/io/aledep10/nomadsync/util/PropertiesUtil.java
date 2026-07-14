@@ -25,7 +25,7 @@ import java.util.Properties;
  * // config.properties file in use — not the process's working directory —
  * // whether the key is absent, blank, or present with a relative value
  * Path vaultsFile = PropertiesUtil.resolvePath(properties, NomadProperties.Path.VAULTS,
- *         "vaults.json", configDir, logService);
+ *         "catalog.json", configDir, logService);
  * }</pre>
  *
  * <p>Non-instantiable — all members are {@code static}.</p>

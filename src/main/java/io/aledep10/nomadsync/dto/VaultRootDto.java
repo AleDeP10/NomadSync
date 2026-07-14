@@ -7,7 +7,7 @@ import io.aledep10.nomadsync.util.JsonMapper;
 import java.util.List;
 
 /**
- * Jackson DTO for the root wrapper of {@code vaults.json}.
+ * Jackson DTO for the root wrapper of {@code catalog.json}.
  *
  * <p>Maps the top-level structure {@code { "vaults": [...] }} to a list of
  * {@link VaultDto} entries. Used exclusively by
