@@ -6,7 +6,7 @@ import io.aledep10.nomadsync.exception.NetworkException;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
 
 import java.io.IOException;

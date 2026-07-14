@@ -1,5 +1,8 @@
-package io.aledep10.nomadsync.orchestrator;
+package io.aledep10.nomadsync.vault;
 
+import io.aledep10.nomadsync.orchestrator.SyncEvent;
+import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
+import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
 import io.aledep10.nomadsync.service.GitService;
 
 import java.util.concurrent.ScheduledFuture;

@@ -9,7 +9,7 @@ import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEvent;
 import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
 import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.GitignoreService;
@@ -824,31 +824,94 @@ public class Main {
 
     /**
      * Detects any flag keys in {@code flags} that do not belong to the given
-     * allowed set for the current subcommand.
+     * known set for the current subcommand.
      *
      * <p>The internal {@code "sub"} key injected by the parser is always
-     * permitted and never reported. Logs one error line per unrecognised key.</p>
+     * permitted and never reported. For each unrecognised key, logs one error
+     * line — including a "did you mean...?" suggestion (via
+     * {@link #nearestKnownFlag}) when a known flag is within Levenshtein
+     * distance {@link #FLAG_SUGGESTION_MAX_DISTANCE}, to help catch typos.</p>
      *
      * @param flags      parsed CLI flags (global flags already removed)
-     * @param allowed    set of keys valid for the current subcommand
+     * @param knownFlags set of keys valid for the current subcommand
      * @param handler    handler name used as log prefix, e.g. {@code "handleVaultAdd"}
      * @param logService shared logging service
      * @return {@code true} if at least one unrecognised key is present,
      *         {@code false} if all keys are recognised
      */
-    private static boolean hasUnknownFlags(Map<String, String> flags,
-                                           Set<String> allowed,
-                                           String handler,
-                                           LogService logService) {
+    private static boolean hasUnknownFlags(Map<String, String> flags, Set<String> knownFlags,
+                                           String handler, LogService logService) {
         List<String> unknown = flags.keySet().stream()
-                .filter(k -> !k.equals("sub") && !allowed.contains(k))
+                .filter(k -> !k.equals("sub") && !knownFlags.contains(k))
                 .sorted()
                 .toList();
         if (unknown.isEmpty()) return false;
-        unknown.forEach(k -> logService.error(
-                handler + ": unknown flag '--" + k + "'"));
+
+        unknown.forEach(k -> {
+            Optional<String> suggestion = nearestKnownFlag(k, knownFlags);
+            String message = "unknown flag '--" + k + "'"
+                    + suggestion.map(s -> " — did you mean '--" + s + "'?").orElse("");
+            logService.error(handler + ": " + message);
+        });
         return true;
     }
+
+    /**
+     * Computes the Levenshtein edit distance between two strings — the minimum
+     * number of single-character insertions, deletions, or substitutions needed
+     * to transform one into the other. Case-insensitive, since flag names are
+     * conventionally lowercase and a typo shouldn't hide behind a case mismatch.
+     *
+     * @param a first string
+     * @param b second string
+     * @return the edit distance, always {@code >= 0}
+     */
+    private static int levenshteinDistance(String a, String b) {
+        String s1 = a.toLowerCase();
+        String s2 = b.toLowerCase();
+        int[][] dp = new int[s1.length() + 1][s2.length() + 1];
+
+        for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
+        for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
+
+        for (int i = 1; i <= s1.length(); i++) {
+            for (int j = 1; j <= s2.length(); j++) {
+                int cost = (s1.charAt(i - 1) == s2.charAt(j - 1)) ? 0 : 1;
+                dp[i][j] = Math.min(Math.min(
+                                dp[i - 1][j] + 1,      // deletion
+                                dp[i][j - 1] + 1),     // insertion
+                        dp[i - 1][j - 1] + cost); // substitution
+            }
+        }
+        return dp[s1.length()][s2.length()];
+    }
+
+    /**
+     * Finds the closest known flag to an unrecognized one, by Levenshtein
+     * distance — used to produce a "did you mean...?" hint. Returns empty if no
+     * known flag is within {@link #FLAG_SUGGESTION_MAX_DISTANCE}, avoiding a
+     * misleading suggestion for a flag that is simply unrelated (e.g. belongs to
+     * a different command entirely) rather than a typo.
+     *
+     * @param unknownFlag the flag key that was not recognized
+     * @param knownFlags  the set of valid flag keys for the current command
+     * @return the nearest match within threshold, or empty if none qualifies
+     */
+    private static Optional<String> nearestKnownFlag(String unknownFlag, Set<String> knownFlags) {
+        return knownFlags.stream()
+                .map(known -> Map.entry(known, levenshteinDistance(unknownFlag, known)))
+                .filter(e -> e.getValue() <= FLAG_SUGGESTION_MAX_DISTANCE)
+                .min(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey);
+    }
+
+    /**
+     * Maximum edit distance for a "did you mean...?" suggestion to be shown.
+     * Calibrated for short flag names (typically 4-15 characters): 2 catches
+     * single-character typos (missing/swapped/doubled letter) without matching
+     * genuinely unrelated flags that happen to share a few characters.
+     */
+    private static final int FLAG_SUGGESTION_MAX_DISTANCE = 2;
 
     /**
      * Handles {@code vault create} — initialises a brand-new local Git repository

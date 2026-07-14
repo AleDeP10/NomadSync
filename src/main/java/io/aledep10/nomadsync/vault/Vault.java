@@ -1,4 +1,4 @@
-package io.aledep10.nomadsync.orchestrator;
+package io.aledep10.nomadsync.vault;
 
 import java.nio.file.Path;
 
