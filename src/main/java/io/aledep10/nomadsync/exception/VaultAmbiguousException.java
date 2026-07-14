@@ -1,6 +1,6 @@
 package io.aledep10.nomadsync.exception;
 
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 
 import java.util.List;
 import java.util.stream.Collectors;

@@ -82,7 +82,7 @@ public final class PropertiesUtil {
      * resolution involving a relative value is logged at {@code DEBUG} — never silent.</p>
      *
      * @param properties      loaded application properties
-     * @param key             the property key to resolve (e.g. {@code path.vaults})
+     * @param key             the property key to resolve (e.g. {@code path.catalog})
      * @param defaultRelative fallback value, itself resolved against {@code configDir}
      *                        if relative, used only when {@code key} is absent
      * @param configDir       directory containing the {@code config.properties} in use

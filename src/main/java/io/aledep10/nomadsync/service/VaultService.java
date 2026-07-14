@@ -1,17 +1,15 @@
 package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.config.NomadProperties;
-import io.aledep10.nomadsync.dto.VaultMarkerDto;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.exception.VaultIntegrityException;
 import io.aledep10.nomadsync.exception.VaultParseException;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
 import io.aledep10.nomadsync.vault.VaultMarker;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -28,7 +26,7 @@ import java.util.stream.Stream;
  *
  * <h2>Snapshot paths</h2>
  * <p>Backup and conflict directories can be configured explicitly via
- * {@code path.backup} and {@code path.conflicts} in the application properties.
+ * {@code path.backups} and {@code path.conflicts} in the application properties.
  * If those keys are absent, both directories fall back to subdirectories of the
  * application working directory ({@code user.dir}), keeping the layout
  * self-contained without requiring explicit configuration in simple deployments.</p>
@@ -88,7 +86,7 @@ public class VaultService {
     /**
      * Constructs the service. Does not load from disk — call {@link #load()} explicitly.
      *
-     * <p>{@code path.vaults}, {@code path.backup}, and {@code path.conflicts} are all
+     * <p>{@code path.catalog}, {@code path.backups}, and {@code path.conflicts} are all
      * resolved via {@link PropertiesUtil#resolvePath} against {@code configDir} — the
      * directory containing the {@code config.properties} file actually in use for
      * this run, not the process's working directory nor the location of
@@ -99,7 +97,7 @@ public class VaultService {
      * resolved uniformly; an already-absolute value is left untouched.</p>
      *
      * @param properties       application properties, optionally containing
-     *                         {@code path.vaults}, {@code path.backup},
+     *                         {@code path.catalog}, {@code path.backups},
      *                         {@code path.conflicts}
      * @param configDir        directory containing the {@code config.properties}
      *                         file in use — base for resolving all three path
@@ -110,12 +108,12 @@ public class VaultService {
     public VaultService(Properties properties, Path configDir,
                         GitignoreService gitignoreService,
                         LogService logService) {
-        this.vaultFile = PropertiesUtil.resolvePath(properties, NomadProperties.Path.VAULTS,
+        this.vaultFile = PropertiesUtil.resolvePath(properties, NomadProperties.Path.CATALOG,
                 "vaults.json", configDir, logService).toFile();
         this.gitignoreService = gitignoreService;
         this.logService       = logService;
 
-        this.backupsRoot = PropertiesUtil.resolvePath(properties, NomadProperties.Path.BACKUP,
+        this.backupsRoot = PropertiesUtil.resolvePath(properties, NomadProperties.Path.BACKUPS,
                 "backups", configDir, logService);
         this.conflictsRoot = PropertiesUtil.resolvePath(properties, NomadProperties.Path.CONFLICTS,
                 "remote-conflicts", configDir, logService);
@@ -654,7 +652,7 @@ public class VaultService {
      * operations were attempted in rapid succession.</p>
      *
      * <p>Snapshots are stored under {@link #backupsRoot} (configured via
-     * {@code path.backup} or resolved relative to {@code configDir} otherwise).</p>
+     * {@code path.backups} or resolved relative to {@code configDir} otherwise).</p>
      *
      * <p>Files and directories matching active gitignore patterns are excluded from
      * the snapshot — negated patterns ({@code !}) are included.</p>

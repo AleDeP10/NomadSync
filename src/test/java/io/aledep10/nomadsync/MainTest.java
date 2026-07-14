@@ -2,7 +2,7 @@ package io.aledep10.nomadsync;
 
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.orchestrator.EventType;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.GitignoreService;
 import io.aledep10.nomadsync.service.LogService;

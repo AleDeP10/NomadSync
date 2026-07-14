@@ -3,7 +3,7 @@ package io.aledep10.nomadsync.tray;
 import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.orchestrator.EventType;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.TestUtil;

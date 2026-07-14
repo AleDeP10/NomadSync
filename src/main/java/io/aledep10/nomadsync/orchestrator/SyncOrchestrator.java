@@ -7,6 +7,7 @@ import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.StringUtil;
+import io.aledep10.nomadsync.vault.Vault;
 
 import java.time.LocalDateTime;
 

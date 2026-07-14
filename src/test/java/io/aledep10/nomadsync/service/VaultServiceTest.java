@@ -2,7 +2,7 @@ package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.logging.LogLevel;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
 import io.aledep10.nomadsync.vault.VaultMarker;
 import org.junit.jupiter.api.*;

@@ -36,8 +36,8 @@ package io.aledep10.nomadsync.config;
  * git.token=ghp_...
  *
  * # ── Paths ────────────────────────────────────────────────────────────────────
- * path.vaults=./vaults.json
- * path.backup=./backup
+ * path.catalog=./vaults.json
+ * path.backups=./backup
  * path.conflicts=./remote_conflicts
  *
  * # ── Logging ──────────────────────────────────────────────────────────────────
@@ -149,14 +149,14 @@ public final class NomadProperties {
          * Path to the {@code vaults.json} file listing all registered vaults.
          * <br>Default: {@code "./vaults.json"}.
          */
-        public static final String VAULTS = "path.vaults";
+        public static final String CATALOG = "path.catalog";
 
         /**
          * Root directory for FIFO vault snapshots created before conflict resolution.
          * <br>Default: {@code "./backups"} (relative to working directory).
          * <br>Each vault snapshot is named {@code <owner>_<name>_<timestamp>/}.
          */
-        public static final String BACKUP = "path.backup";
+        public static final String BACKUPS = "path.backups";
 
         /**
          * Root directory for remote conflict files saved during {@code SYNCHRONIZE}.

@@ -12,7 +12,7 @@ import io.aledep10.nomadsync.dto.VaultMarkerDto;
 import io.aledep10.nomadsync.dto.VaultRootDto;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEvent;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.vault.VaultMarker;
 
 import java.io.File;

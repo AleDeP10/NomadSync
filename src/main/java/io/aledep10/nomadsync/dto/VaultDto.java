@@ -2,7 +2,7 @@ package io.aledep10.nomadsync.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.aledep10.nomadsync.orchestrator.Vault;
+import io.aledep10.nomadsync.vault.Vault;
 
 /**
  * Jackson DTO for serialising and deserialising a single vault entry

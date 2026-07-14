@@ -8,6 +8,8 @@ import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.JsonMapper;
+import io.aledep10.nomadsync.vault.Vault;
+import io.aledep10.nomadsync.vault.VaultContext;
 
 import java.io.*;
 import java.net.ServerSocket;
