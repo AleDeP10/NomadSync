@@ -2,12 +2,16 @@ package io.aledep10.nomadsync.orchestrator;
 
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.util.ClassFailureTracker;
+import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.IOException;
 import java.util.UUID;
@@ -32,8 +36,12 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  * carries no mutable state relevant to queue operations. No test inspects the
  * log file's content, so a single {@code @AfterAll} cleanup is sufficient —
  * unlike suites that assert on log content per test, there is no need to reset
- * anything between individual {@code @Test} methods here.</p>
+ * anything between individual {@code @Test} methods here. That cleanup is now
+ * conditional on every test in the class having passed (see
+ * {@link ClassFailureTracker}) — a failing test leaves {@code testVault}
+ * (and its log file) on disk for inspection.</p>
  */
+@ExtendWith({TempDirCleanupExtension.class, ClassFailureTracker.class})
 class SyncEventQueueTest {
 
     static TestVault  testVault;
@@ -49,9 +57,11 @@ class SyncEventQueueTest {
     }
 
     @AfterAll
-    static void tearDownLogService() throws IOException {
+    static void tearDownAll(ExtensionContext context) throws IOException {
         logService.close();
-        TestUtil.cleanup(testVault);
+        if (!ClassFailureTracker.anyTestFailed(context)) {
+            TestUtil.cleanup(testVault);
+        }
     }
 
     @BeforeEach

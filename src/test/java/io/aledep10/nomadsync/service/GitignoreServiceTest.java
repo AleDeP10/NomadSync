@@ -1,18 +1,20 @@
 package io.aledep10.nomadsync.service;
 
-import io.aledep10.nomadsync.gitignore.AppPatterns;
 import io.aledep10.nomadsync.gitignore.GitignorePattern;
 import io.aledep10.nomadsync.gitignore.PatternLevel;
-import io.aledep10.nomadsync.gitignore.SystemPattern;
 import io.aledep10.nomadsync.gitignore.VaultPatterns;
-import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.util.ClassFailureTracker;
+import io.aledep10.nomadsync.util.TempDirCleanupExtension;
+import io.aledep10.nomadsync.util.TempDirs;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
-import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -26,10 +28,19 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  * Unit tests for {@link GitignoreService}.
  *
  * <p>Each test operates on a real temporary {@code .gitignore} file created inside
- * the shared {@link TestVault}. The vault directory is cleaned in {@code @AfterEach}.</p>
+ * the shared {@link TestVault}. {@link #setUp} resets the vault directory and
+ * removes any {@code .gitignore} left by a previous test — this alone guarantees
+ * isolation, so no {@code @AfterEach} is needed: a failing test's {@code .gitignore}
+ * is left on disk, visible until the next test's {@code @BeforeEach} overwrites it.</p>
  *
  * <p>{@link GitignoreService} is stateless — the same instance is shared across
  * all tests without risk of cross-test contamination.</p>
+ *
+ * <p>The shared {@link #testVault} (created once in {@code @BeforeAll}) is cleaned
+ * up in {@code @AfterAll} only if every test in this class passed — see
+ * {@link ClassFailureTracker}. Any secondary vault obtained via {@code secondVault()}
+ * is registered with the injected {@link TempDirs} and cleaned up per-test, on the
+ * same pass/fail basis.</p>
  *
  * <h2>Coverage strategy</h2>
  * <ul>
@@ -44,6 +55,7 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  *       {@code cloneAppPatterns}, {@code cloneSystemPatterns}, {@code serializeGitignore}.</li>
  * </ul>
  */
+@ExtendWith({TempDirCleanupExtension.class, ClassFailureTracker.class})
 class GitignoreServiceTest {
 
     static TestVault testVault;
@@ -57,27 +69,30 @@ class GitignoreServiceTest {
         gitignoreService = new GitignoreService(logService);
     }
 
+    @AfterAll
+    static void tearDownAll(ExtensionContext context) throws IOException {
+        logService.close();
+        if (!ClassFailureTracker.anyTestFailed(context)) {
+            TestUtil.cleanup(testVault);
+        }
+        // if any test failed: testVault is left on disk, .gitignore state and
+        // log file intact, for inspection
+    }
+
     @BeforeEach
     void setUp() throws IOException {
-        // ricrea solo la vault directory e cancella il gitignore
         Files.createDirectories(testVault.vaultPath());
         Files.deleteIfExists(testVault.gitignoreFilePath());
     }
 
-    @AfterEach
-    void tearDown() throws IOException {
-        Files.deleteIfExists(testVault.gitignoreFilePath());
-        // NON cleanup completo — testVault è condiviso e il log file serve
-    }
+    // No @AfterEach — setUp()'s own reset already guarantees isolation for the
+    // NEXT test; deleting .gitignore here too would erase a failed test's
+    // evidence before it could ever be inspected.
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void writeGitignore(String content) throws IOException {
         Files.writeString(testVault.gitignoreFilePath(), content);
-    }
-
-    private TestVault secondVault() throws IOException {
-        return TestUtil.getTestVault("GitignoreServiceTest-B");
     }
 
     // ── load() — file presence ────────────────────────────────────────────────
@@ -306,26 +321,22 @@ class GitignoreServiceTest {
      * isolated results — vault A patterns do not appear in vault B and vice versa.
      */
     @Test
-    void load_twoVaults_stateIsIsolated() throws Exception {
-        TestVault vaultB = secondVault();
-        try {
-            writeGitignore("*.tmp");
-            Files.writeString(vaultB.gitignoreFilePath(), "*.log");
+    void load_twoVaults_stateIsIsolated(TempDirs tempDirs) throws Exception {
+        TestVault vaultB = tempDirs.newVault("GitignoreServiceTest-B");
+        writeGitignore("*.tmp");
+        Files.writeString(vaultB.gitignoreFilePath(), "*.log");
 
-            VaultPatterns resultA = gitignoreService.load(testVault.vaultPath());
-            VaultPatterns resultB = gitignoreService.load(vaultB.vaultPath());
+        VaultPatterns resultA = gitignoreService.load(testVault.vaultPath());
+        VaultPatterns resultB = gitignoreService.load(vaultB.vaultPath());
 
-            assertThat(resultA.getUser().stream()
-                    .anyMatch(p -> p.getPattern().equals("*.tmp"))).isTrue();
-            assertThat(resultA.getUser().stream()
-                    .noneMatch(p -> p.getPattern().equals("*.log"))).isTrue();
-            assertThat(resultB.getUser().stream()
-                    .anyMatch(p -> p.getPattern().equals("*.log"))).isTrue();
-            assertThat(resultB.getUser().stream()
-                    .noneMatch(p -> p.getPattern().equals("*.tmp"))).isTrue();
-        } finally {
-            TestUtil.cleanup(vaultB);
-        }
+        assertThat(resultA.getUser().stream()
+                .anyMatch(p -> p.getPattern().equals("*.tmp"))).isTrue();
+        assertThat(resultA.getUser().stream()
+                .noneMatch(p -> p.getPattern().equals("*.log"))).isTrue();
+        assertThat(resultB.getUser().stream()
+                .anyMatch(p -> p.getPattern().equals("*.log"))).isTrue();
+        assertThat(resultB.getUser().stream()
+                .noneMatch(p -> p.getPattern().equals("*.tmp"))).isTrue();
     }
 
     // ── save() ────────────────────────────────────────────────────────────────
@@ -414,22 +425,18 @@ class GitignoreServiceTest {
      * Verifies that saving vault A does not affect vault B's .gitignore.
      */
     @Test
-    void save_twoVaults_noStateCrossContamination() throws Exception {
-        TestVault vaultB = secondVault();
-        try {
-            VaultPatterns loadedA = gitignoreService.load(testVault.vaultPath());
-            gitignoreService.load(vaultB.vaultPath());
+    void save_twoVaults_noStateCrossContamination(TempDirs tempDirs) throws Exception {
+        TestVault vaultB = tempDirs.newVault("GitignoreServiceTest-B");
+        VaultPatterns loadedA = gitignoreService.load(testVault.vaultPath());
+        gitignoreService.load(vaultB.vaultPath());
 
-            List<GitignorePattern> patternsA = new java.util.ArrayList<>(loadedA.allPatterns());
-            patternsA.add(new GitignorePattern("*.tmp", PatternLevel.USER, null, false));
-            gitignoreService.save(testVault.vaultPath(), patternsA);
+        List<GitignorePattern> patternsA = new java.util.ArrayList<>(loadedA.allPatterns());
+        patternsA.add(new GitignorePattern("*.tmp", PatternLevel.USER, null, false));
+        gitignoreService.save(testVault.vaultPath(), patternsA);
 
-            VaultPatterns reloadedB = gitignoreService.load(vaultB.vaultPath());
-            assertThat(reloadedB.getUser().stream()
-                    .noneMatch(p -> p.getPattern().equals("*.tmp"))).isTrue();
-        } finally {
-            TestUtil.cleanup(vaultB);
-        }
+        VaultPatterns reloadedB = gitignoreService.load(vaultB.vaultPath());
+        assertThat(reloadedB.getUser().stream()
+                .noneMatch(p -> p.getPattern().equals("*.tmp"))).isTrue();
     }
 
     // ── forSnapshot() ─────────────────────────────────────────────────────────

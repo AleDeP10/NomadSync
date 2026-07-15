@@ -28,15 +28,6 @@ public final class TestConstants {
     public static final String TMP_DIR = System.getProperty("java.io.tmpdir");
 
     /**
-     * Application-level prefix for all test directories under {@link #TMP_DIR}.
-     * Creates a dedicated namespace that avoids collisions with other tools
-     * writing to the temp directory.
-     *
-     * <p>Full path structure: {@code <TMP_DIR>/NomadSync/<testName>/<artifact>/}</p>
-     */
-    public static final String APP_PREFIX = "NomadSync";
-
-    /**
      * Git executable name — {@code git} resolves via PATH on both Windows and macOS.
      * Override in config if the Git binary is not on PATH (e.g. {@code C:/Program Files/Git/bin/git.exe}).
      */

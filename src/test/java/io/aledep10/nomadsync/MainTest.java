@@ -7,11 +7,16 @@ import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.GitignoreService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.service.VaultService;
+import io.aledep10.nomadsync.util.ClassFailureTracker;
 import io.aledep10.nomadsync.util.FileUtil;
 import io.aledep10.nomadsync.util.OsUtil;
+import io.aledep10.nomadsync.util.TempDirCleanupExtension;
+import io.aledep10.nomadsync.util.TempDirs;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 import org.mockito.InOrder;
 
 import java.io.ByteArrayInputStream;
@@ -54,13 +59,35 @@ import static org.mockito.Mockito.*;
  * <p>All {@code handleVault*}, {@code handleStatus}, and {@code handleConfig}
  * methods return an {@code int}: {@code 0} success, {@code 1} error, {@code 2}
  * no-op (e.g. no changes requested, user aborted a confirmation).</p>
+ *
+ * <h2>Two vaults, two purposes</h2>
+ * <p>{@code sharedVault} (static, created once in {@code @BeforeAll}) exists
+ * only to give {@link #logService} a place to write its log file — cleaned up
+ * once in {@code @AfterAll}, only if every test in this class passed (see
+ * {@link ClassFailureTracker}).</p>
+ *
+ * <p>{@code testVault} (instance field, obtained fresh per test via the
+ * injected {@link TempDirs#newVault}) provides {@code configDir}/
+ * {@code catalogFile} for {@link #vaultService} — freshly isolated on every
+ * single test, rather than relying on no test ever calling
+ * {@code vaultService.load()} to avoid cross-test contamination of a shared
+ * catalog file (the same class of risk found and fixed in
+ * {@code VaultServiceTest}).</p>
+ *
+ * <p>Any additional ad-hoc directory a test needs (a vault's real content
+ * directory for {@code handleVaultCreate}/{@code handleVaultAdd}/
+ * {@code handleVaultRelocate} scenarios) is obtained via the same injected
+ * {@link TempDirs}, registered for conditional cleanup — deleted automatically
+ * if the test passes, left on disk for inspection if it fails.</p>
  */
+@ExtendWith({TempDirCleanupExtension.class, ClassFailureTracker.class})
 @DisplayName("Unit tests for Main")
 class MainTest {
 
-    static TestVault testVault;
+    static TestVault sharedVault;
     static LogService logService;
 
+    TestVault testVault;
     VaultService vaultService;
     Properties properties;
     PrintStream originalOut;
@@ -69,13 +96,22 @@ class MainTest {
 
     @BeforeAll
     static void prepareSharedState() throws IOException {
-        testVault  = TestUtil.getTestVault("MainTest");
-        logService = new LogService(TestUtil.forLogService(testVault,
-                io.aledep10.nomadsync.logging.LogLevel.DEBUG), testVault.rootPath());
+        sharedVault = TestUtil.getTestVault("MainTest-shared");
+        logService  = new LogService(TestUtil.forLogService(sharedVault,
+                io.aledep10.nomadsync.logging.LogLevel.DEBUG), sharedVault.rootPath());
+    }
+
+    @AfterAll
+    static void tearDownAll(ExtensionContext context) throws IOException {
+        logService.close();
+        if (!ClassFailureTracker.anyTestFailed(context)) {
+            TestUtil.cleanup(sharedVault);
+        }
     }
 
     @BeforeEach
-    void setUp() throws IOException {
+    void setUp(TempDirs tempDirs) throws IOException {
+        testVault = tempDirs.newVault("MainTest");
         properties = new Properties();
         Properties vaultProperties = TestUtil.forVaultService(testVault);
         GitignoreService gitignoreService = new GitignoreService(logService);
@@ -90,15 +126,13 @@ class MainTest {
     }
 
     @AfterEach
-    void tearDown() throws IOException {
+    void tearDown() {
+        // Unconditional — restoring stdout/stderr must always happen regardless
+        // of test outcome. testVault and every ad-hoc directory created via
+        // tempDirs.newDir(...) are registered with the injected TempDirs and
+        // cleaned up together, conditionally, by TempDirCleanupExtension.
         System.setOut(originalOut);
         System.setErr(originalErr);
-        TestUtil.cleanup(testVault);
-    }
-
-    @AfterAll
-    static void tearDownAll() {
-        logService.close();
     }
 
     /**
@@ -526,10 +560,10 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when unknown flag is present")
-        void unknownFlag_returnsError() throws IOException {
+        void unknownFlag_returnsError(TempDirs tempDirs) throws IOException {
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
-            Path tempDir = Files.createTempDirectory("vault-create-unknownflag");
+            Path tempDir = tempDirs.newDir("MainTest", "vault-create-unknownflag");
 
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("owner", "owner");
@@ -569,8 +603,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 2 when path already contains a .git directory")
-        void pathAlreadyGitRepo_returnsNoOp() throws Exception {
-            Path tempRepo = Files.createTempDirectory("vault-create-existing-git");
+        void pathAlreadyGitRepo_returnsNoOp(TempDirs tempDirs) throws Exception {
+            Path tempRepo = tempDirs.newDir("MainTest", "vault-create-existing-git");
             Files.createDirectories(tempRepo.resolve(".git"));
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -592,8 +626,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when path exists, is non-empty, and has no .git directory")
-        void pathExistsNonEmptyNoGit_returnsError() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-create-nonempty");
+        void pathExistsNonEmptyNoGit_returnsError(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-create-nonempty");
             Files.createFile(tempDir.resolve("some-file.txt"));
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -615,8 +649,8 @@ class MainTest {
 
         @Test
         @DisplayName("creates directory, initialises the repo, then registers it — in that order")
-        void pathAbsent_initBeforeCreate() throws Exception {
-            Path parentDir = Files.createTempDirectory("vault-create-parent");
+        void pathAbsent_initBeforeCreate(TempDirs tempDirs) throws Exception {
+            Path parentDir = tempDirs.newDir("MainTest", "vault-create-parent");
             Path targetPath = parentDir.resolve("brand-new-vault");
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -649,8 +683,8 @@ class MainTest {
 
         @Test
         @DisplayName("initialises and registers when path exists and is empty")
-        void pathExistsEmpty_initAndRegisters() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-create-empty");
+        void pathExistsEmpty_initAndRegisters(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-create-empty");
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
@@ -675,8 +709,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when gitService.init throws GitException, without attempting registration")
-        void initThrowsGitException_returnsError() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-create-init-fails");
+        void initThrowsGitException_returnsError(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-create-init-fails");
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
             doThrow(new GitException("git init failed")).when(gitService).init(any(Vault.class));
@@ -697,8 +731,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when vaultService.create throws VaultException after successful init")
-        void createThrowsVaultException_returnsError() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-create-register-fails");
+        void createThrowsVaultException_returnsError(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-create-register-fails");
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
             doNothing().when(gitService).init(any(Vault.class));
@@ -803,8 +837,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when path exists but contains no .git directory")
-        void pathWithoutGitDir_returnsError() throws IOException {
-            Path tempDir = Files.createTempDirectory("vault-add-nogit");
+        void pathWithoutGitDir_returnsError(TempDirs tempDirs) throws IOException {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-add-nogit");
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
             Map<String, String> flags = new LinkedHashMap<>();
@@ -822,11 +856,11 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when vaultService.create throws VaultException (e.g. duplicated path)")
-        void createThrowsVaultException_returnsError() throws Exception {
+        void createThrowsVaultException_returnsError(TempDirs tempDirs) throws Exception {
             // repoSlug collisions are now caught by the pre-check before this point —
             // this test covers the residual case where vaultService.create() still
             // throws for a reason the pre-check does not cover (e.g. path collision).
-            Path tempRepo = Files.createTempDirectory("vault-add-duplicate");
+            Path tempRepo = tempDirs.newDir("MainTest", "vault-add-duplicate");
             Files.createDirectories(tempRepo.resolve(".git"));
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -848,8 +882,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 0 and adds vault when flags are valid and path is a git repository")
-        void validFlags_addsVault() throws Exception {
-            Path tempRepo = Files.createTempDirectory("vault-add-test");
+        void validFlags_addsVault(TempDirs tempDirs) throws Exception {
+            Path tempRepo = tempDirs.newDir("MainTest", "vault-add-test");
             Files.createDirectories(tempRepo.resolve(".git"));
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -1191,8 +1225,8 @@ class MainTest {
 
         @Test
         @DisplayName("--force bypasses the confirmation prompt entirely")
-        void forceFlag_skipsConfirmation() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-relocate-force");
+        void forceFlag_skipsConfirmation(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-force");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -1264,8 +1298,8 @@ class MainTest {
 
         @Test
         @DisplayName("relocates in place (no path change) without touching the filesystem move")
-        void samePathOwnerChange_relocatesInPlace() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-relocate-samepath");
+        void samePathOwnerChange_relocatesInPlace(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-samepath");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -1291,11 +1325,11 @@ class MainTest {
 
         @Test
         @DisplayName("copies to the new path and removes the original when --path differs")
-        void pathChange_copiesThenRemovesOriginal() throws Exception {
-            Path sourceDir = Files.createTempDirectory("vault-relocate-source");
+        void pathChange_copiesThenRemovesOriginal(TempDirs tempDirs) throws Exception {
+            Path sourceDir = tempDirs.newDir("MainTest", "vault-relocate-source");
             Path marker = sourceDir.resolve("note.md");
             Files.writeString(marker, "hello vault");
-            Path parentForTarget = Files.createTempDirectory("vault-relocate-target-parent");
+            Path parentForTarget = tempDirs.newDir("MainTest", "vault-relocate-target-parent");
             Path targetDir = parentForTarget.resolve("moved-vault");
 
             Vault vault = new Vault("id", "owner", "name", sourceDir.toString());
@@ -1322,8 +1356,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when vaultService.update fails after a successful reset")
-        void updateFails_returnsError() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-relocate-update-fails");
+        void updateFails_returnsError(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-update-fails");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -1346,8 +1380,8 @@ class MainTest {
 
         @Test
         @DisplayName("returns 1 when bootstrapVault fails after a successful update")
-        void bootstrapVaultFails_returnsError() throws Exception {
-            Path tempDir = Files.createTempDirectory("vault-relocate-bootstrap-fails");
+        void bootstrapVaultFails_returnsError(TempDirs tempDirs) throws Exception {
+            Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-bootstrap-fails");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
             GitService gitService = mock(GitService.class);
@@ -1402,9 +1436,9 @@ class MainTest {
 
         @Test
         @DisplayName("returns 0 when vault list is non-empty")
-        void nonEmptyVaults_returnsSuccess() throws Exception {
+        void nonEmptyVaults_returnsSuccess(TempDirs tempDirs) throws Exception {
             Map<String, String> flags = new LinkedHashMap<>();
-            Path vaultContent = Files.createTempDirectory("nomadsync-list-target");
+            Path vaultContent = tempDirs.newDir("MainTest", "list-target");
             Vault vault = vaultService.create("Alice", "list-target", vaultContent.toString());
 
             int result = (int) invoke("handleVaultList",
@@ -1412,8 +1446,6 @@ class MainTest {
                     flags, List.of(vault), logService);
 
             assertThat(result).isEqualTo(0);
-
-            FileUtil.deleteRecursively(vaultContent);
         }
 
         @Test

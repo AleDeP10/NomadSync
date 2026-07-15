@@ -1,11 +1,12 @@
 package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.logging.LogLevel;
-import io.aledep10.nomadsync.util.TestUtil;
+import io.aledep10.nomadsync.util.TempDirCleanupExtension;
+import io.aledep10.nomadsync.util.TempDirs;
 import io.aledep10.nomadsync.util.TestVault;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,9 +18,10 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 /**
  * Unit tests for {@link LogService}.
  *
- * <p>Each test writes to the shared {@link TestVault#logFilePath()} — log entries
- * are isolated by level and content assertions rather than by separate files.
- * The test vault is cleaned in {@code @AfterEach}.</p>
+ * <p>Each test writes to a fresh {@link TestVault#logFilePath()}, obtained via
+ * the injected {@link TempDirs} — registered for conditional cleanup (see
+ * {@link TempDirCleanupExtension}): a passing test's whole {@link TestVault}
+ * is deleted automatically; a failing test's is left on disk for inspection.</p>
  *
  * <p>{@link TestVault#rootPath()} is used as {@code configDir} throughout —
  * it is the base directory against which a relative {@code log.path} is
@@ -28,20 +30,24 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  * The {@code configDir}-specific tests below are the ones that actually
  * exercise resolution against it.</p>
  */
+@ExtendWith(TempDirCleanupExtension.class)
 class LogServiceTest {
 
     TestVault testVault;
 
     @BeforeEach
-    void setUp() throws IOException {
-        testVault = TestUtil.getTestVault("LogServiceTest");
-        Files.createDirectories(testVault.logFilePath().getParent());
+    void setUp(TempDirs tempDirs) throws IOException {
+        testVault = tempDirs.newVault("LogServiceTest");
+        // No Files.createDirectories(...) needed here — TestUtil.getTestVault
+        // already creates the logs/ directory eagerly.
     }
 
-    @AfterEach
-    void tearDown() throws IOException {
-        Files.deleteIfExists(testVault.logFilePath());
-    }
+    // No @AfterEach — testVault is registered above and cleaned up
+    // conditionally by TempDirCleanupExtension. This also closes a
+    // pre-existing gap: the old @AfterEach only deleted the single log file,
+    // never the rest of testVault's directory tree (vault/, backups/,
+    // remote-conflicts/), which was silently left behind on every run
+    // regardless of outcome.
 
     // ── log() — level filtering ───────────────────────────────────────────────
 
@@ -234,15 +240,13 @@ class LogServiceTest {
         properties.setProperty("log.path",    "relative-test.log");
 
         Path expected = testVault.rootPath().resolve("relative-test.log");
-        try {
-            LogService logService = new LogService(properties, testVault.rootPath());
-            logService.info("resolved against configDir");
+        LogService logService = new LogService(properties, testVault.rootPath());
+        logService.info("resolved against configDir");
 
-            assertThat(Files.exists(expected)).isTrue();
-            assertThat(Files.readString(expected)).contains("resolved against configDir");
-        } finally {
-            Files.deleteIfExists(expected);
-        }
+        assertThat(Files.exists(expected)).isTrue();
+        assertThat(Files.readString(expected)).contains("resolved against configDir");
+        // No manual cleanup — this file lives under testVault.rootPath(),
+        // already covered by the tracked TestVault's own conditional cleanup.
     }
 
     /**

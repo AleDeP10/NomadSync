@@ -6,12 +6,13 @@ import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -30,13 +31,19 @@ import static org.mockito.Mockito.verify;
 /**
  * Integration tests for {@link GitService}.
  *
- * <p>Each test runs against a real Git repository created in a temporary directory
- * via {@link TestUtil#getTestVault(String)}. The repository is initialised in
- * {@code @BeforeEach} and deleted in {@code @AfterEach}, guaranteeing full isolation
- * between test cases.</p>
+ * <p>Each test runs against a real Git repository created via a fresh
+ * {@link TestVault}, obtained through the injected {@link TempDirs}
+ * (per-test, registered for conditional cleanup — see
+ * {@link TempDirCleanupExtension}). Any additional ad-hoc directory a test
+ * needs (a bare remote, a second clone, a standalone init/reset target) is
+ * likewise obtained via {@code tempDirs.newDir(...)}, never a raw
+ * {@code Files.createTempDirectory} call with manual cleanup — a failing
+ * test's entire filesystem footprint is left intact for inspection instead
+ * of being deleted regardless of outcome.</p>
  *
- * <p>{@link LogService} is shared across all tests ({@code @BeforeAll}) and closed
- * in {@code @AfterAll} — it carries no mutable state relevant to Git operations.</p>
+ * <p>{@link LogService} and the class-shared {@code sharedVault} are created
+ * once in {@code @BeforeAll} and cleaned up in {@code @AfterAll} only if
+ * every test in this class passed — see {@link ClassFailureTracker}.</p>
  *
  * <p>{@link VaultService} is mocked for most tests — snapshot/conflict persistence
  * is not under test there. {@link SynchronizeTests} is the exception: it verifies
@@ -56,6 +63,7 @@ import static org.mockito.Mockito.verify;
  *   <li>Per-vault credentials — take precedence over global properties.</li>
  * </ol>
  */
+@ExtendWith({TempDirCleanupExtension.class, ClassFailureTracker.class})
 @DisplayName("Unit tests for GitService")
 class GitServiceTest {
 
@@ -75,16 +83,21 @@ class GitServiceTest {
     }
 
     @AfterAll
-    static void tearDownAll() throws IOException {
+    static void tearDownAll(ExtensionContext context) throws IOException {
         logService.close();
-        TestUtil.cleanup(sharedVault);
+        if (!ClassFailureTracker.anyTestFailed(context)) {
+            TestUtil.cleanup(sharedVault);
+        }
+        // if any test failed: sharedVault (and its log file) is left on disk
+        // for inspection
     }
 
-    // ── Per-test setup / teardown ─────────────────────────────────────────────
+    // ── Per-test setup ───────────────────────────────────────────────────────
 
     @BeforeEach
-    void setUp() throws GitException, NetworkException, IOException, InterruptedException {
-        testVault = TestUtil.getTestVault("GitServiceTest");
+    void setUp(TempDirs tempDirs)
+            throws GitException, NetworkException, IOException, InterruptedException {
+        testVault = tempDirs.newVault("GitServiceTest");
         String vaultPath = testVault.vaultPath().toString();
 
         vault = new Vault(UUID.randomUUID().toString(), "owner", "test-vault", vaultPath);
@@ -99,10 +112,8 @@ class GitServiceTest {
                 mock(VaultService.class), mock(GitignoreService.class), logService);
     }
 
-    @AfterEach
-    void tearDown() throws IOException {
-        TestUtil.cleanup(testVault);
-    }
+    // No @AfterEach — testVault is registered with the injected TempDirs above
+    // and cleaned up conditionally (on success only) by TempDirCleanupExtension.
 
     // ── hasChanges() ──────────────────────────────────────────────────────────
 
@@ -384,17 +395,15 @@ class GitServiceTest {
 
         @Test
         @DisplayName("initialises a new git repository when .git/ is absent")
-        void init_noGitDir_initialisesRepository()
+        void init_noGitDir_initialisesRepository(TempDirs tempDirs)
                 throws GitException, InterruptedException, IOException {
-            Path tempDir = Files.createTempDirectory("nomadsync-init-test");
+            Path tempDir = tempDirs.newDir("GitServiceTest", "init-test");
             Vault freshVault = new Vault(UUID.randomUUID().toString(),
                     "alice", "fresh-vault", tempDir.toString());
 
             gitService.init(freshVault);
 
             assertThat(tempDir.resolve(".git").toFile()).exists();
-
-            FileUtil.deleteRecursively(tempDir);
         }
 
         @Test
@@ -430,9 +439,9 @@ class GitServiceTest {
 
         @Test
         @DisplayName("removes an existing .git/ directory and reinitialises a fresh repository")
-        void reset_gitDirPresent_discardsHistoryAndReinitialises()
+        void reset_gitDirPresent_discardsHistoryAndReinitialises(TempDirs tempDirs)
                 throws GitException, InterruptedException, IOException {
-            Path tempDir = Files.createTempDirectory("nomadsync-reset-test");
+            Path tempDir = tempDirs.newDir("GitServiceTest", "reset-test");
             Vault testSubject = new Vault(UUID.randomUUID().toString(),
                     "alice", "reset-vault", tempDir.toString());
 
@@ -444,29 +453,26 @@ class GitServiceTest {
 
             assertThat(tempDir.resolve(".git").toFile()).exists().isDirectory();
             assertThat(marker.toFile()).doesNotExist();
-
-            FileUtil.deleteRecursively(tempDir);
         }
 
         @Test
         @DisplayName("initialises a repository when .git/ is absent")
-        void reset_noGitDir_initialisesRepository()
+        void reset_noGitDir_initialisesRepository(TempDirs tempDirs)
                 throws GitException, InterruptedException, IOException {
-            Path tempDir = Files.createTempDirectory("nomadsync-reset-test");
+            Path tempDir = tempDirs.newDir("GitServiceTest", "reset-test");
             Vault freshVault = new Vault(UUID.randomUUID().toString(),
                     "alice", "fresh-vault", tempDir.toString());
 
             gitService.reset(freshVault);
 
             assertThat(tempDir.resolve(".git").toFile()).exists().isDirectory();
-            FileUtil.deleteRecursively(tempDir);
         }
 
         @Test
         @DisplayName("does not throw when called twice in a row")
-        void reset_calledTwice_doesNotThrow()
+        void reset_calledTwice_doesNotThrow(TempDirs tempDirs)
                 throws GitException, InterruptedException, IOException {
-            Path tempDir = Files.createTempDirectory("nomadsync-reset-test");
+            Path tempDir = tempDirs.newDir("GitServiceTest", "reset-test");
             Vault testSubject = new Vault(UUID.randomUUID().toString(),
                     "alice", "reset-twice-vault", tempDir.toString());
 
@@ -474,8 +480,6 @@ class GitServiceTest {
             gitService.reset(testSubject);
             // no exception = pass — the second call removes the .git/ created
             // by the first call and reinitialises again
-
-            FileUtil.deleteRecursively(tempDir);
         }
     }
 
@@ -504,9 +508,9 @@ class GitServiceTest {
         GitService gs;
 
         @BeforeEach
-        void setUpRemote()
+        void setUpRemote(TempDirs tempDirs)
                 throws GitException, NetworkException, InterruptedException, IOException {
-            remoteBarePath = Files.createTempDirectory("nomadsync-sync-remote");
+            remoteBarePath = tempDirs.newDir("GitServiceTest", "sync-remote");
             CommandUtil.runCommand(remoteBarePath.toString(),
                     List.of(TestConstants.GIT_EXECUTABLE, "init", "--bare"));
 
@@ -526,10 +530,8 @@ class GitServiceTest {
             gs = new GitService(gitProperties(), vaultServiceMock, gitignoreServiceMock, logService);
         }
 
-        @AfterEach
-        void tearDownRemote() throws IOException {
-            FileUtil.deleteRecursively(remoteBarePath);
-        }
+        // No @AfterEach — remoteBarePath is registered with the injected
+        // TempDirs above and cleaned up conditionally by TempDirCleanupExtension.
 
         @Test
         @DisplayName("commits local changes, pulls, and pushes when there is no conflict")
@@ -555,8 +557,8 @@ class GitServiceTest {
         @Test
         @DisplayName("on conflict: snapshots via VaultService.makeVaultSnapshot(Vault), "
                 + "resolves local-wins, and saves the remote version of each conflicted file")
-        void synchronize_withConflict_snapshotsAndResolvesLocalWins() throws Exception {
-            Path otherClone = Files.createTempDirectory("nomadsync-sync-other-clone");
+        void synchronize_withConflict_snapshotsAndResolvesLocalWins(TempDirs tempDirs) throws Exception {
+            Path otherClone = tempDirs.newDir("GitServiceTest", "sync-other-clone");
             CommandUtil.runCommand(otherClone.toString(),
                     List.of(TestConstants.GIT_EXECUTABLE, "clone", remoteBarePath.toString(), "."));
             Files.writeString(otherClone.resolve("seed.txt"), "remote change");
@@ -580,8 +582,6 @@ class GitServiceTest {
             verify(vaultServiceMock, times(1)).saveConflict(any(), eq("seed.txt"), any());
             assertThat(Files.readString(testVault.vaultPath().resolve("seed.txt")))
                     .isEqualTo("local change");
-
-            FileUtil.deleteRecursively(otherClone);
         }
     }
 

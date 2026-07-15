@@ -6,9 +6,13 @@ import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.util.ClassFailureTracker;
+import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -32,7 +36,19 @@ import static org.mockito.Mockito.verify;
  *
  * <p>{@link GitService} is mocked — no real Git operations are performed.
  * {@link org.awaitility.Awaitility} is used for async assertions on mock interactions.</p>
+ *
+ * <p>The shared {@link #testVault} (created once in {@code @BeforeAll}) exists
+ * only to give {@link #logService} a place to write, and to supply real path
+ * strings for the pre-registered {@link Vault} instances — {@link GitService}
+ * is mocked, so nothing ever actually reads or writes under those paths.
+ * Cleaned up in {@code @AfterAll} only if every test in this class passed
+ * (see {@link ClassFailureTracker}) — <strong>not</strong> per-test: the
+ * previous version of this file deleted the shared {@code testVault} in
+ * {@code @AfterEach}, after every single test, which is both unnecessary
+ * (nothing re-creates it between tests) and risky while {@code logService}
+ * still holds it open for the rest of the class.</p>
  */
+@ExtendWith({TempDirCleanupExtension.class, ClassFailureTracker.class})
 class SocketServerTest {
 
     static TestVault testVault;
@@ -71,6 +87,14 @@ class SocketServerTest {
                         testVault.vaultPath().resolve("test-3").toString()));
     }
 
+    @AfterAll
+    static void tearDownAll(ExtensionContext context) throws IOException {
+        logService.close();
+        if (!ClassFailureTracker.anyTestFailed(context)) {
+            TestUtil.cleanup(testVault);
+        }
+    }
+
     @BeforeEach
     void setUp() throws IOException {
         notificationHook = mock(NotificationHook.class);
@@ -84,9 +108,10 @@ class SocketServerTest {
     }
 
     @AfterEach
-    void tearDown() throws IOException {
+    void tearDown() {
+        // Unconditional — per-test server lifecycle, recreated fresh every test
+        // in setUp(); unrelated to the shared testVault's conditional cleanup.
         socketServer.stop();
-        TestUtil.cleanup(testVault);
     }
 
     // ── Happy path ────────────────────────────────────────────────────────────

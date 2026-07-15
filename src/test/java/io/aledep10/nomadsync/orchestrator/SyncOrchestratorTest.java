@@ -7,13 +7,18 @@ import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
+import io.aledep10.nomadsync.util.ClassFailureTracker;
+import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.util.TestVault;
 import io.aledep10.nomadsync.vault.Vault;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 import org.mockito.InOrder;
 
 import java.io.IOException;
@@ -47,7 +52,18 @@ import static org.mockito.MockitoAnnotations.openMocks;
  * <p><strong>COMMIT_MANUAL scope</strong>: tests verify that the user-provided
  * message from {@link SyncEvent#getMessage()} is passed to {@link GitService#commitLocal},
  * and that a blank message triggers the fallback.</p>
+ *
+ * <p>The shared {@link #testVault} (created once in {@code @BeforeAll}) exists
+ * only to give {@link #logService} a place to write its log file, and to supply
+ * a real filesystem path string for constructing {@link Vault} instances —
+ * {@link GitService} is fully mocked, so nothing ever actually reads or writes
+ * under that path. Cleaned up in {@code @AfterAll} only if every test in this
+ * class passed (see {@link ClassFailureTracker}). No test creates its own
+ * per-test temp directory, so {@link io.aledep10.nomadsync.util.TempDirs} is not
+ * injected anywhere here — {@link TempDirCleanupExtension} is still registered
+ * for consistency and in case a future test needs it.</p>
  */
+@ExtendWith({TempDirCleanupExtension.class, ClassFailureTracker.class})
 class SyncOrchestratorTest {
 
     private static TestVault testVault;
@@ -62,8 +78,16 @@ class SyncOrchestratorTest {
 
     @BeforeAll
     static void prepareLogService() throws IOException {
-        testVault = TestUtil.getTestVault("SyncOrchestratorTest");
+        testVault  = TestUtil.getTestVault("SyncOrchestratorTest");
         logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
+    }
+
+    @AfterAll
+    static void tearDownAll(ExtensionContext context) throws IOException {
+        logService.close();
+        if (!ClassFailureTracker.anyTestFailed(context)) {
+            TestUtil.cleanup(testVault);
+        }
     }
 
     @BeforeEach
@@ -83,6 +107,8 @@ class SyncOrchestratorTest {
 
     @AfterEach
     void tearDown() throws Exception {
+        // Unconditional — a Mockito resource, not a temp-dir/filesystem-inspection
+        // concern, so it is closed regardless of test outcome.
         mocks.close();
     }
 

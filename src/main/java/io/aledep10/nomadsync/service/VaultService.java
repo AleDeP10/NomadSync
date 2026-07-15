@@ -5,6 +5,7 @@ import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.exception.VaultIntegrityException;
 import io.aledep10.nomadsync.exception.VaultParseException;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
+import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
 import io.aledep10.nomadsync.vault.VaultMarker;
@@ -27,9 +28,11 @@ import java.util.stream.Stream;
  * <h2>Snapshot paths</h2>
  * <p>Backup and conflict directories can be configured explicitly via
  * {@code path.backups} and {@code path.conflicts} in the application properties.
- * If those keys are absent, both directories fall back to subdirectories of the
- * application working directory ({@code user.dir}), keeping the layout
- * self-contained without requiring explicit configuration in simple deployments.</p>
+ * If those keys are absent (or relative), both are resolved via
+ * {@link PropertiesUtil#resolvePath} against {@code configDir} — the directory
+ * containing the {@code config.properties} file actually in use for this run —
+ * never against the process's working directory. This keeps a workspace
+ * self-contained regardless of where a command is invoked from.</p>
  *
  * <h2>Vault identity and uniqueness constraints</h2>
  * <p>Each vault is uniquely identified by its {@code repoSlug} — the composite
@@ -38,12 +41,22 @@ import java.util.stream.Stream;
  * may share the same {@code name}, but the {@code owner/name} combination is always
  * globally unique.</p>
  *
- * <p>Additionally, no two vaults may point to the same local {@code path}. A vault
- * with a duplicate {@code path} would cause two orchestrators to operate on the same
- * Git repository concurrently, producing undefined behaviour.</p>
+ * <p>Additionally, no two vaults may point to the same local {@code path}, nor may
+ * one vault's path be nested inside (or contain) another's — either would let a
+ * single Git operation on one vault silently absorb files belonging to another.</p>
  *
  * <p>{@link #load()}, {@link #create(String, String, String)} and {@link #update(Vault)}
  * all enforce both constraints by throwing {@link VaultException} on violation.</p>
+ *
+ * <h2>Marker-based path protection</h2>
+ * <p>Beyond the in-memory uniqueness checks above (which only see vaults already
+ * loaded in the current session), every vault's directory is marked on disk with a
+ * reserved {@code .nomadsync-vault/} folder — see {@link #claimVaultPath},
+ * {@link #checkNoNestingConflict}, {@link #releaseVaultMarker}, and
+ * {@link #refreshVaultMarker}. This catches conflicts with vaults belonging to a
+ * <em>different</em> workspace never loaded in this session (e.g. two independent
+ * {@code catalog.json} files whose directory trees happen to overlap), which the
+ * in-memory checks alone cannot see.</p>
  *
  * <h2>Defensive copies</h2>
  * <p>{@link #findAll()} returns a new {@link ArrayList} on every call — structural
@@ -71,10 +84,8 @@ import java.util.stream.Stream;
  */
 public class VaultService {
 
-    private static final String FALLBACK_ROOT = System.getProperty("user.dir");
-
     /** Package-private for test assertions on file existence. */
-    final File vaultFile;
+    final File catalogFile;
 
     private final Map<String, Vault> vaults = new HashMap<>();
     private final GitignoreService gitignoreService;
@@ -108,7 +119,7 @@ public class VaultService {
     public VaultService(Properties properties, Path configDir,
                         GitignoreService gitignoreService,
                         LogService logService) {
-        this.vaultFile = PropertiesUtil.resolvePath(properties, NomadProperties.Path.CATALOG,
+        this.catalogFile = PropertiesUtil.resolvePath(properties, NomadProperties.Path.CATALOG,
                 "catalog.json", configDir, logService).toFile();
         this.gitignoreService = gitignoreService;
         this.logService       = logService;
@@ -138,6 +149,11 @@ public class VaultService {
      * {@link VaultException} is thrown — the caller can inspect the exception message
      * to identify the offending value.</p>
      *
+     * <p>After the in-memory state is replaced, every loaded vault's
+     * {@code .nomadsync-vault} marker is confirmed/refreshed via
+     * {@link #refreshVaultMarker} — see that method for why this is a "confirm",
+     * distinct from the atomic "claim" performed by {@link #claimVaultPath}.</p>
+     *
      * <p>Logging: a single {@code INFO} line announces the operation at the start;
      * the number of vaults actually loaded is logged at {@code DEBUG} on success.</p>
      *
@@ -146,10 +162,10 @@ public class VaultService {
      *                        or if the file exists but cannot be read or parsed
      */
     public List<Vault> load() throws VaultException {
-        logService.info("load - loading vault registry from " + vaultFile.getPath());
+        logService.info("load - loading vault registry from " + catalogFile.getPath());
         List<Vault> loaded;
         try {
-            loaded = JsonMapper.loadVaultsFromFile(vaultFile);
+            loaded = JsonMapper.loadVaultsFromFile(catalogFile);
         } catch (IOException e) {
             throw new VaultParseException("Unable to parse the vault file: " + e.getMessage(), e);
         }
@@ -167,50 +183,6 @@ public class VaultService {
     }
 
     /**
-     * "Confirms" ownership of an already-registered vault's directory by writing
-     * or refreshing its .vault marker — distinct from "claiming" a directory
-     * (used by create/add/relocate), which must atomically fail on collision.
-     * Here the vault is already legitimately registered, so overwriting its own
-     * marker is never a conflict — UNLESS an existing marker belongs to a
-     * different vault id, which indicates real corruption and must not be
-     * silently overwritten.
-     *
-     * Never throws — a failure here degrades gracefully (logged, load() continues),
-     * consistent with load()'s existing tolerance for per-vault issues.
-     */
-    private void refreshVaultMarker(Vault vault) {
-        Path markerPath = Path.of(vault.getPath()).resolve(".vault");
-
-        VaultMarker existing;
-        try {
-            existing = JsonMapper.loadVaultMarkerFromFile(markerPath.toFile());
-        } catch (IOException e) {
-            logService.warn("refreshVaultMarker - " + vault.getRepoSlug()
-                    + " - unable to read .vault marker: " + e.getMessage());
-            return;
-        }
-
-        if (existing != null && !existing.id().equals(vault.getId())) {
-            logService.warn("refreshVaultMarker - " + vault.getRepoSlug()
-                    + " - path already marked by a different vault (id=" + existing.id()
-                    + ", repoSlug=" + existing.repoSlug() + ") - not overwriting, possible conflict");
-            return;
-        }
-
-        String now = DateFormats.nowLog();
-        VaultMarker marker = (existing == null)
-                ? VaultMarker.create(vault.getId(), vault.getRepoSlug(), vaultFile.getPath(), now)
-                : existing.withRefreshedTimestamp(now);
-
-        try {
-            JsonMapper.saveVaultMarkerToFile(markerPath.toFile(), marker);
-        } catch (IOException e) {
-            logService.warn("refreshVaultMarker - " + vault.getRepoSlug()
-                    + " - unable to write .vault marker: " + e.getMessage());
-        }
-    }
-
-    /**
      * Persists the current in-memory vault state to {@code catalog.json}.
      *
      * <p>Called automatically by all mutating operations. Can be called explicitly
@@ -223,15 +195,71 @@ public class VaultService {
      * @throws VaultException if the file cannot be written
      */
     public void save() throws VaultException {
-        logService.info("save - persisting " + vaults.size() + " vault(s) to " + vaultFile.getPath());
+        logService.info("save - persisting " + vaults.size() + " vault(s) to " + catalogFile.getPath());
         try {
-            JsonMapper.saveVaultsToFile(vaultFile, new ArrayList<>(vaults.values()));
+            JsonMapper.saveVaultsToFile(catalogFile, new ArrayList<>(vaults.values()));
         } catch (IOException e) {
             throw new VaultException("Failed to persist vault: " + e.getMessage(), e);
         }
     }
 
-    // ── Integrity ─────────────────────────────────────────────────────────────
+    /**
+     * Validates that no two vaults in the given list share the same {@code repoSlug}.
+     *
+     * <p>Two vaults with the same {@code name} but different {@code owner}s —
+     * e.g. {@code "Alice/portfolio"} and {@code "Bob/portfolio"} —
+     * are distinct and explicitly allowed.</p>
+     *
+     * <p>Internal step of {@link #load()} — no log of its own; violations surface
+     * as a thrown exception, and {@code load()}'s own intro line already covers
+     * observability for this step.</p>
+     *
+     * @param loaded vaults freshly deserialised from {@code catalog.json}
+     * @throws VaultException if any {@code repoSlug} appears more than once
+     */
+    private void validateUniqueRepoSlugs(List<Vault> loaded) throws VaultException {
+        Set<String> seen = new HashSet<>();
+        for (Vault vault : loaded) {
+            if (!seen.add(vault.getRepoSlug())) {
+                throw new VaultIntegrityException(
+                        "duplicated repoSlug in catalog.json: " + vault.getRepoSlug());
+            }
+        }
+    }
+
+    /**
+     * Validates that no two vaults in the given list share the same local {@code path}.
+     *
+     * <p>Two orchestrators operating on the same local Git repository concurrently
+     * would produce undefined behaviour — this constraint prevents that scenario
+     * from being registered in the first place.</p>
+     *
+     * <p>Internal step of {@link #load()} — no log of its own; violations surface
+     * as a thrown exception, and {@code load()}'s own intro line already covers
+     * observability for this step.</p>
+     *
+     * @param loaded vaults freshly deserialised from {@code catalog.json}
+     * @throws VaultException if any {@code path} appears more than once
+     */
+    private void validateUniquePaths(List<Vault> loaded) throws VaultException {
+        Set<String> seen = new HashSet<>();
+        for (Vault vault : loaded) {
+            if (!seen.add(vault.getPath())) {
+                throw new VaultIntegrityException(
+                        "duplicated path in catalog.json: " + vault.getPath());
+            }
+        }
+    }
+
+    // ── Vault marker lifecycle (.nomadsync-vault) ──────────────────────────────
+    //
+    // Every vault directory carries a reserved .nomadsync-vault/descriptor.json
+    // folder, claimed atomically at creation and confirmed/refreshed on every
+    // load(). This section groups the full lifecycle together: the nesting
+    // pre-check, the atomic claim, release on removal/relocation, and the
+    // opportunistic confirm-on-load — plus the small private helpers shared
+    // across all four. Kept as one block since this is the area most likely to
+    // grow next (workspace/config/catalog markers follow the same shape).
 
     /**
      * Verifies that no directory near {@code candidatePath} is already claimed by
@@ -254,50 +282,39 @@ public class VaultService {
      *
      * @param candidatePath absolute path to validate
      * @throws VaultException if any ancestor or in-range descendant already
-     *                          carries a {@code .vault} marker, or if the
-     *                          descendant scan cannot complete due to an I/O error
+     *                          carries a {@code .nomadsync-vault} marker folder,
+     *                          or if the descendant scan cannot complete due to
+     *                          an I/O error
      */
     public void checkNoNestingConflict(String candidatePath) throws VaultException {
         Path candidate = Path.of(candidatePath);
 
-        // ── Ancestor scan (unbounded) ──
+        // Ancestor scan (unbounded)
         Path ancestor = candidate.getParent();
         while (ancestor != null) {
-            Path markerPath = ancestor.resolve(".vault");
-            if (Files.exists(markerPath)) {
-                VaultMarker marker = null;
-                try {
-                    marker = JsonMapper.loadVaultMarkerFromFile(markerPath.toFile());
-                } catch (IOException e) {
-                    // An unreadable marker must not permanently block this directory
-                    // tree — log it as an anomaly and treat it as if no marker were
-                    // present, rather than turning a corrupted file into a hard,
-                    // unrecoverable wall. Future work: 'doctor --fix' could regenerate
-                    // a corrupt marker automatically instead of only warning.
-                    logService.warn("checkNoNestingConflict - unable to read .vault marker at "
-                            + markerPath + ": " + e.getMessage());
-                }
-                if (marker != null) {
-                    throw new VaultException("path '" + candidatePath + "' is nested inside a directory "
-                            + "already claimed by vault '" + marker.repoSlug() + "' (" + ancestor + ")");
-                }
+            Path folder = markerFolder(ancestor, MarkerType.VAULT);
+            if (Files.isDirectory(folder)) {
+                String holder = readHolderRepoSlugBestEffort(folder);
+                throw new VaultException("path '" + candidatePath + "' is nested inside a directory "
+                        + "already claimed by vault '" + holder + "' (" + ancestor + ")");
             }
             ancestor = ancestor.getParent();
         }
 
-        // ── Descendant scan (bounded by maxNestingDepth) ──
+        // Descendant scan (bounded by maxNestingDepth)
         if (Files.isDirectory(candidate)) {
             scanDescendantsForMarker(candidate, /*depth=*/1);
         }
     }
 
     /**
-     * Atomically claims {@code vault.getPath()} by writing its {@code .vault}
-     * marker — first delegating to {@link #checkNoNestingConflict} (ancestor/
-     * descendant scan), then reserving the exact path via {@link Files#createFile}
-     * (atomic at the filesystem level: fails if the file already exists, safe
-     * across concurrent processes, not just threads — same pattern already used
-     * by snapshot directory naming).
+     * Atomically claims {@code vault.getPath()} by creating its reserved
+     * {@code .nomadsync-vault/} marker folder — first delegating to
+     * {@link #checkNoNestingConflict} (ancestor/descendant scan), then reserving
+     * the exact path via {@link Files#createDirectory} (atomic at the filesystem
+     * level: fails if the folder already exists, safe across concurrent
+     * processes, not just threads — the same pattern used by snapshot directory
+     * naming).
      *
      * <p>A second claim attempt on a path already claimed — even by the same
      * vault — always fails. Re-confirming an existing marker is
@@ -306,42 +323,225 @@ public class VaultService {
      *
      * @param vault the vault whose path is being claimed
      * @throws VaultException if the path (or a nearby ancestor/descendant) is
-     *                          already claimed, or if the marker cannot be written
+     *                          already claimed, or if the marker folder cannot
+     *                          be created or written to
      */
     public void claimVaultPath(Vault vault) throws VaultException {
         checkNoNestingConflict(vault.getPath());
 
-        Path markerPath = Path.of(vault.getPath()).resolve(".vault");
+        Path folder = markerFolder(Path.of(vault.getPath()), MarkerType.VAULT);
         try {
-            Files.createFile(markerPath);
+            Files.createDirectory(folder);   // atomic — throws FileAlreadyExistsException if taken
         } catch (FileAlreadyExistsException e) {
-            String holder = "an unknown vault";
-            try {
-                VaultMarker existing = JsonMapper.loadVaultMarkerFromFile(markerPath.toFile());
-                if (existing != null) holder = existing.repoSlug();
-            } catch (IOException ignored) {
-                // best-effort only — the VaultException below is thrown regardless
-            }
+            String holder = readHolderRepoSlugBestEffort(folder);
             throw new VaultException("path '" + vault.getPath()
                     + "' is already claimed by vault '" + holder + "'");
         } catch (IOException e) {
             throw new VaultException("Unable to claim vault path " + vault.getPath() + ": " + e.getMessage(), e);
         }
 
+        Path descriptor = folder.resolve(MarkerType.DESCRIPTOR_FILE_NAME);
         String now = DateFormats.nowLog();
-        VaultMarker marker = VaultMarker.create(vault.getId(), vault.getRepoSlug(), vaultFile.getPath(), now);
+        VaultMarker marker = VaultMarker.create(vault.getId(), vault.getRepoSlug(), catalogFile.getPath(), now);
         try {
-            JsonMapper.saveVaultMarkerToFile(markerPath.toFile(), marker);
+            JsonMapper.saveVaultMarkerToFile(descriptor.toFile(), marker);
         } catch (IOException e) {
+            // rollback: remove the whole reserved folder, not just the descriptor —
+            // an empty .nomadsync-vault/ left behind would itself look claimed
             try {
-                Files.deleteIfExists(markerPath);
+                FileUtil.deleteRecursively(folder);
             } catch (IOException ex) {
-                logService.error("Unable to remove reserved-but-empty marker " + markerPath
+                logService.error("Unable to remove reserved-but-empty marker folder " + folder
                         + " for " + marker.repoSlug() + ": " + ex.getMessage(), ex);
             }
-            throw new VaultException("Unable to write vault marker at " + markerPath + ": " + e.getMessage(), e);
+            throw new VaultException("Unable to write vault descriptor at " + descriptor + ": " + e.getMessage(), e);
         }
         logService.info("claimVaultPath - " + vault.getRepoSlug() + " - claimed " + vault.getPath());
+    }
+
+    /**
+     * Best-effort removal of the {@code .nomadsync-vault} marker folder at
+     * {@code path} — never throws. Used when a vault's path changes
+     * ({@link #update}) or when a vault is removed ({@link #delete}): only the
+     * metadata marker is cleaned up, the physical directory and its contents are
+     * never touched, consistent with {@code vault remove}'s existing
+     * "registration only" contract.
+     *
+     * @param path the (former) vault path whose marker folder should be released
+     */
+    private void releaseVaultMarker(String path) {
+        Path folder = markerFolder(Path.of(path), MarkerType.VAULT);
+        try {
+            boolean existed = Files.exists(folder);
+            FileUtil.deleteRecursively(folder);   // no-op if it doesn't exist
+            if (existed) {
+                logService.debug("releaseVaultMarker - removed " + folder);
+            }
+        } catch (IOException e) {
+            logService.warn("releaseVaultMarker - unable to remove " + folder + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * "Confirms" ownership of an already-registered vault's directory by writing
+     * or refreshing its {@code .nomadsync-vault} marker — distinct from
+     * "claiming" a directory ({@link #claimVaultPath}, used by
+     * create/add/relocate), which must atomically fail on collision. Here the
+     * vault is already legitimately registered, so overwriting its own marker is
+     * never a conflict — <strong>unless</strong> an existing marker belongs to a
+     * different vault id, which indicates real corruption and must not be
+     * silently overwritten.
+     *
+     * <p>Never throws — a failure here degrades gracefully (logged, {@link #load()}
+     * continues), consistent with {@code load()}'s existing tolerance for
+     * per-vault issues.</p>
+     *
+     * @param vault the already-registered vault whose marker should be confirmed
+     */
+    private void refreshVaultMarker(Vault vault) {
+        Path descriptor = markerDescriptor(Path.of(vault.getPath()), MarkerType.VAULT);
+
+        VaultMarker existing;
+        try {
+            existing = JsonMapper.loadVaultMarkerFromFile(descriptor.toFile());
+        } catch (IOException e) {
+            logService.warn("refreshVaultMarker - " + vault.getRepoSlug()
+                    + " - unable to read .nomadsync-vault marker: " + e.getMessage());
+            return;
+        }
+
+        if (existing != null && !existing.id().equals(vault.getId())) {
+            logService.warn("refreshVaultMarker - " + vault.getRepoSlug()
+                    + " - path already marked by a different vault (id=" + existing.id()
+                    + ", repoSlug=" + existing.repoSlug() + ") - not overwriting, possible conflict");
+            return;
+        }
+
+        String now = DateFormats.nowLog();
+        VaultMarker marker = (existing == null)
+                ? VaultMarker.create(vault.getId(), vault.getRepoSlug(), catalogFile.getPath(), now)
+                : existing.withRefreshedTimestamp(now);
+
+        try {
+            // The .nomadsync-vault folder may not exist yet — this happens for a
+            // vault confirmed by load() that was never claimed via claimVaultPath()
+            // (e.g. registered by directly editing catalog.json, or migrated from
+            // before this feature existed). Without this, such a vault would fail
+            // silently on every single load() forever, never actually protected.
+            Files.createDirectories(descriptor.getParent());
+            JsonMapper.saveVaultMarkerToFile(descriptor.toFile(), marker);
+        } catch (IOException e) {
+            logService.warn("refreshVaultMarker - " + vault.getRepoSlug()
+                    + " - unable to write .nomadsync-vault marker: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Recursive helper for {@link #checkNoNestingConflict} — walks {@code dir}'s
+     * immediate subdirectories, then recurses, stopping once {@code depth}
+     * exceeds {@link #maxNestingDepth}. Depth 1 = direct children of the original
+     * candidate.
+     *
+     * <p>Two decisions are kept deliberately separate for each child found:</p>
+     * <ul>
+     *   <li><strong>Report</strong> — throw if the child is named
+     *       {@link MarkerType#VAULT}'s reserved folder, <em>except</em> at
+     *       {@code depth == 1}, where it would be the original candidate's own
+     *       (not-yet-claimed) marker slot — checking that is
+     *       {@link #claimVaultPath}'s job via its atomic
+     *       {@link Files#createDirectory}, not this pre-check's.</li>
+     *   <li><strong>Recurse</strong> — never descend into <em>any</em> reserved
+     *       marker folder (own or foreign, {@code VAULT} or a future type),
+     *       regardless of whether it was reported — its contents (a descriptor,
+     *       or a future nested backups folder) are never meaningful to scan
+     *       further.</li>
+     * </ul>
+     *
+     * @throws VaultException if a marker is found within range (beyond the
+     *                          candidate's own depth-1 slot), or if the
+     *                          directory tree cannot be read
+     */
+    private void scanDescendantsForMarker(Path dir, int depth) throws VaultException {
+        if (depth > maxNestingDepth) return;
+        try (DirectoryStream<Path> children = Files.newDirectoryStream(dir, Files::isDirectory)) {
+            for (Path child : children) {
+                String name = child.getFileName().toString();
+                boolean isVaultMarker = name.equals(MarkerType.VAULT.folderName());
+
+                if (isVaultMarker && depth > 1) {
+                    String holder = readHolderRepoSlugBestEffort(child);
+                    throw new VaultException("directory '" + child
+                            + "' is already claimed by vault '" + holder + "'");
+                }
+
+                if (isReservedMarkerFolderName(name)) continue;
+
+                scanDescendantsForMarker(child, depth + 1);
+            }
+        } catch (IOException e) {
+            throw new VaultException("Unable to scan for nested vault markers under " + dir, e);
+        }
+    }
+
+    /**
+     * True if {@code name} matches the reserved folder name of any
+     * {@link MarkerType} — not just {@link MarkerType#VAULT} — so a future
+     * {@code WORKSPACE}/{@code CONFIG}/etc. folder is also skipped during
+     * descent by {@link #scanDescendantsForMarker}, even though only
+     * {@code VAULT} is actively claimed/checked today.
+     *
+     * @param name a single path component (directory name) to test
+     * @return {@code true} if {@code name} is any reserved marker folder name
+     */
+    private static boolean isReservedMarkerFolderName(String name) {
+        return Arrays.stream(MarkerType.values()).anyMatch(t -> t.folderName().equals(name));
+    }
+
+    /**
+     * Resolves the reserved marker folder itself under {@code dir}, e.g.
+     * {@code <vaultDir>/.nomadsync-vault}.
+     *
+     * @param dir  the directory the marker folder belongs to
+     * @param type which kind of marker folder to resolve
+     * @return the marker folder's path — not guaranteed to exist
+     */
+    private static Path markerFolder(Path dir, MarkerType type) {
+        return dir.resolve(type.folderName());
+    }
+
+    /**
+     * Resolves the JSON descriptor file inside a marker folder, e.g.
+     * {@code <vaultDir>/.nomadsync-vault/descriptor.json}.
+     *
+     * @param dir  the directory the marker folder belongs to
+     * @param type which kind of marker folder to resolve
+     * @return the descriptor file's path — not guaranteed to exist
+     */
+    private static Path markerDescriptor(Path dir, MarkerType type) {
+        return markerFolder(dir, type).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+    }
+
+    /**
+     * Best-effort read of the {@code repoSlug} recorded in the descriptor inside
+     * {@code markerFolder} — used only to produce a human-readable "claimed by
+     * vault 'X'" message in exceptions. Never throws; an unreadable or missing
+     * descriptor yields a generic placeholder rather than failing the caller,
+     * which is always already in the process of reporting a different error.
+     *
+     * @param markerFolder the reserved marker folder to read from
+     * @return the holder's {@code repoSlug}, or {@code "an unknown vault"} if
+     *         the descriptor is missing or unreadable
+     */
+    private String readHolderRepoSlugBestEffort(Path markerFolder) {
+        try {
+            VaultMarker existing = JsonMapper.loadVaultMarkerFromFile(
+                    markerFolder.resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
+            return existing != null ? existing.repoSlug() : "an unknown vault";
+        } catch (IOException e) {
+            logService.warn("readHolderRepoSlugBestEffort - unable to read descriptor at "
+                    + markerFolder + ": " + e.getMessage());
+            return "an unknown vault";
+        }
     }
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -359,12 +559,12 @@ public class VaultService {
      * </ol>
      *
      * <p>Before persisting, the vault's path is atomically claimed via
-     * {@link #claimVaultPath(Vault)} — a {@code .vault} marker is written to the
-     * directory, first verifying (via {@link #checkNoNestingConflict}) that no
-     * ancestor or nearby descendant directory is already claimed by an unrelated
-     * vault, possibly from a different workspace never loaded in this session.
-     * A claim failure aborts the operation before any in-memory or on-disk
-     * registration state is touched.</p>
+     * {@link #claimVaultPath(Vault)} — a {@code .nomadsync-vault} marker folder is
+     * created in the directory, first verifying (via {@link #checkNoNestingConflict})
+     * that no ancestor or nearby descendant directory is already claimed by an
+     * unrelated vault, possibly from a different workspace never loaded in this
+     * session. A claim failure aborts the operation before any in-memory or
+     * on-disk registration state is touched.</p>
      *
      * @param owner GitHub account that owns the remote repository
      * @param name  remote repository name — combined with {@code owner} to form the
@@ -416,10 +616,11 @@ public class VaultService {
      *
      * <p>If the path actually changes, the new path is atomically claimed via
      * {@link #claimVaultPath(Vault)} (same nesting/collision checks as
-     * {@link #create}) <strong>before</strong> the old path's {@code .vault}
-     * marker is released via {@link #releaseVaultMarker}. Claim-then-release
-     * ordering ensures the old marker is never removed unless the new claim
-     * already succeeded. No path change means no claim/release activity at all.</p>
+     * {@link #create}) <strong>before</strong> the old path's
+     * {@code .nomadsync-vault} marker is released via {@link #releaseVaultMarker}.
+     * Claim-then-release ordering ensures the old marker is never removed unless
+     * the new claim already succeeded. No path change means no claim/release
+     * activity at all.</p>
      *
      * @param vault the vault to update
      * @throws IllegalArgumentException if {@code vault} or {@code vault.getId()} is {@code null}
@@ -473,10 +674,11 @@ public class VaultService {
     /**
      * Removes a vault by UUID from memory and persists.
      *
-     * <p>No-op if the id does not exist in memory. The vault's {@code .vault}
-     * marker, if any, is released via {@link #releaseVaultMarker} — best-effort,
-     * never fails the overall operation. The local directory and its contents
-     * are never touched — only the registration and its claim marker are removed.</p>
+     * <p>No-op if the id does not exist in memory. The vault's
+     * {@code .nomadsync-vault} marker, if any, is released via
+     * {@link #releaseVaultMarker} — best-effort, never fails the overall
+     * operation. The local directory and its contents are never touched — only
+     * the registration and its claim marker are removed.</p>
      *
      * <p>Logging: a single {@code INFO} line announces the operation at the start,
      * identifying the target by {@code repoSlug} when the id is currently registered,
@@ -795,106 +997,6 @@ public class VaultService {
                     StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             throw new VaultException("Could not save conflict: " + filename, e);
-        }
-    }
-
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    /**
-     * Validates that no two vaults in the given list share the same {@code repoSlug}.
-     *
-     * <p>Two vaults with the same {@code name} but different {@code owner}s —
-     * e.g. {@code "Alice/portfolio"} and {@code "Bob/portfolio"} —
-     * are distinct and explicitly allowed.</p>
-     *
-     * <p>Internal step of {@link #load()} — no log of its own; violations surface
-     * as a thrown exception, and {@code load()}'s own intro line already covers
-     * observability for this step.</p>
-     *
-     * @param loaded vaults freshly deserialised from {@code catalog.json}
-     * @throws VaultException if any {@code repoSlug} appears more than once
-     */
-    private void validateUniqueRepoSlugs(List<Vault> loaded) throws VaultException {
-        Set<String> seen = new HashSet<>();
-        for (Vault vault : loaded) {
-            if (!seen.add(vault.getRepoSlug())) {
-                throw new VaultIntegrityException(
-                        "duplicated repoSlug in catalog.json: " + vault.getRepoSlug());
-            }
-        }
-    }
-
-    /**
-     * Validates that no two vaults in the given list share the same local {@code path}.
-     *
-     * <p>Two orchestrators operating on the same local Git repository concurrently
-     * would produce undefined behaviour — this constraint prevents that scenario
-     * from being registered in the first place.</p>
-     *
-     * <p>Internal step of {@link #load()} — no log of its own; violations surface
-     * as a thrown exception, and {@code load()}'s own intro line already covers
-     * observability for this step.</p>
-     *
-     * @param loaded vaults freshly deserialised from {@code catalog.json}
-     * @throws VaultException if any {@code path} appears more than once
-     */
-    private void validateUniquePaths(List<Vault> loaded) throws VaultException {
-        Set<String> seen = new HashSet<>();
-        for (Vault vault : loaded) {
-            if (!seen.add(vault.getPath())) {
-                throw new VaultIntegrityException(
-                        "duplicated path in catalog.json: " + vault.getPath());
-            }
-        }
-    }
-
-
-    /**
-     * Best-effort removal of the {@code .vault} marker at {@code path} — never
-     * throws. Used when a vault's path changes ({@link #update}) or when a vault
-     * is removed ({@link #delete}): only the metadata marker is cleaned up, the
-     * physical directory and its contents are never touched, consistent with
-     * {@code vault remove}'s existing "registration only" contract.
-     *
-     * @param path the (former) vault path whose marker should be released
-     */
-    private void releaseVaultMarker(String path) {
-        Path markerPath = Path.of(path).resolve(".vault");
-        try {
-            boolean deleted = Files.deleteIfExists(markerPath);
-            if (deleted) {
-                logService.debug("releaseVaultMarker - removed marker at " + markerPath);
-            }
-        } catch (IOException e) {
-            logService.warn("releaseVaultMarker - unable to remove marker at " + markerPath + ": " + e.getMessage());
-        }
-    }
-
-    /**
-     * Recursive helper for {@link #checkNoNestingConflict} — walks {@code dir}'s
-     * immediate subdirectories, then recurses, stopping once {@code depth}
-     * exceeds {@link #maxNestingDepth}. Depth 1 = direct children of the original
-     * candidate; the candidate itself (depth 0) is never scanned by this method.
-     *
-     * @throws VaultException if a marker is found within range, or if the
-     *                          directory tree cannot be read
-     */
-    private void scanDescendantsForMarker(Path dir, int depth) throws VaultException {
-        if (depth > maxNestingDepth) return;
-        try (DirectoryStream<Path> children = Files.newDirectoryStream(dir, Files::isDirectory)) {
-            for (Path child : children) {
-                Path markerPath = child.resolve(".vault");
-                if (Files.exists(markerPath)) {
-                    VaultMarker marker = JsonMapper.loadVaultMarkerFromFile(markerPath.toFile());
-                    if (marker != null) {
-                        throw new VaultException("directory '" + child + "' is already claimed by vault '"
-                            + marker.repoSlug() + "'");
-                    }
-                }
-                scanDescendantsForMarker(child, depth + 1);
-            }
-        } catch (IOException e) {
-            throw new VaultException("Unable to scan for nested vault markers under " + dir, e);
         }
     }
 }
