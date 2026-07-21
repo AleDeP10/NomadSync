@@ -1,6 +1,7 @@
 package io.aledep10.nomadsync;
 
 import io.aledep10.nomadsync.exception.*;
+import io.aledep10.nomadsync.service.MarkerService;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.service.GitService;
@@ -115,7 +116,8 @@ class MainTest {
         properties = new Properties();
         Properties vaultProperties = TestUtil.forVaultService(testVault);
         GitignoreService gitignoreService = new GitignoreService(logService);
-        vaultService = new VaultService(vaultProperties, testVault.vaultPath(), gitignoreService, logService);
+        MarkerService markerService = new MarkerService(vaultProperties, logService);
+        vaultService = new VaultService(vaultProperties, testVault.vaultPath(), markerService, gitignoreService, logService);
 
         originalOut = System.out;
         originalErr = System.err;
@@ -1108,12 +1110,13 @@ class MainTest {
         @DisplayName("returns 1 when --vault is missing")
         void missingVaultFlag_returnsError() {
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    new LinkedHashMap<>(), List.of(), vaultService, gitService, logService);
+                    new LinkedHashMap<>(), List.of(), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
         }
@@ -1122,6 +1125,7 @@ class MainTest {
         @DisplayName("returns 1 when unknown flag is present")
         void unknownFlag_returnsError() {
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             Vault vault = new Vault("id", "owner", "name", createPath("current"));
 
@@ -1131,9 +1135,9 @@ class MainTest {
             flags.put("defaults", ""); // not in FLAGS_VAULT_RELOCATE
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
         }
@@ -1142,6 +1146,7 @@ class MainTest {
         @DisplayName("returns 1 when vault cannot be resolved")
         void vaultNotFound_returnsError() {
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
 
             Map<String, String> flags = new LinkedHashMap<>();
@@ -1149,9 +1154,9 @@ class MainTest {
             flags.put("owner", "neworg");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(), vaultService, gitService, logService);
+                    flags, List.of(), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
         }
@@ -1161,6 +1166,7 @@ class MainTest {
         void nothingRequested_returnsNoOp() throws Exception {
             Vault vault = new Vault("id", "owner", "name", TestUtil.absolute(createPath("current")));
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
 
             Map<String, String> flags = new LinkedHashMap<>();
@@ -1168,9 +1174,9 @@ class MainTest {
             // no owner/name/path, no git.* — nothing requested at all
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(2);
             verify(gitService, times(0)).reset(any());
@@ -1183,6 +1189,7 @@ class MainTest {
         void credentialOnlyChange_returnsError() throws Exception {
             Vault vault = new Vault("id", "owner", "name", TestUtil.absolute(createPath("current")));
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
 
             Map<String, String> flags = new LinkedHashMap<>();
@@ -1191,9 +1198,9 @@ class MainTest {
             flags.put("git.token", "new-token"); // credentials only
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
             verify(gitService, times(0)).reset(any());
@@ -1205,6 +1212,7 @@ class MainTest {
         void userDeclines_returnsNoOp() throws Exception {
             Vault vault = new Vault("id", "owner", "name", createPath("current"));
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             System.setIn(new ByteArrayInputStream("n\n".getBytes()));
 
@@ -1213,9 +1221,9 @@ class MainTest {
             flags.put("owner", "neworg");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(2);
             verify(gitService, times(0)).reset(any());
@@ -1229,6 +1237,7 @@ class MainTest {
             Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-force");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             doNothing().when(gitService).reset(any(Vault.class));
             doNothing().when(gitService).bootstrapVault(any(Vault.class));
@@ -1243,9 +1252,9 @@ class MainTest {
             flags.put("force", "");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(0);
             verify(gitService, times(1)).reset(vault);
@@ -1256,6 +1265,7 @@ class MainTest {
         void snapshotFails_returnsError() throws Exception {
             Vault vault = new Vault("id", "owner", "name", createPath("current"));
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             doThrow(new VaultException("snapshot failed"))
                     .when(vaultService).makeVaultSnapshot(any());
@@ -1266,9 +1276,9 @@ class MainTest {
             flags.put("force", "");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
             verify(gitService, times(0)).reset(any());
@@ -1279,6 +1289,7 @@ class MainTest {
         void gitResetFails_returnsError() throws Exception {
             Vault vault = new Vault("id", "owner", "name", createPath("current"));
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             doThrow(new GitException("reset failed")).when(gitService).reset(any(Vault.class));
 
@@ -1288,9 +1299,9 @@ class MainTest {
             flags.put("force", "");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
             verify(vaultService, times(0)).update(any());
@@ -1302,6 +1313,7 @@ class MainTest {
             Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-samepath");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             doNothing().when(gitService).reset(any(Vault.class));
             doNothing().when(gitService).bootstrapVault(any(Vault.class));
@@ -1313,9 +1325,9 @@ class MainTest {
             flags.put("force", "");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(0);
             // original directory must still exist — no move was requested
@@ -1334,6 +1346,7 @@ class MainTest {
 
             Vault vault = new Vault("id", "owner", "name", sourceDir.toString());
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             doNothing().when(gitService).reset(any(Vault.class));
             doNothing().when(gitService).bootstrapVault(any(Vault.class));
@@ -1345,9 +1358,9 @@ class MainTest {
             flags.put("force", "");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(0);
             assertThat(targetDir.resolve("note.md")).exists().hasContent("hello vault");
@@ -1360,6 +1373,7 @@ class MainTest {
             Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-update-fails");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             doNothing().when(gitService).reset(any(Vault.class));
             doThrow(new VaultException("persistence failed")).when(vaultService).update(any(Vault.class));
@@ -1370,9 +1384,9 @@ class MainTest {
             flags.put("force", "");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
             verify(gitService, times(0)).bootstrapVault(any());
@@ -1384,6 +1398,7 @@ class MainTest {
             Path tempDir = tempDirs.newDir("MainTest", "vault-relocate-bootstrap-fails");
             Vault vault = new Vault("id", "owner", "name", tempDir.toString());
             VaultService vaultService = mock(VaultService.class);
+            MarkerService markerService = mock(MarkerService.class);
             GitService gitService = mock(GitService.class);
             doNothing().when(gitService).reset(any(Vault.class));
             doNothing().when(vaultService).update(any(Vault.class));
@@ -1395,9 +1410,9 @@ class MainTest {
             flags.put("force", "");
 
             int result = (int) invoke("handleVaultRelocate",
-                    new Class<?>[]{Map.class, List.class, VaultService.class,
+                    new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
                             GitService.class, LogService.class},
-                    flags, List.of(vault), vaultService, gitService, logService);
+                    flags, List.of(vault), vaultService, markerService, gitService, logService);
 
             assertThat(result).isEqualTo(1);
         }

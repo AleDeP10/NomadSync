@@ -1,6 +1,6 @@
 package io.aledep10.nomadsync.util;
 
-import io.aledep10.nomadsync.vault.VaultMarker;
+import io.aledep10.nomadsync.marker.VaultMarker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

@@ -1,12 +1,12 @@
 package io.aledep10.nomadsync.service;
 
-import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.marker.MarkerType;
+import io.aledep10.nomadsync.marker.VaultMarker;
+import io.aledep10.nomadsync.marker.VaultMarkerStrategy;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
-import io.aledep10.nomadsync.vault.VaultMarker;
-import io.aledep10.nomadsync.marker.MarkerType;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -24,10 +24,22 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
  *
  * <h2>Architecture</h2>
  * <p>Every logical group of behaviour lives in its own {@code @Nested} class —
- * {@link LoadTests}, {@link MarkerRefreshTests}, {@link CheckNoNestingConflictTests},
- * {@link ClaimVaultPathTests}, {@link CreateTests}, {@link UpdateTests},
- * {@link DeleteTests}, the {@code find*} groups, and {@link MakeVaultSnapshotTests}.
- * No flat, ungrouped test methods remain at the top level.</p>
+ * {@link LoadTests}, {@link MarkerRefreshTests}, {@link CreateTests},
+ * {@link UpdateTests}, {@link DeleteTests}, the {@code find*} groups, and
+ * {@link MakeVaultSnapshotTests}. No flat, ungrouped test methods remain at
+ * the top level.</p>
+ *
+ * <h2>Marker responsibility moved to {@code MarkerServiceTest}</h2>
+ * <p>Nesting-conflict detection and atomic claim mechanics
+ * ({@code checkNoNestingConflict}/{@code claim}/{@code release}/{@code refresh})
+ * are now {@link MarkerService}'s responsibility, tested exhaustively in
+ * {@code MarkerServiceTest} — this file no longer has {@code CheckNoNestingConflictTests}
+ * or {@code ClaimVaultPathTests} nested classes. What remains here is narrower:
+ * verifying that {@link VaultService} builds the right {@link VaultMarker} and
+ * calls {@code markerService} correctly at the right points in {@code create}/
+ * {@code update}/{@code delete}/{@code load} — a real {@link MarkerService}
+ * (with a real {@link VaultMarkerStrategy} registered) is used throughout,
+ * not a mock, so these tests still exercise the full round-trip down to disk.</p>
  *
  * <h2>Two vaults, two purposes</h2>
  * <p>{@code sharedVault} (static, created once in {@code @BeforeAll}) exists
@@ -39,46 +51,22 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
  * <p>{@code testVault} (instance field, obtained fresh per test via the
  * injected {@link TempDirs#newVault}) provides {@code configDir}/
  * {@code catalogFile}/{@code backupsRoot}/{@code conflictsRoot} for
- * {@link #vaultService} — freshly isolated on every single test. This
- * distinction matters: {@code catalogFile}'s path is derived from
- * {@link TestVault#timestamp()}, fixed once per {@link TestVault} instance —
- * reusing one {@code TestVault} across tests would mean every test writes to
- * the <em>same</em> registry file, contaminating one test's vaults into the
- * next. A fresh {@code testVault} per test is what keeps each test's
- * {@code vaultService} state genuinely isolated.</p>
+ * {@link #vaultService} — freshly isolated on every single test, since
+ * {@code catalogFile}'s path is derived from {@link TestVault#timestamp()},
+ * fixed once per {@link TestVault} instance.</p>
  *
- * <h2>Two vault creation patterns — why both?</h2>
- * <p>{@code vaultService.create(owner, name, path)} tests the service end-to-end:
- * the service generates the UUID, persists, claims the {@code .nomadsync-vault}
- * marker folder, and returns the domain object. This is the normal case for CRUD
- * and query tests.</p>
- *
- * <p>{@code new Vault(UUID, owner, name, path)} + {@link JsonMapper#saveVaultsToFile}
- * is used only in {@link LoadTests} where the goal is to verify that the service
- * correctly reads a file written by a previous session — and in the one
- * {@link MarkerRefreshTests} case that specifically needs a vault with <em>no</em>
- * existing marker (see that test's own note: {@code create()} now claims its own
- * marker immediately, so it can no longer produce that starting state).</p>
- *
- * <h2>Real directories are now mandatory for {@code create()}/{@code update()}</h2>
- * <p>{@link VaultService#claimVaultPath} atomically reserves the {@code .nomadsync-vault}
+ * <h2>Real directories are mandatory for {@code create()}/{@code update()}</h2>
+ * <p>{@code MarkerService.claim} atomically reserves the {@code .nomadsync-vault}
  * marker folder via {@code Files.createDirectory} — this requires the target directory
- * to already exist on disk. Every test that calls {@code create()} or moves a
- * vault's path via {@code update()} therefore needs a real backing directory, not
- * a literal string like {@code "/some/path"} (which sufficed before the marker
- * feature existed). Use {@link #newVaultDir} for this — it creates a temp
+ * to already exist on disk. Use {@link #newVaultDir} for this — it creates a temp
  * directory via the injected {@link TempDirs} and registers it for conditional
- * cleanup: deleted automatically if the test passes, left on disk for inspection
- * if it fails.</p>
+ * cleanup.</p>
  *
  * <p>A handful of tests deliberately exercise CWD-relative path normalization by
  * passing a <em>relative</em> string straight to {@code create()}/{@code update()}.
- * Since the resolved absolute location must exist for the claim to succeed, these
- * use {@link #newRelativeVaultDir}, which creates the directory at the resolved
- * location (relative to the JVM's working directory — typically the project root
- * during a test run) and registers it via {@link TempDirs#registerDir} the same
- * way. This is a deliberate, contained trade-off to test real CWD-relative
- * resolution rather than mocking it away.</p>
+ * These use {@link #newRelativeVaultDir}, which creates the directory at the resolved
+ * location (relative to the JVM's working directory) and registers it via
+ * {@link TempDirs#registerDir} the same way.</p>
  *
  * <p>Tests in {@link LoadTests} that seed {@code catalog.json} directly via
  * {@link JsonMapper#saveVaultsToFile} (bypassing {@code create()} entirely) do
@@ -108,6 +96,7 @@ class VaultServiceTest {
 
     TestVault testVault;
     GitignoreService gitignoreService;
+    MarkerService markerService;
     VaultService vaultService;
 
     @BeforeAll
@@ -129,47 +118,54 @@ class VaultServiceTest {
         testVault = tempDirs.newVault("VaultServiceTest");
         gitignoreService = new GitignoreService(logService);
         Properties properties = TestUtil.forVaultService(testVault);
-        vaultService = new VaultService(properties, testVault.vaultPath(), gitignoreService, logService);
+        markerService = new MarkerService(properties, logService);
+        vaultService = new VaultService(properties, testVault.vaultPath(), markerService, gitignoreService, logService);
     }
 
     // No @AfterEach — testVault and every ad-hoc directory created via
-    // newVaultDir/newRelativeVaultDir are registered with the same injected
+    // newVaultDir/newRelativeVaultDir are registered with the injected
     // TempDirs and cleaned up together, conditionally, by TempDirCleanupExtension.
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /**
-     * Creates a fresh temp directory for a vault's content, registered with
-     * {@code tempDirs} for conditional cleanup — required for any test that
-     * calls {@code create()}/{@code update()} with a path that changes, since
-     * {@link VaultService#claimVaultPath} needs a real directory to claim.
-     */
     private Path newVaultDir(TempDirs tempDirs, String prefix) throws IOException {
         return tempDirs.newDir("VaultServiceTest", prefix);
     }
 
-    /**
-     * Creates a real directory at the CWD-resolved location of {@code relative}
-     * (via {@link TestUtil#absolute(String)}) and registers it with
-     * {@code tempDirs} — used only by tests that deliberately exercise
-     * CWD-relative path normalization by passing a relative string to
-     * {@code create()}/{@code update()}.
-     */
     private Path newRelativeVaultDir(TempDirs tempDirs, String relative) throws IOException {
         Path resolved = Path.of(TestUtil.absolute(relative));
+        Path topLevelCreated = topmostMissingAncestor(resolved);
         Files.createDirectories(resolved);
-        return tempDirs.registerDir(resolved);
+        return tempDirs.registerDir(topLevelCreated);
     }
 
     /**
-     * Builds an OS-native, non-existent path literal — valid only for tests that
-     * never call {@code create()}/{@code update()} on it (e.g. {@link LoadTests}
-     * seeding {@code catalog.json} directly, where no real directory is required).
+     * Walks up from {@code target} to find the highest ancestor that does not yet
+     * exist on disk — the exact directory {@link Files#createDirectories} is about
+     * to create as the top of its new chain. Registering this (not {@code target}
+     * itself) with {@link TempDirs} ensures cleanup removes the entire newly-created
+     * chain, not just its deepest leaf, when {@code target} has more than one
+     * missing segment (e.g. {@code "parent/child"} where neither exists yet).
      */
+    private Path topmostMissingAncestor(Path target) {
+        Path current = target;
+        Path highestMissing = target;
+        while (current != null && !Files.exists(current)) {
+            highestMissing = current;
+            current = current.getParent();
+        }
+        return highestMissing;
+    }
+
     static String createPath(String... parts) {
         final StringBuilder buf = new StringBuilder();
         Arrays.asList(parts).forEach(part -> buf.append(OsUtil.separator()).append(part));
         return buf.toString();
+    }
+
+    private VaultMarker readMarker(Path vaultContent) throws IOException {
+        Path descriptor = vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+        return (VaultMarker) new VaultMarkerStrategy().deserialize(Files.readString(descriptor));
     }
 
     // ── load() ────────────────────────────────────────────────────────────────
@@ -256,7 +252,7 @@ class VaultServiceTest {
         }
     }
 
-    // ── load() — vault marker refresh ────────────────────────────────────────
+    // ── load() — vault marker refresh (delegated to MarkerService) ───────────
 
     @Nested
     @DisplayName("load() - vault marker refresh")
@@ -264,7 +260,7 @@ class VaultServiceTest {
 
         @Test
         @DisplayName("writes a fresh marker for a vault with no existing marker — seeded directly "
-                + "into catalog.json, bypassing create()/claimVaultPath, since create() now claims "
+                + "into catalog.json, bypassing create()/claim, since create() now claims "
                 + "its own marker immediately and can no longer produce a genuinely markerless vault")
         void load_noExistingMarker_writesFreshMarker(TempDirs tempDirs) throws Exception {
             Path vaultContent = newVaultDir(tempDirs, "marker-fresh");
@@ -274,13 +270,12 @@ class VaultServiceTest {
 
             vaultService.load();
 
-            VaultMarker marker = JsonMapper.loadVaultMarkerFromFile(
-                    vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
+            VaultMarker marker = readMarker(vaultContent);
 
             assertThat(marker).isNotNull();
             assertThat(marker.id()).isEqualTo(vault.getId());
             assertThat(marker.repoSlug()).isEqualTo("Alice/marker-fresh");
-            assertThat(marker.jsonPath()).isEqualTo(vaultService.catalogFile.getPath());
+            assertThat(marker.catalogPath()).isEqualTo(vaultService.catalogFile.getPath());
             assertThat(marker.createdAt()).isEqualTo(marker.lastUpdate());
         }
 
@@ -289,51 +284,18 @@ class VaultServiceTest {
         void load_matchingMarker_refreshesTimestampPreservesCreatedAt(TempDirs tempDirs) throws Exception {
             Path vaultContent = newVaultDir(tempDirs, "marker-refresh");
             vaultService.create("Alice", "marker-refresh", vaultContent.toString());
-            // create() already claimed the marker — this first load() is already a
-            // "refresh" of an existing marker, not its creation.
             vaultService.load();
 
-            Path markerPath = vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
-            VaultMarker firstPass = JsonMapper.loadVaultMarkerFromFile(markerPath.toFile());
+            VaultMarker firstPass = readMarker(vaultContent);
 
             Thread.sleep(5);
             vaultService.load();
 
-            VaultMarker secondPass = JsonMapper.loadVaultMarkerFromFile(markerPath.toFile());
+            VaultMarker secondPass = readMarker(vaultContent);
 
             assertThat(secondPass.id()).isEqualTo(firstPass.id());
             assertThat(secondPass.createdAt()).isEqualTo(firstPass.createdAt());
             assertThat(secondPass.lastUpdate()).isNotNull();
-        }
-
-        @Test
-        @DisplayName("does not overwrite a marker that belongs to a different vault id — logs a conflict instead")
-        void load_conflictingMarkerFromDifferentVault_doesNotOverwrite(TempDirs tempDirs) throws Exception {
-            Path vaultContent = newVaultDir(tempDirs, "marker-conflict");
-            vaultService.create("Alice", "marker-conflict", vaultContent.toString());
-            Path markerPath = vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
-
-            VaultMarker foreign = VaultMarker.create("some-other-id", "Bob/unrelated",
-                    "/some/other/catalog.json", "2020-01-01T00:00:00");
-            JsonMapper.saveVaultMarkerToFile(markerPath.toFile(), foreign);
-
-            vaultService.load();
-
-            VaultMarker afterLoad = JsonMapper.loadVaultMarkerFromFile(markerPath.toFile());
-            assertThat(afterLoad).isEqualTo(foreign);
-        }
-
-        @Test
-        @DisplayName("does not throw when an existing marker file is corrupt, and load() still succeeds overall")
-        void load_corruptMarkerFile_doesNotThrowAndLoadStillSucceeds(TempDirs tempDirs) throws Exception {
-            Path vaultContent = newVaultDir(tempDirs, "marker-corrupt");
-            Vault vault = vaultService.create("Alice", "marker-corrupt", vaultContent.toString());
-            Path markerPath = vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
-            Files.writeString(markerPath, "{ this is not valid JSON");
-
-            List<Vault> loaded = vaultService.load();
-
-            assertThat(loaded.stream().anyMatch(v -> v.getId().equals(vault.getId()))).isTrue();
         }
 
         @Test
@@ -346,246 +308,13 @@ class VaultServiceTest {
 
             vaultService.load();
 
-            VaultMarker markerA = JsonMapper.loadVaultMarkerFromFile(
-                    vaultAContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
-            VaultMarker markerB = JsonMapper.loadVaultMarkerFromFile(
-                    vaultBContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
+            VaultMarker markerA = readMarker(vaultAContent);
+            VaultMarker markerB = readMarker(vaultBContent);
 
             assertThat(markerA.id()).isEqualTo(vaultA.getId());
             assertThat(markerB.id()).isEqualTo(vaultB.getId());
             assertThat(Files.exists(Path.of(vaultService.catalogFile.getPath())
-                    .resolveSibling(".nomadsync-vault"))).isFalse();
-        }
-    }
-
-    // ── checkNoNestingConflict() ─────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("checkNoNestingConflict")
-    class CheckNoNestingConflictTests {
-
-        private VaultService vaultServiceWithDepth(int depth) throws IOException {
-            Properties properties = TestUtil.forVaultService(testVault);
-            properties.setProperty(NomadProperties.Path.MAX_NESTING_DEPTH, String.valueOf(depth));
-            return new VaultService(properties, testVault.vaultPath(), gitignoreService, logService);
-        }
-
-        @Test
-        @DisplayName("does not throw when no marker exists anywhere near the candidate path")
-        void noMarkersAnywhere_doesNotThrow(TempDirs tempDirs) throws Exception {
-            Path candidate = newVaultDir(tempDirs, "nesting-none").resolve("brand-new-vault");
-
-            vaultService.checkNoNestingConflict(candidate.toString());
-            // no exception = pass
-        }
-
-        @Test
-        @DisplayName("does not require the candidate path to exist on disk")
-        void candidatePathDoesNotExist_stillDoesNotThrow(TempDirs tempDirs) throws Exception {
-            Path nonExistent = newVaultDir(tempDirs, "nesting-parent")
-                    .resolve("does-not-exist-yet").resolve("nested");
-
-            vaultService.checkNoNestingConflict(nonExistent.toString());
-            // no exception = pass
-        }
-
-        @Test
-        @DisplayName("throws when an ancestor directory carries a marker for a different vault")
-        void ancestorHasMarker_throws(TempDirs tempDirs) throws Exception {
-            Path parent = newVaultDir(tempDirs, "nesting-ancestor");
-            Files.createDirectories(parent.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(parent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("ancestor-id", "Alice/ancestor-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-            Path candidate = parent.resolve("child-vault");
-
-            assertThatThrownBy(() -> vaultService.checkNoNestingConflict(candidate.toString()))
-                    .isInstanceOf(VaultException.class);
-        }
-
-        @Test
-        @DisplayName("does not check the candidate path itself — only ancestors and descendants")
-        void candidateItselfMarked_isNotCheckedByNestingScan(TempDirs tempDirs) throws Exception {
-            Path candidate = newVaultDir(tempDirs, "nesting-self");
-            Files.createDirectories(candidate.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(candidate.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("self-id", "Alice/self-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-
-            vaultService.checkNoNestingConflict(candidate.toString());
-            // no exception = pass — the candidate's own marker is out of scope here
-        }
-
-        @Test
-        @DisplayName("throws when a descendant within the configured depth carries a marker")
-        void descendantWithinDepth_throws(TempDirs tempDirs) throws Exception {
-            VaultService gs = vaultServiceWithDepth(3);
-            Path candidate = newVaultDir(tempDirs, "nesting-descendant");
-            Path deepChild = candidate.resolve("level1").resolve("level2");
-            Files.createDirectories(deepChild);
-            Files.createDirectories(deepChild.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(deepChild.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("descendant-id", "Bob/descendant-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-
-            assertThatThrownBy(() -> gs.checkNoNestingConflict(candidate.toString()))
-                    .isInstanceOf(VaultException.class);
-        }
-
-        @Test
-        @DisplayName("does not throw when the marked descendant is beyond the configured depth")
-        void descendantBeyondDepth_doesNotThrow(TempDirs tempDirs) throws Exception {
-            VaultService gs = vaultServiceWithDepth(2);
-            Path candidate = newVaultDir(tempDirs, "nesting-toodeep");
-            Path tooDeep = candidate.resolve("level1").resolve("level2").resolve("level3");
-            Files.createDirectories(tooDeep);
-            Files.createDirectories(tooDeep.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(tooDeep.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("toodeep-id", "Bob/toodeep-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-
-            gs.checkNoNestingConflict(candidate.toString());
-            // no exception = pass — level3 marker is outside a depth-2 scan
-        }
-
-        @Test
-        @DisplayName("default depth (6, no property override) catches a marker exactly at level 6")
-        void defaultDepth_markerAtLevelSix_isCaught(TempDirs tempDirs) throws Exception {
-            Path candidate = newVaultDir(tempDirs, "nesting-default-6");
-            Path level5 = candidate;
-            for (int i = 1; i <= 5; i++) level5 = level5.resolve("level" + i);
-            Files.createDirectories(level5);
-            Files.createDirectories(level5.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(level5.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("level6-id", "Bob/level6-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-
-            assertThatThrownBy(() -> vaultService.checkNoNestingConflict(candidate.toString()))
-                    .isInstanceOf(VaultException.class);
-        }
-
-        @Test
-        @DisplayName("default depth (6, no property override) does not catch a marker at level 7")
-        void defaultDepth_markerAtLevelSeven_isNotCaught(TempDirs tempDirs) throws Exception {
-            Path candidate = newVaultDir(tempDirs, "nesting-default-7");
-            Path level7 = candidate;
-            for (int i = 1; i <= 7; i++) level7 = level7.resolve("level" + i);
-            Files.createDirectories(level7);
-            Files.createDirectories(level7.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(level7.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("level7-id", "Bob/level7-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-
-            vaultService.checkNoNestingConflict(candidate.toString());
-            // no exception = pass — level7 is beyond the default depth of 6
-        }
-    }
-
-    // ── claimVaultPath() ─────────────────────────────────────────────────────
-
-    /**
-     * Unit-tests {@code claimVaultPath} in isolation, against manually
-     * constructed {@link Vault} objects — <strong>not</strong> via
-     * {@code vaultService.create(...)}, which now calls {@code claimVaultPath}
-     * internally as part of its own flow. Routing these tests through
-     * {@code create()} would mean every claim attempt here fights against a
-     * marker {@code create()} already wrote a moment earlier. The wiring of
-     * {@code claimVaultPath} into {@code create()}/{@code update()} is verified
-     * separately, in {@link CreateTests} and {@link UpdateTests}.
-     */
-    @Nested
-    @DisplayName("claimVaultPath")
-    class ClaimVaultPathTests {
-
-        @Test
-        @DisplayName("writes a fresh marker when the path is unclaimed and has no nesting conflicts")
-        void freshPath_claimsSuccessfully(TempDirs tempDirs) throws Exception {
-            Path vaultContent = newVaultDir(tempDirs, "claim-fresh");
-            Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "claim-fresh",
-                    vaultContent.toString());
-
-            vaultService.claimVaultPath(vault);
-
-            VaultMarker marker = JsonMapper.loadVaultMarkerFromFile(
-                    vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
-            assertThat(marker).isNotNull();
-            assertThat(marker.id()).isEqualTo(vault.getId());
-            assertThat(marker.repoSlug()).isEqualTo("Alice/claim-fresh");
-            assertThat(marker.createdAt()).isEqualTo(marker.lastUpdate());
-        }
-
-        @Test
-        @DisplayName("throws and does not overwrite when the exact path is already claimed by another vault")
-        void exactPathAlreadyClaimed_throwsAndDoesNotOverwrite(TempDirs tempDirs) throws Exception {
-            Path vaultContent = newVaultDir(tempDirs, "claim-exact-conflict");
-            VaultMarker foreign = VaultMarker.create("foreign-id", "Bob/foreign-vault",
-                    "/some/other/catalog.json", "2020-01-01T00:00:00");
-            Files.createDirectories(vaultContent.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(), foreign);
-
-            Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "claim-exact-conflict",
-                    vaultContent.toString());
-
-            assertThatThrownBy(() -> vaultService.claimVaultPath(vault))
-                    .isInstanceOf(VaultException.class);
-
-            VaultMarker afterAttempt = JsonMapper.loadVaultMarkerFromFile(
-                    vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
-            assertThat(afterAttempt).isEqualTo(foreign);
-        }
-
-        @Test
-        @DisplayName("a second claim attempt on the same already-claimed-by-self path still fails "
-                + "— re-confirming an existing marker is load()'s job, not claim's")
-        void secondClaimOnOwnPath_alsoFails(TempDirs tempDirs) throws Exception {
-            Path vaultContent = newVaultDir(tempDirs, "claim-twice");
-            Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "claim-twice",
-                    vaultContent.toString());
-
-            vaultService.claimVaultPath(vault); // first claim — succeeds
-
-            assertThatThrownBy(() -> vaultService.claimVaultPath(vault))
-                    .isInstanceOf(VaultException.class);
-        }
-
-        @Test
-        @DisplayName("throws when an ancestor directory already carries a marker (delegates to checkNoNestingConflict)")
-        void ancestorConflict_throws(TempDirs tempDirs) throws Exception {
-            Path parent = newVaultDir(tempDirs, "claim-ancestor");
-            Files.createDirectories(parent.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(parent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("ancestor-id", "Bob/ancestor-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-            Path childContent = parent.resolve("child-vault");
-            Files.createDirectories(childContent);
-
-            Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "claim-ancestor-conflict",
-                    childContent.toString());
-
-            assertThatThrownBy(() -> vaultService.claimVaultPath(vault))
-                    .isInstanceOf(VaultException.class);
-
-            assertThat(Files.exists(childContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME))).isFalse();
-        }
-
-        @Test
-        @DisplayName("throws when a descendant within the configured depth already carries a marker")
-        void descendantConflict_throws(TempDirs tempDirs) throws Exception {
-            Path vaultContent = newVaultDir(tempDirs, "claim-descendant");
-            Path nested = vaultContent.resolve("sub").resolve("deeper");
-            Files.createDirectories(nested);
-            Files.createDirectories(nested.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(nested.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("nested-id", "Bob/nested-vault",
-                            "/some/catalog.json", "2026-01-01T00:00:00"));
-
-            Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "claim-descendant-conflict",
-                    vaultContent.toString());
-
-            assertThatThrownBy(() -> vaultService.claimVaultPath(vault))
-                    .isInstanceOf(VaultException.class);
-
-            assertThat(Files.exists(vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME))).isFalse();
+                    .resolveSibling(MarkerType.VAULT.folderName()))).isFalse();
         }
     }
 
@@ -663,10 +392,9 @@ class VaultServiceTest {
         @DisplayName("throws and does not register when the path is already claimed by another vault")
         void create_pathAlreadyClaimed_throwsAndDoesNotRegister(TempDirs tempDirs) throws Exception {
             Path content = newVaultDir(tempDirs, "create-already-claimed");
-            Files.createDirectories(content.resolve(MarkerType.VAULT.folderName()));
-            JsonMapper.saveVaultMarkerToFile(content.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile(),
-                    VaultMarker.create("foreign-id", "Bob/foreign",
-                            "/some/other/catalog.json", "2020-01-01T00:00:00"));
+            VaultMarker foreign = VaultMarker.create("foreign-id", "Bob/foreign",
+                    "/some/other/catalog.json", "2020-01-01T00:00:00");
+            markerService.claim(MarkerType.VAULT, content.toString(), foreign);
 
             assertThatThrownBy(() -> vaultService.create("Alice", "create-already-claimed", content.toString()))
                     .isInstanceOf(VaultException.class);
@@ -853,8 +581,8 @@ class VaultServiceTest {
             Vault moved = new Vault(vault.getId(), vault.getOwner(), vault.getName(), newContent.toString());
             vaultService.update(moved);
 
-            assertThat(Files.exists(oldContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME))).isFalse();
-            VaultMarker newMarker = JsonMapper.loadVaultMarkerFromFile(newContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
+            assertThat(Files.exists(oldContent.resolve(MarkerType.VAULT.folderName()))).isFalse();
+            VaultMarker newMarker = readMarker(newContent);
             assertThat(newMarker).isNotNull();
             assertThat(newMarker.id()).isEqualTo(vault.getId());
         }
@@ -864,12 +592,12 @@ class VaultServiceTest {
         void update_noPathChange_doesNotTouchMarkers(TempDirs tempDirs) throws Exception {
             Path content = newVaultDir(tempDirs, "update-no-claim");
             Vault vault = vaultService.create("Alice", "update-no-claim", content.toString());
-            VaultMarker beforeMarker = JsonMapper.loadVaultMarkerFromFile(content.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
+            VaultMarker beforeMarker = readMarker(content);
 
             Vault renamed = new Vault(vault.getId(), vault.getOwner(), "update-no-claim-renamed", vault.getPath());
             vaultService.update(renamed);
 
-            VaultMarker afterMarker = JsonMapper.loadVaultMarkerFromFile(content.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME).toFile());
+            VaultMarker afterMarker = readMarker(content);
             assertThat(afterMarker).isEqualTo(beforeMarker);
         }
     }
@@ -923,15 +651,15 @@ class VaultServiceTest {
         }
 
         @Test
-        @DisplayName("releases the vault's .vault marker, but leaves the physical directory untouched")
+        @DisplayName("releases the vault's marker, but leaves the physical directory untouched")
         void delete_releasesMarkerButNotDirectory(TempDirs tempDirs) throws Exception {
             Path content = newVaultDir(tempDirs, "delete-releases-marker");
             Vault vault = vaultService.create("Alice", "delete-releases-marker", content.toString());
-            assertThat(Files.exists(content.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME))).isTrue();
+            assertThat(Files.exists(content.resolve(MarkerType.VAULT.folderName()))).isTrue();
 
             vaultService.delete(vault.getId());
 
-            assertThat(Files.exists(content.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME))).isFalse();
+            assertThat(Files.exists(content.resolve(MarkerType.VAULT.folderName()))).isFalse();
             assertThat(Files.exists(content)).isTrue();
         }
     }
