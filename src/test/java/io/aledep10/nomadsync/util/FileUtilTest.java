@@ -1,10 +1,10 @@
 package io.aledep10.nomadsync.util;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,25 +17,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Unit tests for {@link FileUtil}.
  *
- * <p>Each test class uses an isolated temporary directory created in {@link #setUp}
- * and deleted in {@link #tearDown} — no shared mutable state between tests.</p>
+ * <p>Each test gets a fresh, isolated temp directory via {@link TempDirs}
+ * (injected by {@link TempDirCleanupExtension}) — no shared mutable state
+ * between tests, and no manual cleanup: a passing test's directory is deleted
+ * automatically; a failing test's is left on disk for inspection.</p>
  */
+@ExtendWith(TempDirCleanupExtension.class)
 @DisplayName("Unit tests for FileUtil")
 class FileUtilTest {
 
     private Path tempRoot;
 
     @BeforeEach
-    void setUp() throws IOException {
-        tempRoot = Files.createTempDirectory("FileUtilTest");
+    void setUp(TempDirs tempDirs) throws IOException {
+        tempRoot = tempDirs.newDir("FileUtilTest", "root");
     }
 
-    @AfterEach
-    void tearDown() throws IOException {
-        if (Files.exists(tempRoot)) {
-            FileUtil.deleteRecursively(tempRoot);
-        }
-    }
+    // No @AfterEach — TempDirCleanupExtension.testSuccessful() owns cleanup,
+    // conditionally on the test outcome. See its Javadoc for the rationale.
 
     // ── deleteRecursively ─────────────────────────────────────────────────────
 

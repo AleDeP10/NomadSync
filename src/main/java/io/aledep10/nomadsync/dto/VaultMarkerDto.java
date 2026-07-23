@@ -2,33 +2,36 @@ package io.aledep10.nomadsync.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.aledep10.nomadsync.vault.VaultMarker;
+import io.aledep10.nomadsync.marker.VaultMarker;
 
 /**
- * Jackson DTO for the {@code .vault} marker file.
+ * Jackson DTO for a {@link VaultMarker} descriptor file.
  */
-public record VaultMarkerDto(String id, String repoSlug, String jsonPath, String createdAt, String lastUpdate) {
+public record VaultMarkerDto(String id, String repoSlug, String catalogPath, String createdAt, String lastUpdate)
+        implements MarkerDto<VaultMarker> {
 
     @JsonCreator
     public VaultMarkerDto(
             @JsonProperty("id") String id,
             @JsonProperty("repoSlug") String repoSlug,
-            @JsonProperty("jsonPath") String jsonPath,
+            @JsonProperty("catalogPath") String catalogPath,
             @JsonProperty("createdAt") String createdAt,
             @JsonProperty("lastUpdate") String lastUpdate) {
         this.id = id;
         this.repoSlug = repoSlug;
-        this.jsonPath = jsonPath;
+        this.catalogPath = catalogPath;
         this.createdAt = createdAt;
         this.lastUpdate = lastUpdate;
     }
 
+    @Override
     public VaultMarker toDomain() {
-        return new VaultMarker(id, repoSlug, jsonPath, createdAt, lastUpdate);
+        return VaultMarker.create(id, repoSlug, catalogPath, createdAt)
+                .withRefreshedTimestamp(lastUpdate);
     }
 
     public static VaultMarkerDto fromDomain(VaultMarker marker) {
-        return new VaultMarkerDto(marker.id(), marker.repoSlug(), marker.jsonPath(),
+        return new VaultMarkerDto(marker.id(), marker.repoSlug(), marker.catalogPath(),
                 marker.createdAt(), marker.lastUpdate());
     }
 }

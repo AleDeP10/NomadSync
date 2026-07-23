@@ -1,14 +1,13 @@
 package io.aledep10.nomadsync.util;
 
-import io.aledep10.nomadsync.vault.VaultMarker;
-import org.junit.jupiter.api.AfterEach;
+import io.aledep10.nomadsync.marker.VaultMarker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
@@ -17,21 +16,25 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  * Unit tests for {@link JsonMapper} — scoped to the {@code .vault} marker
  * round-trip only. Broader coverage of vault list load/save is exercised
  * indirectly by {@code VaultServiceTest}.
+ *
+ * <p>Each test gets a fresh, isolated temp directory via {@link TempDirs}
+ * (injected by {@link TempDirCleanupExtension}) — no manual cleanup: a
+ * passing test's directory is deleted automatically; a failing test's is
+ * left on disk for inspection.</p>
  */
+@ExtendWith(TempDirCleanupExtension.class)
 @DisplayName("Unit tests for JsonMapper — vault marker")
 class JsonMapperTest {
 
     Path tempDir;
 
     @BeforeEach
-    void setUp() throws IOException {
-        tempDir = Files.createTempDirectory("nomadsync-jsonmapper-marker-test");
+    void setUp(TempDirs tempDirs) throws IOException {
+        tempDir = tempDirs.newDir("JsonMapperTest", "marker");
     }
 
-    @AfterEach
-    void tearDown() throws IOException {
-        FileUtil.deleteRecursively(tempDir);
-    }
+    // No @AfterEach — TempDirCleanupExtension.testSuccessful() owns cleanup,
+    // conditionally on the test outcome.
 
     @Test
     @DisplayName("loadVaultMarkerFromFile returns null when the file does not exist")

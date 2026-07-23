@@ -1,15 +1,14 @@
 package io.aledep10.nomadsync.util;
 
 import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.service.VaultService;
 
-import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Comparator;
 import java.util.Properties;
 
 /**
@@ -26,14 +25,25 @@ import java.util.Properties;
  * </pre>
  *
  * <h2>Directory layout</h2>
+ * <p>Every NomadSync test-generated temporary directory — whether from
+ * {@link #getTestVault(String)} or the lighter-weight {@link #testTempDir}
+ * (used for ad-hoc directories a test needs beyond its main
+ * {@link TestVault}, e.g. multiple vault-content folders in the same test
+ * method) — lives under the same root, {@code <java.io.tmpdir>/NomadSync_tests/},
+ * bucketed by test class name. This keeps filesystem-level troubleshooting
+ * tractable: everything NomadSync's test suite ever creates is discoverable
+ * from one place, never scattered flat alongside unrelated software's temp
+ * output.</p>
  * <pre>
- * {@code <java.io.tmpdir>/NomadSync/<testName>/<timestamp>/}
- *   vault/              ← vault working directory (git init here if needed)
- *   gitignore/          ← .gitignore test files
- *   logs/
- *     <testName>.log    ← log file path exposed via TestVault
- *   backup/             ← snapshot FIFO root
- *   conflict/           ← remote conflicts root
+ * {@code <java.io.tmpdir>/NomadSync_tests/}
+ *   {@code <testName>/<timestamp>/}     ← from getTestVault(testName)
+ *     vault/              ← vault working directory (git init here if needed)
+ *     gitignore/          ← .gitignore test files
+ *     logs/
+ *       {@code <testName>.log}    ← log file path exposed via TestVault
+ *     backups/            ← snapshot FIFO root
+ *     remote-conflicts/   ← remote conflicts root
+ *   {@code <testClassName>/<prefix>_<random>/}  ← from testTempDir(testClassName, prefix)
  * </pre>
  *
  * <h2>Timestamp uniqueness guarantee</h2>
@@ -43,11 +53,53 @@ import java.util.Properties;
  * would cause one test to silently share or overwrite another test's filesystem state.
  * The sleep is cheap (sub-millisecond on modern JVMs) and invisible to test duration.</p>
  *
+ * <p>{@link #testTempDir} uses a different, equally valid uniqueness mechanism —
+ * {@link Files#createTempDirectory}, whose random suffix is generated and checked
+ * atomically by the filesystem itself, suited to the bursty,
+ * multiple-calls-per-test-method pattern that ad-hoc directories need,
+ * as opposed to {@code getTestVault}'s single call per test class.</p>
+ *
  * <p>This class is not meant to be instantiated — all members are {@code static}.</p>
  */
 public final class TestUtil {
 
     private TestUtil() {}
+
+    /**
+     * Root folder name for ALL NomadSync test-generated temporary directories —
+     * shared by {@link #getTestVault} and {@link #testTempDir}, so every test
+     * class's output lands under one discoverable tree instead of two separate,
+     * inconsistently-named roots.
+     */
+    private static final String TEST_TEMP_ROOT_NAME = "NomadSync_tests";
+
+    /**
+     * Creates a fresh, uniquely-named temp directory for ad-hoc test needs
+     * beyond a test class's main {@link TestVault} — e.g. multiple independent
+     * vault-content folders within the same test method (nesting/marker tests).
+     *
+     * <p>Nests under the shared {@link #TEST_TEMP_ROOT_NAME} root, bucketed by
+     * {@code testClassName}, so ad-hoc directories land in the same
+     * discoverable tree as every {@link #getTestVault(String)}-created root —
+     * not a separate, inconsistently-named location.</p>
+     *
+     * <p>Uniqueness is guaranteed atomically by {@link Files#createTempDirectory},
+     * safe even under many rapid calls within the same test method (unlike a
+     * hand-rolled timestamp, which would need its own collision-avoidance logic
+     * for that usage pattern).</p>
+     *
+     * @param testClassName the test class requesting the directory — used as
+     *                      the bucket subdirectory, e.g. {@code "VaultService"}
+     * @param prefix        short, descriptive prefix for the leaf directory
+     *                      name, e.g. {@code "claim-ancestor"}
+     * @return the newly created, guaranteed-unique directory
+     * @throws IOException if the directory cannot be created
+     */
+    public static Path testTempDir(String testClassName, String prefix) throws IOException {
+        Path base = Path.of(TestConstants.TMP_DIR, TEST_TEMP_ROOT_NAME, testClassName);
+        Files.createDirectories(base);
+        return Files.createTempDirectory(base, prefix + "_");
+    }
 
     // ── TestVault factory ─────────────────────────────────────────────────────
 
@@ -75,15 +127,15 @@ public final class TestUtil {
 
         String timestamp = LocalDateTime.now()
                 .format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS"));
-        Path rootPath = Path.of(TestConstants.TMP_DIR, TestConstants.APP_PREFIX,
+        Path rootPath = Path.of(TestConstants.TMP_DIR, TEST_TEMP_ROOT_NAME,
                 testName, timestamp);
 
         Path vaultPath     = rootPath.resolve("vault");
         Path gitignorePath = vaultPath.resolve(".gitignore");
         Path logsPath      = rootPath.resolve("logs");
         Path logFilePath   = logsPath.resolve(testName + ".log");
-        Path backupPath    = rootPath.resolve("backups");
-        Path conflictsPath = rootPath.resolve("remote-conflicts");
+        Path backupPath    = rootPath.resolve(VaultService.BACKUPS_FOLDER_NAME);
+        Path conflictsPath = rootPath.resolve(VaultService.CONFLICTS_FOLDER_NAME);
 
         Files.createDirectories(vaultPath);
         Files.createDirectories(logsPath);
@@ -140,16 +192,18 @@ public final class TestUtil {
      * this file name is unique across all test runs in the same JVM session.</p>
      *
      * <p>The file is not created by this method — {@code VaultService} creates it
-     * on the first {@code save()} call.</p>
+     * on the first {@code save()} call. The root directory itself is (re)created
+     * here defensively — a harmless no-op given {@link #getTestVault(String)}
+     * already creates it, but keeps this factory correct even if called against
+     * a {@link TestVault} whose root was cleaned up in between.</p>
      *
      * @param vault the test environment providing the root path and timestamp
      * @return configured {@link Properties} ready for {@code VaultService} construction
      */
     public static Properties forVaultService(TestVault vault) throws IOException {
-        Files.createDirectories(vault.rootPath()); // ← garantisce che la root esista
+        Files.createDirectories(vault.rootPath());
         Properties properties = new Properties();
-        properties.setProperty("path.catalog",
-                vault.rootPath().resolve("vaults_" + vault.timestamp() + ".json").toString());
+        properties.setProperty("path.catalog", "vaults_" + vault.timestamp() + ".json");
         return properties;
     }
 
