@@ -9,12 +9,9 @@ import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEvent;
 import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
 import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
+import io.aledep10.nomadsync.service.*;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
-import io.aledep10.nomadsync.service.GitService;
-import io.aledep10.nomadsync.service.GitignoreService;
-import io.aledep10.nomadsync.service.LogService;
-import io.aledep10.nomadsync.service.VaultService;
 import io.aledep10.nomadsync.util.FileUtil;
 import io.aledep10.nomadsync.util.OsUtil;
 import io.aledep10.nomadsync.util.PropertiesUtil;
@@ -146,7 +143,14 @@ public class Main {
         // ── 3. Bootstrap shared dependencies ──────────────────────────────────
         LogService       logService       = new LogService(properties, configDir);
         GitignoreService gitignoreService = new GitignoreService(logService);
-        VaultService     vaultService     = new VaultService(properties, configDir, gitignoreService, logService);
+        MarkerService    markerService    = new MarkerService(properties, logService);
+        VaultService     vaultService     = null;
+        try {
+            vaultService = new VaultService(properties, configDir, markerService, gitignoreService, logService);
+        } catch (VaultException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+        }
         GitService       gitService       = new GitService(properties, vaultService, gitignoreService, logService);
         NotificationHook hook             = new LogNotificationHook(logService);
 
@@ -162,7 +166,7 @@ public class Main {
                 case "add"      -> handleVaultAdd(flags, vaults, vaultService, gitService, logService);
                 case "update"   -> handleVaultUpdate(flags, vaults, vaultService, gitService, logService);
                 case "remove"   -> handleVaultRemove(flags, vaults, vaultService, logService);
-                case "relocate" -> handleVaultRelocate(flags, vaults, vaultService, gitService, logService);
+                case "relocate" -> handleVaultRelocate(flags, vaults, vaultService, markerService, gitService, logService);
                 case "list"     -> handleVaultList(flags, vaults, logService);
                 case "show"     -> {
                     int maxLines = Integer.parseInt(flags.getOrDefault("maxLines", "5"));
@@ -1346,7 +1350,7 @@ public class Main {
      *
      * <h2>Nesting pre-check</h2>
      * <p>If {@code --path} differs from the vault's current path, {@link
-     * VaultService#checkNoNestingConflict} is consulted <strong>before</strong> the
+     * MarkerService#checkNoNestingConflict} is consulted <strong>before</strong> the
      * confirmation prompt (and before {@code --force} can bypass it) — a
      * destination that is nested inside, or would contain, another vault's already
      * claimed directory aborts the operation immediately, before
@@ -1406,11 +1410,12 @@ public class Main {
      *       {@code vault update} instead.</li>
      * </ul>
      *
-     * @param flags        parsed CLI flags
-     * @param vaults       the list of registered vaults
-     * @param vaultService vault persistence service
-     * @param gitService   Git operations service
-     * @param logService   shared logging service
+     * @param flags         parsed CLI flags
+     * @param vaults        the list of registered vaults
+     * @param vaultService  vault persistence service
+     * @param markerService marker claim/release service
+     * @param gitService    Git operations service
+     * @param logService    shared logging service
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
      *         vault not resolved, credential-only request with no structural
      *         change, snapshot/reset/copy/update/bootstrap failure); {@code 2}
@@ -1419,6 +1424,7 @@ public class Main {
      */
     private static int handleVaultRelocate(Map<String, String> flags, List<Vault> vaults,
                                            VaultService vaultService,
+                                           MarkerService markerService,
                                            GitService gitService,
                                            LogService logService) {
 
@@ -1463,8 +1469,8 @@ public class Main {
 
         if (!newPath.equals(vault.getPath())) {
             try {
-                vaultService.checkNoNestingConflict(newPath);
-            } catch (VaultException e) {
+                markerService.checkNoNestingConflict(newPath);
+            } catch (MarkerClaimException e) {
                 logService.error("handleVaultRelocate - " + e.getMessage());
                 return 1;
             }

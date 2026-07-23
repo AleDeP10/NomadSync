@@ -72,38 +72,26 @@ public final class PropertiesUtil {
     }
 
     /**
-     * Resolves a {@code path.*}/{@code log.*} property from {@code config.properties}
-     * against the directory containing the {@code config.properties} file actually
-     * in use — not the process's working directory.
+     * Resolves a {@code path.*}/{@code log.*} property value (or its default, if
+     * absent/blank) against {@code configDir}, logging the outcome at
+     * {@code DEBUG} whenever resolution actually did something worth knowing —
+     * a defaulted value, or an explicit value that was relative.
      *
-     * <p>Covers both cases uniformly: the key absent (falls back to
-     * {@code defaultRelative}) and the key present with a relative value. An
-     * already-absolute value (explicit or defaulted) is returned unchanged. Every
-     * resolution involving a relative value is logged at {@code DEBUG} — never silent.</p>
-     *
-     * @param properties      loaded application properties
+     * @param properties      application properties
      * @param key             the property key to resolve (e.g. {@code path.catalog})
-     * @param defaultRelative fallback value, itself resolved against {@code configDir}
-     *                        if relative, used only when {@code key} is absent
-     * @param configDir       directory containing the {@code config.properties} in use
-     * @param logService      shared logging service
+     * @param defaultRelative fallback value (relative to {@code configDir}) used
+     *                        when {@code key} is absent or blank
+     * @param configDir       directory containing the {@code config.properties}
+     *                        file in use — base for resolving a relative value
+     * @param logService      logger for the resolution outcome
      * @return the resolved, absolute {@link Path}
      */
     public static Path resolvePath(Properties properties, String key, String defaultRelative,
                                    Path configDir, LogService logService) {
         String explicit = properties.getProperty(key);
-        boolean isDefaulted = explicit == null || explicit.isBlank();
+        boolean isDefaulted = StringUtil.isBlank(explicit);
         String raw = isDefaulted ? defaultRelative : explicit;
-
-        Path path = Path.of(raw);
-        Path resolved = path.isAbsolute() ? path : configDir.resolve(path).normalize();
-
-        if (isDefaulted) {
-            logService.debug(key + " not set, defaulting to " + resolved);
-        } else if (!path.isAbsolute()) {
-            logService.debug(key + "='" + raw + "' is relative - resolved to " + resolved);
-        }
-        return resolved;
+        return resolveAndLog(key, configDir, logService, isDefaulted, raw);
     }
 
     /**
@@ -122,8 +110,64 @@ public final class PropertiesUtil {
     public static Path resolvePath(Properties properties, String key,
                                    String defaultRelative, Path configDir) {
         String explicit = properties.getProperty(key);
-        boolean isDefaulted = explicit == null || explicit.isBlank();
+        boolean isDefaulted = StringUtil.isBlank(explicit);
         Path path = Path.of(isDefaulted ? defaultRelative : explicit);
         return path.isAbsolute() ? path : configDir.resolve(path).normalize();
+    }
+
+    /**
+     * Resolves a {@code path.*} property value that must name a file directly
+     * inside {@code configDir} — never a path with its own directory segments.
+     *
+     * <p>Used specifically for {@code path.catalog} when the workspace is fused
+     * (config, catalog, and descriptor as siblings under {@code .nomadsync-workspace/}):
+     * constraining the value to a bare filename makes it structurally impossible
+     * to point at a different workspace's catalog — rejected outright by this
+     * check, rather than relying on a runtime scan of every other known
+     * workspace. See {@code NomadSync-VLT-011}.</p>
+     *
+     * <p>Deliberately generic — {@link PropertiesUtil} has no knowledge of the
+     * marker/vault domain, so it throws a plain {@link IllegalArgumentException}.
+     * Callers are responsible for catching it and wrapping it into whichever
+     * domain exception fits their own contract (e.g. {@code VaultException} in
+     * {@code VaultService}) — never let this checked-agnostic exception leak
+     * past a domain boundary unwrapped.</p>
+     *
+     * @throws IllegalArgumentException if the resolved raw value contains a path
+     *          separator ({@code /} or {@code \}), is exactly {@code "."}/{@code ".."},
+     *          or is itself an absolute path — none of which are a bare filename
+     */
+    public static Path resolveBareFilename(Properties properties, String key, String defaultRelative,
+                                           Path configDir, LogService logService) {
+        String explicit = properties.getProperty(key);
+        boolean isDefaulted = StringUtil.isBlank(explicit);
+        String raw = isDefaulted ? defaultRelative : explicit;
+
+        boolean hasSeparator = raw.contains("/") || raw.contains("\\");
+        boolean isDotOrDotDot = raw.equals(".") || raw.equals("..");
+        boolean isAbsolute = Path.of(raw).isAbsolute();
+        if (hasSeparator || isDotOrDotDot || isAbsolute) {
+            throw new IllegalArgumentException("expected a bare file name, got '" + raw + "'");
+        }
+
+        return resolveAndLog(key, configDir, logService, isDefaulted, raw);
+    }
+
+    /**
+     * Shared resolution + logging logic for {@link #resolvePath(Properties, String, String, Path, LogService)}
+     * and {@link #resolveBareFilename(Properties, String, String, Path, LogService)} —
+     * both resolve {@code raw} against {@code configDir} identically, differing
+     * only in what validation (if any) runs on {@code raw} before reaching here.
+     */
+    private static Path resolveAndLog(String key, Path configDir, LogService logService,
+                                      boolean isDefaulted, String raw) {
+        Path path = Path.of(raw);
+        Path resolved = path.isAbsolute() ? path : configDir.resolve(path).normalize();
+        if (isDefaulted) {
+            logService.debug(key + " not set, defaulting to " + resolved);
+        } else if (!path.isAbsolute()) {
+            logService.debug(key + "='" + raw + "' is relative - resolved to " + resolved);
+        }
+        return resolved;
     }
 }

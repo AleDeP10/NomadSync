@@ -1,0 +1,73 @@
+package io.aledep10.nomadsync.marker;
+
+import io.aledep10.nomadsync.util.DateFormats;
+
+import java.util.UUID;
+
+/**
+ * Marker confirming that a given filesystem directory is claimed by a specific
+ * registered vault, identified by its stable {@code id} (not {@code repoSlug},
+ * which can change via {@code vault update}/{@code relocate}).
+ */
+public final class VaultMarker extends Marker {
+
+    private final String repoSlug;
+    private final String catalogPath;
+
+    private VaultMarker(String id, String repoSlug, String catalogPath,
+                         String createdAt, String lastUpdate) {
+        super(id, MarkerType.VAULT, createdAt, lastUpdate);
+        this.repoSlug = repoSlug;
+        this.catalogPath = catalogPath;
+    }
+
+    /**
+     * Creates a brand-new marker with an explicit id and timestamp —
+     * {@code createdAt} and {@code lastUpdate} start equal.
+     *
+     * <p>Preferred form for tests: fully deterministic, no dependency on
+     * {@link UUID#randomUUID()} or the system clock.</p>
+     */
+    public static VaultMarker create(String id, String repoSlug, String catalogPath, String now) {
+        return new VaultMarker(id, repoSlug, catalogPath, now, now);
+    }
+
+    /**
+     * Creates a brand-new marker with a freshly generated {@code id} and the
+     * current timestamp — convenience for production call sites that don't
+     * need control over either. Not deterministic: never use in tests.
+     */
+    public static VaultMarker create(String repoSlug, String catalogPath) {
+        return create(UUID.randomUUID().toString(), repoSlug, catalogPath, DateFormats.nowLog());
+    }
+
+    /**
+     * Creates a brand-new marker with a freshly generated {@code id} but an
+     * explicit timestamp — for tests that want a deterministic timestamp
+     * without caring about the specific {@code id} value.
+     */
+    static VaultMarker create(String repoSlug, String catalogPath, String now) {
+        return create(UUID.randomUUID().toString(), repoSlug, catalogPath, now);
+    }
+
+    public String repoSlug() { return repoSlug; }
+    public String catalogPath() { return catalogPath; }
+
+    @Override
+    public String localName() {
+        return repoSlug;
+    }
+
+    /**
+     * Returns a copy with {@code lastUpdate} refreshed — {@code createdAt} is preserved.
+     */
+    @Override
+    public VaultMarker withRefreshedTimestamp(String now) {
+        return new VaultMarker(id(), repoSlug, catalogPath, createdAt(), now);
+    }
+
+    @Override
+    protected String typeSpecificFieldsForDebug() {
+        return "repoSlug=" + repoSlug + ", catalogPath=" + catalogPath;
+    }
+}
