@@ -54,7 +54,7 @@ public final class VaultMarker extends Marker {
     public String catalogPath() { return catalogPath; }
 
     @Override
-    public String name() {
+    public String localName() {
         return repoSlug;
     }
 

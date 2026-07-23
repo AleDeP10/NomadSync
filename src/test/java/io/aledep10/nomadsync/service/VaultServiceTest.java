@@ -114,7 +114,7 @@ class VaultServiceTest {
     }
 
     @BeforeEach
-    void setUp(TempDirs tempDirs) throws IOException {
+    void setUp(TempDirs tempDirs) throws IOException, VaultException {
         testVault = tempDirs.newVault("VaultServiceTest");
         gitignoreService = new GitignoreService(logService);
         Properties properties = TestUtil.forVaultService(testVault);
@@ -803,7 +803,7 @@ class VaultServiceTest {
 
             vaultService.makeVaultSnapshot(vaultA);
 
-            Path backupsRoot = testVault.vaultPath().resolve("backups");
+            Path backupsRoot = testVault.vaultPath().resolve(VaultService.BACKUPS_FOLDER_NAME);
             try (var stream = Files.list(backupsRoot)) {
                 assertThat(stream.anyMatch(p -> p.getFileName().toString()
                         .startsWith("Alice_snapshot-naming_"))).isTrue();
@@ -823,7 +823,7 @@ class VaultServiceTest {
             vaultService.makeVaultSnapshot(vaultAlice);
             vaultService.makeVaultSnapshot(vaultBob);
 
-            Path backupsRoot = testVault.vaultPath().resolve("backups");
+            Path backupsRoot = testVault.vaultPath().resolve(VaultService.BACKUPS_FOLDER_NAME);
             try (var stream = Files.list(backupsRoot)) {
                 List<String> names = stream.map(p -> p.getFileName().toString()).toList();
                 assertThat(names.stream().anyMatch(n -> n.startsWith("Alice_shared-vault-name_"))).isTrue();

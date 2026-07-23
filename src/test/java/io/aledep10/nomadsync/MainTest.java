@@ -111,7 +111,7 @@ class MainTest {
     }
 
     @BeforeEach
-    void setUp(TempDirs tempDirs) throws IOException {
+    void setUp(TempDirs tempDirs) throws IOException, VaultException {
         testVault = tempDirs.newVault("MainTest");
         properties = new Properties();
         Properties vaultProperties = TestUtil.forVaultService(testVault);

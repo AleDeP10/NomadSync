@@ -37,8 +37,7 @@ package io.aledep10.nomadsync.config;
  *
  * # ── Paths ────────────────────────────────────────────────────────────────────
  * path.catalog=./catalog.json
- * path.backups=./backup
- * path.conflicts=./remote_conflicts
+ * path.maxNestingDepth=6
  *
  * # ── Logging ──────────────────────────────────────────────────────────────────
  * log.writers=console,file,seq
@@ -150,20 +149,6 @@ public final class NomadProperties {
          * <br>Default: {@code "./catalog.json"}.
          */
         public static final String CATALOG = "path.catalog";
-
-        /**
-         * Root directory for FIFO vault snapshots created before conflict resolution.
-         * <br>Default: {@code "./backups"} (relative to working directory).
-         * <br>Each vault snapshot is named {@code <owner>_<name>_<timestamp>/}.
-         */
-        public static final String BACKUPS = "path.backups";
-
-        /**
-         * Root directory for remote conflict files saved during {@code SYNCHRONIZE}.
-         * <br>Default: {@code "./remote-conflicts"} (relative to working directory).
-         * <br>Each conflict session is named {@code <owner>_<name>_<timestamp>/}.
-         */
-        public static final String CONFLICTS = "path.conflicts";
 
         /**
          * Maximum directory depth scanned downward from a candidate vault path when

@@ -1,6 +1,7 @@
 package io.aledep10.nomadsync.util;
 
 import io.aledep10.nomadsync.logging.LogLevel;
+import io.aledep10.nomadsync.service.VaultService;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -133,8 +134,8 @@ public final class TestUtil {
         Path gitignorePath = vaultPath.resolve(".gitignore");
         Path logsPath      = rootPath.resolve("logs");
         Path logFilePath   = logsPath.resolve(testName + ".log");
-        Path backupPath    = rootPath.resolve("backups");
-        Path conflictsPath = rootPath.resolve("remote-conflicts");
+        Path backupPath    = rootPath.resolve(VaultService.BACKUPS_FOLDER_NAME);
+        Path conflictsPath = rootPath.resolve(VaultService.CONFLICTS_FOLDER_NAME);
 
         Files.createDirectories(vaultPath);
         Files.createDirectories(logsPath);
@@ -202,8 +203,7 @@ public final class TestUtil {
     public static Properties forVaultService(TestVault vault) throws IOException {
         Files.createDirectories(vault.rootPath());
         Properties properties = new Properties();
-        properties.setProperty("path.catalog",
-                vault.rootPath().resolve("vaults_" + vault.timestamp() + ".json").toString());
+        properties.setProperty("path.catalog", "vaults_" + vault.timestamp() + ".json");
         return properties;
     }
 

@@ -144,7 +144,13 @@ public class Main {
         LogService       logService       = new LogService(properties, configDir);
         GitignoreService gitignoreService = new GitignoreService(logService);
         MarkerService    markerService    = new MarkerService(properties, logService);
-        VaultService     vaultService     = new VaultService(properties, configDir, markerService, gitignoreService, logService);
+        VaultService     vaultService     = null;
+        try {
+            vaultService = new VaultService(properties, configDir, markerService, gitignoreService, logService);
+        } catch (VaultException e) {
+            System.err.println(e.getMessage());
+            System.exit(1);
+        }
         GitService       gitService       = new GitService(properties, vaultService, gitignoreService, logService);
         NotificationHook hook             = new LogNotificationHook(logService);
 

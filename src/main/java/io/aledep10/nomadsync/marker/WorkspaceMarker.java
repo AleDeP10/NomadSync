@@ -8,11 +8,6 @@ import java.util.UUID;
  * Marker confirming that a given filesystem directory is claimed as a
  * workspace's home — the folder containing an adjacent
  * {@code config.properties}/{@code catalog.json} pair.
- *
- * <p>Scope limited to the two-marker system ({@link MarkerType#VAULT} +
- * {@link MarkerType#WORKSPACE}) — no {@code config}/{@code catalog}
- * incorporation fields yet; those arrive once {@link MarkerType#CONFIG}/
- * {@link MarkerType#CATALOG} exist as real types.</p>
  */
 public final class WorkspaceMarker extends Marker {
 
@@ -55,7 +50,7 @@ public final class WorkspaceMarker extends Marker {
     public String workspaceName() { return workspaceName; }
 
     @Override
-    public String name() {
+    public String localName() {
         return workspaceName;
     }
 

@@ -34,7 +34,10 @@ public abstract class Marker {
      * Human-readable identity label for this marker — used in conflict messages
      * (e.g. {@code MarkerTypeStrategy#describeConflict}). Never {@code null}.
      */
-    public abstract String name();
+    public final String name() {
+        return type().code() + ":" + localName();
+    }
+    protected abstract String localName();
 
     /**
      * Extra fields specific to this marker's type, for {@link #toString()} debug
@@ -69,11 +72,9 @@ public abstract class Marker {
 
     @Override
     public String toString() {
-        String result = type.name() + ":" + name();
+        String result = name();
         String extra = typeSpecificFieldsForDebug();
-        if (!extra.isEmpty()) {
-            result += "\n" + extra;
-        }
+        if (!extra.isEmpty()) result += "\n" + extra;
         return result;
     }
 }

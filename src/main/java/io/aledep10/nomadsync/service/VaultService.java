@@ -89,6 +89,9 @@ import java.util.stream.Stream;
  */
 public class VaultService {
 
+    public static final String BACKUPS_FOLDER_NAME = "backups";
+    public static final String CONFLICTS_FOLDER_NAME = "remote-conflicts";
+
     /** Package-private for test assertions on file existence. */
     final File catalogFile;
 
@@ -127,17 +130,19 @@ public class VaultService {
     public VaultService(Properties properties, Path configDir,
                         MarkerService markerService,
                         GitignoreService gitignoreService,
-                        LogService logService) {
-        this.catalogFile = PropertiesUtil.resolvePath(properties, NomadProperties.Path.CATALOG,
-                "catalog.json", configDir, logService).toFile();
+                        LogService logService) throws VaultException {
+        try {
+            this.catalogFile = PropertiesUtil.resolveBareFilename(properties, NomadProperties.Path.CATALOG,
+                    "catalog.json", configDir, logService).toFile();
+        } catch (IllegalArgumentException e) {
+            throw new VaultException("Invalid catalog file: " + e.getMessage(), e);
+        }
         this.markerService     = markerService;
         this.gitignoreService  = gitignoreService;
         this.logService        = logService;
 
-        this.backupsRoot = PropertiesUtil.resolvePath(properties, NomadProperties.Path.BACKUPS,
-                "backups", configDir, logService);
-        this.conflictsRoot = PropertiesUtil.resolvePath(properties, NomadProperties.Path.CONFLICTS,
-                "remote-conflicts", configDir, logService);
+        this.backupsRoot = configDir.resolve(BACKUPS_FOLDER_NAME);
+        this.conflictsRoot = configDir.resolve(CONFLICTS_FOLDER_NAME);
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
