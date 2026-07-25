@@ -68,13 +68,13 @@ class MarkerServiceTest {
     @BeforeEach
     void setUp() {
         Properties properties = new Properties();
-        properties.setProperty("path.maxNestingDepth", "6");
+        properties.setProperty("marker.maxNestingDepth", "6");
         markerService = new MarkerService(properties, logService);
     }
 
     /**
      * Builds a throwaway {@link MarkerService} configured with a non-default
-     * {@code path.maxNestingDepth} — used <strong>only</strong> by
+     * {@code marker.maxNestingDepth} — used <strong>only</strong> by
      * {@link CheckNoNestingConflictTests#defaultOverload_usesConfiguredDepth},
      * to prove the no-argument {@code checkNoNestingConflict(String)} overload
      * genuinely reads its default from the constructor rather than coincidentally
@@ -88,7 +88,7 @@ class MarkerServiceTest {
      */
     private MarkerService markerServiceConfiguredWithNonDefaultDepth(int maxNestingDepth) {
         Properties properties = new Properties();
-        properties.setProperty("path.maxNestingDepth", String.valueOf(maxNestingDepth));
+        properties.setProperty("marker.maxNestingDepth", String.valueOf(maxNestingDepth));
         return new MarkerService(properties, logService);
     }
 

@@ -42,7 +42,7 @@ class VaultMarkerStrategyTest {
             assertThat(restored).isInstanceOf(VaultMarker.class);
             VaultMarker restoredVault = (VaultMarker) restored;
             assertThat(restoredVault.repoSlug()).isEqualTo("Alice/vault");
-            assertThat(restoredVault.catalogPath()).isEqualTo("/path/catalog.json");
+            assertThat(restoredVault.workspacePath()).isEqualTo("/path/catalog.json");
             assertThat(restoredVault.createdAt()).isEqualTo("2026-01-01T00:00:00");
             assertThat(restoredVault.lastUpdate()).isEqualTo("2026-01-01T00:00:00");
         }
@@ -99,7 +99,7 @@ class VaultMarkerStrategyTest {
         @DisplayName("throws MarkerDeserializationException, naming the field, when repoSlug is missing")
         void deserialize_missingRepoSlug_throwsWithFieldNameInMessage() {
             String json = """
-                    {"id":"id-1","catalogPath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
+                    {"id":"id-1","workspacePath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
 
             assertThatThrownBy(() -> strategy.deserialize(json))
                     .isInstanceOf(MarkerDeserializationException.class)
@@ -107,21 +107,21 @@ class VaultMarkerStrategyTest {
         }
 
         @Test
-        @DisplayName("throws MarkerDeserializationException, naming the field, when catalogPath is missing")
-        void deserialize_missingCatalogPath_throwsWithFieldNameInMessage() {
+        @DisplayName("throws MarkerDeserializationException, naming the field, when workspacePath is missing")
+        void deserialize_missingworkspacePath_throwsWithFieldNameInMessage() {
             String json = """
                     {"id":"id-1","repoSlug":"Alice/vault","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
 
             assertThatThrownBy(() -> strategy.deserialize(json))
                     .isInstanceOf(MarkerDeserializationException.class)
-                    .hasMessageContaining("catalogPath");
+                    .hasMessageContaining("workspacePath");
         }
 
         @Test
         @DisplayName("throws MarkerDeserializationException, naming the field, when id is missing")
         void deserialize_missingId_throwsWithFieldNameInMessage() {
             String json = """
-                    {"repoSlug":"Alice/vault","catalogPath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
+                    {"repoSlug":"Alice/vault","workspacePath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
 
             assertThatThrownBy(() -> strategy.deserialize(json))
                     .isInstanceOf(MarkerDeserializationException.class)

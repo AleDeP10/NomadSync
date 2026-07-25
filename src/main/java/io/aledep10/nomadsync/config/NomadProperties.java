@@ -11,7 +11,7 @@ package io.aledep10.nomadsync.config;
  * the key namespace in {@code config.properties}:</p>
  * <pre>
  *   git.*          → {@link Git}
- *   path.*         → {@link Path}
+ *   path.*         → {@link Marker}
  *   log.*          → {@link Log}
  *   autosave.*     → {@link Autosave}
  *   commit.*       → {@link Commit}
@@ -36,8 +36,7 @@ package io.aledep10.nomadsync.config;
  * git.token=ghp_...
  *
  * # ── Paths ────────────────────────────────────────────────────────────────────
- * path.catalog=./catalog.json
- * path.maxNestingDepth=6
+ * marker.maxNestingDepth=6
  *
  * # ── Logging ──────────────────────────────────────────────────────────────────
  * log.writers=console,file,seq
@@ -140,25 +139,19 @@ public final class NomadProperties {
     /**
      * Keys governing filesystem paths used by NomadSync at runtime.
      */
-    public static final class Path {
+    public static final class Marker {
 
-        private Path() {}
-
-        /**
-         * Path to the {@code catalog.json} file listing all registered vaults.
-         * <br>Default: {@code "./catalog.json"}.
-         */
-        public static final String CATALOG = "path.catalog";
+        private Marker() {}
 
         /**
          * Maximum directory depth scanned downward from a candidate vault path when
-         * checking for nested {@code .vault} markers belonging to other vaults.
+         * checking for nested markers belonging to other vaults.
          * <br>Default: {@code "6"}.
          * <br>Upward scanning (ancestors of the candidate path) is unbounded — it is
          * cheap by nature (at most a few dozen {@code Files.exists} checks up to the
          * filesystem root) and does not need a configurable limit.
          */
-        public static final String MAX_NESTING_DEPTH = "path.maxNestingDepth";
+        public static final String MAX_NESTING_DEPTH = "marker.maxNestingDepth";
     }
 
 

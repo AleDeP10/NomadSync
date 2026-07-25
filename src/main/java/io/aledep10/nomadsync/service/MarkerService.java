@@ -59,20 +59,20 @@ public class MarkerService {
 
     /**
      * @param properties  application properties — may contain
-     *                    {@code path.maxNestingDepth} (default 6), used only by
+     *                    {@code marker.maxNestingDepth} (default 6), used only by
      *                    the no-argument {@link #checkNoNestingConflict(String)}
      *                    overload's descendant scan
      * @param logService  shared logging service
      */
     public MarkerService(Properties properties, LogService logService) {
         this.logService = logService;
-        this.maxNestingDepth = PropertiesUtil.getInt(properties, NomadProperties.Path.MAX_NESTING_DEPTH, 6);
+        this.maxNestingDepth = PropertiesUtil.getInt(properties, NomadProperties.Marker.MAX_NESTING_DEPTH, 6);
         // Built internally, not received as a parameter — this map has exactly
         // one real assembly point in the whole codebase (here), so injecting it
         // from Main's dependency setup would only add ceremony without adding
         // flexibility. Growing the marker protocol to a new active type means
         // adding one line here — linear cost, not combinatorial, same trade-off
-        // already accepted for path.maxNestingDepth staying a single global value.
+        // already accepted for marker.maxNestingDepth staying a single global value.
         this.strategies = Map.of(
                 MarkerType.VAULT, new VaultMarkerStrategy(),
                 MarkerType.WORKSPACE, new WorkspaceMarkerStrategy());
@@ -80,7 +80,7 @@ public class MarkerService {
 
     /**
      * Convenience overload — uses the depth configured at construction time
-     * (from {@code path.maxNestingDepth}). See {@link #checkNoNestingConflict(String, int)}
+     * (from {@code marker.maxNestingDepth}). See {@link #checkNoNestingConflict(String, int)}
      * for the full contract.
      */
     public void checkNoNestingConflict(String candidatePath) throws MarkerClaimException {

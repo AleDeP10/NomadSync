@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.aledep10.nomadsync.Main;
 import io.aledep10.nomadsync.dto.SocketMessageDto;
 import io.aledep10.nomadsync.dto.VaultDto;
 import io.aledep10.nomadsync.dto.VaultMarkerDto;
@@ -18,6 +19,7 @@ import io.aledep10.nomadsync.marker.VaultMarker;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -39,6 +41,13 @@ public final class JsonMapper {
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     private JsonMapper() {}
+
+    public static Path loadDefaultWorkspacePath(File registryFile) throws IOException {
+        if (!registryFile.exists()) return null;
+        Main.WorkspacesRegistrySnapshot registry = MAPPER.readValue(registryFile, Main.WorkspacesRegistrySnapshot.class);
+        Main.DefaultWorkspaceEntry entry = registry.defaultWorkspace();
+        return (entry == null || StringUtil.isBlank(entry.path())) ? null : Path.of(entry.path());
+    }
 
     // ── Vault persistence ─────────────────────────────────────────────────────
 

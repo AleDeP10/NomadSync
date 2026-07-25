@@ -41,7 +41,7 @@ public abstract class Marker {
 
     /**
      * Extra fields specific to this marker's type, for {@link #toString()} debug
-     * output — e.g. {@code repoSlug}/{@code catalogPath} for {@link VaultMarker}.
+     * output — e.g. {@code repoSlug}/{@code workspacePath} for {@link VaultMarker}.
      * Default: none. Not every type needs to override this.
      */
     protected String typeSpecificFieldsForDebug() {

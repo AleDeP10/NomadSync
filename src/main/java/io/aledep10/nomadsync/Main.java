@@ -5,17 +5,15 @@ import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.hook.LogNotificationHook;
 import io.aledep10.nomadsync.hook.NotificationHook;
+import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEvent;
 import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
 import io.aledep10.nomadsync.orchestrator.SyncOrchestrator;
 import io.aledep10.nomadsync.service.*;
+import io.aledep10.nomadsync.util.*;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
-import io.aledep10.nomadsync.util.FileUtil;
-import io.aledep10.nomadsync.util.OsUtil;
-import io.aledep10.nomadsync.util.PropertiesUtil;
-import io.aledep10.nomadsync.util.StringUtil;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -105,6 +103,9 @@ import java.util.*;
  */
 public class Main {
 
+    static final String CONFIG_FILE_NAME = "config.properties";
+    static final String FLAG_FORCE = "force";
+
     public static void main(String[] args) {
 
         // ── 1. Parse command and flags ────────────────────────────────────────
@@ -116,41 +117,38 @@ public class Main {
         String command = parsed.command();
         Map<String, String> flags = parsed.flags();
 
-        String vaultFlag  = flags.get("vault");
-        String configPath = flags.get("config");
-        boolean daemon    = flags.containsKey("daemon");
+        String vaultFlag         = flags.get("vault");
+        String workspacePathArg  = flags.get("workspacePath");
+        boolean daemon           = flags.containsKey("daemon");
 
-        // Remove global flags — already consumed above.
-        // Handlers must never see these; hasUnknownFlags would report them as unknown.
-        // Note: "vault" is intentionally NOT removed — vault subcommand handlers
-        // read it directly from the map via flags.get("vault") / flags.containsKey("vault").
-        flags.remove("config");
+        flags.remove("workspacePath");
         flags.remove("daemon");
 
-        // ── 2. Load configuration ─────────────────────────────────────────────
-        if (configPath == null || configPath.isBlank()) {
-            configPath = resolveDefaultConfigPath();
-        }
-        Properties properties = new Properties();
-        try {
-            properties.load(new FileInputStream(configPath));
-        } catch (IOException e) {
-            System.err.println("Unable to load properties file: " + configPath);
+        // ── 2. Resolve and validate the workspace ─────────────────────────────
+        Path workspacePath = resolveWorkspacePathOrExit(workspacePathArg);
+
+        if (!Files.isDirectory(workspacePath.resolve(MarkerType.WORKSPACE.folderName()))) {
+            System.err.println("Not a valid NomadSync workspace: " + workspacePath
+                    + " (missing " + MarkerType.WORKSPACE.folderName() + ")");
             System.exit(1);
         }
-        Path configDir = Path.of(configPath).toAbsolutePath().getParent();
+
+        Path configDir  = workspacePath.resolve(MarkerType.WORKSPACE.folderName());
+        Path configFile = configDir.resolve(CONFIG_FILE_NAME);
+
+        Properties properties = new Properties();
+        try (FileInputStream in = new FileInputStream(configFile.toFile())) {
+            properties.load(in);
+        } catch (IOException e) {
+            System.err.println("Unable to load properties file: " + configFile);
+            System.exit(1);
+        }
 
         // ── 3. Bootstrap shared dependencies ──────────────────────────────────
         LogService       logService       = new LogService(properties, configDir);
         GitignoreService gitignoreService = new GitignoreService(logService);
         MarkerService    markerService    = new MarkerService(properties, logService);
-        VaultService     vaultService     = null;
-        try {
-            vaultService = new VaultService(properties, configDir, markerService, gitignoreService, logService);
-        } catch (VaultException e) {
-            System.err.println(e.getMessage());
-            System.exit(1);
-        }
+        VaultService     vaultService     = new VaultService(configDir, markerService, gitignoreService, logService);
         GitService       gitService       = new GitService(properties, vaultService, gitignoreService, logService);
         NotificationHook hook             = new LogNotificationHook(logService);
 
@@ -193,8 +191,8 @@ public class Main {
 
         if ("config".equals(command)) {
             exit(logService,
-                    handleConfig(flags, vaultFlag, vaults, vaultService, gitService, properties,
-                            configPath, logService));
+                    handleConfig(
+                            flags, vaultFlag, vaults, vaultService, gitService, properties, configFile, logService));
         }
 
         // ── 6. Resolve --vault flag ───────────────────────────────────────────
@@ -397,7 +395,7 @@ public class Main {
         if (args.length < 1) {
             System.err.println(
                     "Usage: java -jar NomadSync.jar <pull|push|sync|commit|autosave|status|config|vault> " +
-                            "[subcommand] [--config=<path>] [--vault=<name|owner/name>] [--git.*=<value>]");
+                            "[subcommand] [--workspacePath=<path>] [--vault=<name|owner/name>] [--git.*=<value>]");
             return ParsedArgs.failure(1);
         }
         String command = args[0];
@@ -450,37 +448,56 @@ public class Main {
      * (presence-only, no value that could be silently overwritten by a
      * duplicate) where repeating them changes nothing about the outcome.
      */
-    private static final Set<String> DUPLICATE_CHECK_EXEMPT_FLAGS = Set.of("force", "config-normalize");
+    private static final Set<String> DUPLICATE_CHECK_EXEMPT_FLAGS = Set.of(FLAG_FORCE);
 
-    // ── Default config path resolution ───────────────────────────────────────
+    // ── Default workspace path resolution ─────────────────────────────────────
+
+    private static final String WORKSPACES_REGISTRY_FILE_NAME = "workspaces.json";
 
     /**
-     * Resolves the default {@code config.properties} path used when {@code --config}
-     * is not provided: the directory containing the running JAR, not the process's
-     * working directory.
-     *
-     * <p>This lets NomadSync find its own {@code config.properties} next to itself
-     * regardless of the shell's current directory at invocation time (e.g. launched
-     * via a PATH entry from an arbitrary location). An explicit {@code --config}
-     * value — relative or absolute — is unaffected: it is always resolved against
-     * the process's actual working directory, exactly where the user is standing,
-     * which is precisely what makes per-workspace layouts (e.g. a client's own
-     * {@code config.properties}/{@code catalog.json}/log file kept together in that
-     * client's own vault folder) work predictably.</p>
-     *
-     * @return the default {@code config.properties} path next to the running JAR,
-     *         or the literal {@code "./config.properties"} if the JAR's own
-     *         location cannot be determined (defensive fallback — should not
-     *         normally occur)
+     * Minimal shape read from {@code workspaces.json} for this single purpose —
+     * only {@code defaultWorkspace.path} is ever consulted here. Not the real
+     * registry DTO (that belongs to the full CRUD work — {@code workspace create}/
+     * {@code add}/{@code rename}/etc.) — deliberately narrow, so this stopgap read
+     * can be superseded later without having anticipated more of that surface than
+     * this one call site actually needs today.
      */
-    private static String resolveDefaultConfigPath() {
+    public record DefaultWorkspaceEntry(String workspaceName, String path) {}
+    public record WorkspacesRegistrySnapshot(DefaultWorkspaceEntry defaultWorkspace) {}
+
+
+    private static Path resolveWorkspacePathOrExit(String workspacePathArg) {
+        try {
+            return (workspacePathArg == null || workspacePathArg.isBlank())
+                    ? JsonMapper.loadDefaultWorkspacePath(
+                    resolveJarDirectory().resolve(WORKSPACES_REGISTRY_FILE_NAME).toFile())
+                    : Path.of(workspacePathArg).toAbsolutePath().normalize();
+        } catch (IOException e) {
+            System.err.println("Unable to resolve default workspace path: " + e.getMessage());
+            e.printStackTrace(System.err);
+            System.exit(1);
+            throw new AssertionError("unreachable — System.exit() above always terminates the JVM");
+        }
+    }
+
+    /**
+     * Directory containing the running JAR — used to locate {@code workspaces.json}
+     * when resolving the default workspace path (no {@code --workspacePath} given),
+     * so NomadSync finds its own registry regardless of the shell's current
+     * working directory at invocation time (e.g. launched via a PATH entry from
+     * an arbitrary location).
+     *
+     * @return the JAR's directory, or {@code "."} (the process's working
+     *         directory) if it cannot be determined — defensive fallback, should
+     *         not normally occur
+     */
+    private static Path resolveJarDirectory() {
         try {
             File jarFile = new File(Main.class.getProtectionDomain()
                     .getCodeSource().getLocation().toURI());
-            File jarDir = jarFile.isFile() ? jarFile.getParentFile() : jarFile;
-            return new File(jarDir, "config.properties").getPath();
+            return (jarFile.isFile() ? jarFile.getParentFile() : jarFile).toPath();
         } catch (URISyntaxException | NullPointerException e) {
-            return "./config.properties";
+            return Path.of(".");
         }
     }
 
@@ -741,7 +758,7 @@ public class Main {
      * @param vaultService vault persistence service
      * @param gitService   Git operations service
      * @param properties   loaded application properties
-     * @param configPath   filesystem path to {@code config.properties}
+     * @param configFile   resolved path to the target workspace's {@code config.properties}
      * @param logService   shared logging service
      * @return {@code 0} on success, {@code 1} on error (vault not resolved, or
      *         persistence/bootstrap/write failure), {@code 2} if no {@code --git.*}
@@ -750,7 +767,8 @@ public class Main {
     private static int handleConfig(Map<String, String> flags, String vaultFlag,
                                     List<Vault> vaults, VaultService vaultService,
                                     GitService gitService, Properties properties,
-                                    String configPath, LogService logService) {
+                                    Path configFile, LogService logService) {
+
         Map<String, String> gitFlags = new LinkedHashMap<>();
         flags.forEach((k, v) -> {
             if (k.startsWith("git.")) gitFlags.put(k, v);
@@ -799,10 +817,9 @@ public class Main {
                 String logged = NomadProperties.Git.TOKEN.equals(k) ? "<hidden>" : v;
                 logService.info("handleConfig - set " + k + "=" + logged);
             });
-            try (FileOutputStream out = new FileOutputStream(configPath)) {
-                properties.store(out,
-                        "NomadSync configuration - updated by 'NomadSync config'");
-                logService.info("handleConfig - config.properties updated at " + configPath);
+            try (FileOutputStream out = new FileOutputStream(configFile.toFile())) {
+                properties.store(out, "NomadSync configuration - updated by 'NomadSync config'");
+                logService.info("handleConfig - config.properties updated at " + configFile);
             } catch (IOException e) {
                 logService.error("handleConfig - failed to write config.properties: "
                         + e.getMessage(), e);
@@ -894,11 +911,11 @@ public class Main {
             Set.of("vault", "owner", "name", "path",
                     "git.name", "git.email", "git.username",
                     "git.token", "git.branch", "git.remote");
-    private static final Set<String> FLAGS_VAULT_REMOVE = Set.of("vault", "force");
+    private static final Set<String> FLAGS_VAULT_REMOVE = Set.of("vault", FLAG_FORCE);
     private static final Set<String> FLAGS_VAULT_RELOCATE =
             Set.of("vault", "owner", "name", "path",
                     "git.name", "git.email", "git.username",
-                    "git.token", "git.branch", "git.remote", "force");
+                    "git.token", "git.branch", "git.remote", FLAG_FORCE);
     private static final Set<String> FLAGS_VAULT_LIST   = Set.of();
     private static final Set<String> FLAGS_VAULT_SHOW   = Set.of("vault", "defaults");
 
@@ -1311,7 +1328,7 @@ public class Main {
             return 1;
         }
 
-        if (!flags.containsKey("force")) {
+        if (!flags.containsKey(FLAG_FORCE)) {
             System.out.print("Remove vault " + vault.getRepoSlug() + "? (y/N): ");
 
             int response;
@@ -1476,7 +1493,7 @@ public class Main {
             }
         }
 
-        if (!flags.containsKey("force")) {
+        if (!flags.containsKey(FLAG_FORCE)) {
             System.out.print("This will PERMANENTLY discard local Git history for "
                     + vault.getRepoSlug() + ". Continue? (y/N): ");
 

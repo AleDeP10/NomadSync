@@ -114,12 +114,12 @@ class VaultServiceTest {
     }
 
     @BeforeEach
-    void setUp(TempDirs tempDirs) throws IOException, VaultException {
+    void setUp(TempDirs tempDirs) throws IOException {
         testVault = tempDirs.newVault("VaultServiceTest");
         gitignoreService = new GitignoreService(logService);
-        Properties properties = TestUtil.forVaultService(testVault);
+        Properties properties = new Properties();
         markerService = new MarkerService(properties, logService);
-        vaultService = new VaultService(properties, testVault.vaultPath(), markerService, gitignoreService, logService);
+        vaultService = new VaultService(testVault.vaultPath(), markerService, gitignoreService, logService);
     }
 
     // No @AfterEach — testVault and every ad-hoc directory created via
@@ -275,7 +275,7 @@ class VaultServiceTest {
             assertThat(marker).isNotNull();
             assertThat(marker.id()).isEqualTo(vault.getId());
             assertThat(marker.repoSlug()).isEqualTo("Alice/marker-fresh");
-            assertThat(marker.catalogPath()).isEqualTo(vaultService.catalogFile.getPath());
+            assertThat(marker.workspacePath()).isEqualTo(vaultService.catalogFile.getPath());
             assertThat(marker.createdAt()).isEqualTo(marker.lastUpdate());
         }
 

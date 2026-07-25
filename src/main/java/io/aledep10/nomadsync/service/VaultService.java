@@ -1,6 +1,5 @@
 package io.aledep10.nomadsync.service;
 
-import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.exception.VaultIntegrityException;
 import io.aledep10.nomadsync.exception.VaultParseException;
@@ -57,7 +56,7 @@ import java.util.stream.Stream;
  * scan, release, and confirm-on-load — live in {@link MarkerService}, shared across
  * every {@link io.aledep10.nomadsync.marker.MarkerType}. This class's own
  * responsibility is narrower: build a {@link VaultMarker} with vault-specific
- * identity ({@code repoSlug}, {@code catalogPath}) and hand it to
+ * identity ({@code repoSlug}, {@code workspacePath}) and hand it to
  * {@code markerService}, translating any {@link MarkerClaimException} into this
  * class's own {@link VaultException} contract so callers of {@code create}/
  * {@code update}/{@code delete}/{@code load} see no change in the exceptions
@@ -89,6 +88,7 @@ import java.util.stream.Stream;
  */
 public class VaultService {
 
+    public static final String CATALOG_FILE_NAME = "catalog.json";
     public static final String BACKUPS_FOLDER_NAME = "backups";
     public static final String CONFLICTS_FOLDER_NAME = "remote-conflicts";
 
@@ -115,9 +115,6 @@ public class VaultService {
      * workspace's config file lives. Absent, blank, or relative values are all
      * resolved uniformly; an already-absolute value is left untouched.</p>
      *
-     * @param properties    application properties, optionally containing
-     *                      {@code path.catalog}, {@code path.backups},
-     *                      {@code path.conflicts}
      * @param configDir     directory containing the {@code config.properties}
      *                      file in use — base for resolving all three path
      *                      properties above when relative or absent
@@ -127,22 +124,16 @@ public class VaultService {
      * @param gitignoreService  used to read active ignore patterns during snapshot creation
      * @param logService        shared logging service
      */
-    public VaultService(Properties properties, Path configDir,
+    public VaultService(Path configDir,
                         MarkerService markerService,
                         GitignoreService gitignoreService,
-                        LogService logService) throws VaultException {
-        try {
-            this.catalogFile = PropertiesUtil.resolveBareFilename(properties, NomadProperties.Path.CATALOG,
-                    "catalog.json", configDir, logService).toFile();
-        } catch (IllegalArgumentException e) {
-            throw new VaultException("Invalid catalog file: " + e.getMessage(), e);
-        }
+                        LogService logService) {
         this.markerService     = markerService;
         this.gitignoreService  = gitignoreService;
         this.logService        = logService;
-
-        this.backupsRoot = configDir.resolve(BACKUPS_FOLDER_NAME);
-        this.conflictsRoot = configDir.resolve(CONFLICTS_FOLDER_NAME);
+        this.catalogFile       = configDir.resolve(CATALOG_FILE_NAME).toFile();
+        this.backupsRoot       = configDir.resolve(BACKUPS_FOLDER_NAME);
+        this.conflictsRoot     = configDir.resolve(CONFLICTS_FOLDER_NAME);
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────

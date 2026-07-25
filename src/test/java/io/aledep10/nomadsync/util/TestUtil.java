@@ -184,30 +184,6 @@ public final class TestUtil {
     }
 
     /**
-     * Creates {@link Properties} configured for {@link io.aledep10.nomadsync.service.VaultService}.
-     *
-     * <p>The {@code catalog.json} file is named with the {@link TestVault#timestamp()}
-     * suffix — the same timestamp used to name the root directory. Since
-     * {@link #getTestVault(String)} guarantees timestamp uniqueness via a 1 ms sleep,
-     * this file name is unique across all test runs in the same JVM session.</p>
-     *
-     * <p>The file is not created by this method — {@code VaultService} creates it
-     * on the first {@code save()} call. The root directory itself is (re)created
-     * here defensively — a harmless no-op given {@link #getTestVault(String)}
-     * already creates it, but keeps this factory correct even if called against
-     * a {@link TestVault} whose root was cleaned up in between.</p>
-     *
-     * @param vault the test environment providing the root path and timestamp
-     * @return configured {@link Properties} ready for {@code VaultService} construction
-     */
-    public static Properties forVaultService(TestVault vault) throws IOException {
-        Files.createDirectories(vault.rootPath());
-        Properties properties = new Properties();
-        properties.setProperty("path.catalog", "vaults_" + vault.timestamp() + ".json");
-        return properties;
-    }
-
-    /**
      * Creates {@link Properties} configured for {@link io.aledep10.nomadsync.orchestrator.SyncOrchestrator}
      * and Git service tests.
      *

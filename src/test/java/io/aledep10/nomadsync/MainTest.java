@@ -111,13 +111,12 @@ class MainTest {
     }
 
     @BeforeEach
-    void setUp(TempDirs tempDirs) throws IOException, VaultException {
+    void setUp(TempDirs tempDirs) throws IOException {
         testVault = tempDirs.newVault("MainTest");
         properties = new Properties();
-        Properties vaultProperties = TestUtil.forVaultService(testVault);
         GitignoreService gitignoreService = new GitignoreService(logService);
-        MarkerService markerService = new MarkerService(vaultProperties, logService);
-        vaultService = new VaultService(vaultProperties, testVault.vaultPath(), markerService, gitignoreService, logService);
+        MarkerService markerService = new MarkerService(properties, logService);
+        vaultService = new VaultService(testVault.vaultPath(), markerService, gitignoreService, logService);
 
         originalOut = System.out;
         originalErr = System.err;
@@ -299,15 +298,6 @@ class MainTest {
 
             assertThat(isFailure(result)).isFalse();
             assertThat(outputStream.toString()).doesNotContain("--force was specified more than once");
-        }
-
-        @Test
-        @DisplayName("does not warn when --config-normalize is repeated — exempt as a harmless pure flag")
-        void repeatedConfigNormalize_doesNotWarn() throws Exception {
-            invokeParseArgs(new String[]{"vault", "list", "--config-normalize", "--config-normalize"});
-
-            assertThat(outputStream.toString())
-                    .doesNotContain("--config-normalize was specified more than once");
         }
 
         // ── stray argument detection — the --path-without-'=' regression ───
@@ -1249,7 +1239,7 @@ class MainTest {
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("vault", "owner/name");
             flags.put("owner", "neworg");
-            flags.put("force", "");
+            flags.put(Main.FLAG_FORCE, "");
 
             int result = (int) invoke("handleVaultRelocate",
                     new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
@@ -1273,7 +1263,7 @@ class MainTest {
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("vault", "owner/name");
             flags.put("owner", "neworg");
-            flags.put("force", "");
+            flags.put(Main.FLAG_FORCE, "");
 
             int result = (int) invoke("handleVaultRelocate",
                     new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
@@ -1296,7 +1286,7 @@ class MainTest {
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("vault", "owner/name");
             flags.put("owner", "neworg");
-            flags.put("force", "");
+            flags.put(Main.FLAG_FORCE, "");
 
             int result = (int) invoke("handleVaultRelocate",
                     new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
@@ -1322,7 +1312,7 @@ class MainTest {
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("vault", "owner/name");
             flags.put("owner", "neworg"); // structural change: owner only
-            flags.put("force", "");
+            flags.put(Main.FLAG_FORCE, "");
 
             int result = (int) invoke("handleVaultRelocate",
                     new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
@@ -1355,7 +1345,7 @@ class MainTest {
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("vault", "owner/name");
             flags.put("path", targetDir.toString());
-            flags.put("force", "");
+            flags.put(Main.FLAG_FORCE, "");
 
             int result = (int) invoke("handleVaultRelocate",
                     new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
@@ -1381,7 +1371,7 @@ class MainTest {
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("vault", "owner/name");
             flags.put("owner", "neworg");
-            flags.put("force", "");
+            flags.put(Main.FLAG_FORCE, "");
 
             int result = (int) invoke("handleVaultRelocate",
                     new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,
@@ -1407,7 +1397,7 @@ class MainTest {
             Map<String, String> flags = new LinkedHashMap<>();
             flags.put("vault", "owner/name");
             flags.put("owner", "neworg");
-            flags.put("force", "");
+            flags.put(Main.FLAG_FORCE, "");
 
             int result = (int) invoke("handleVaultRelocate",
                     new Class<?>[]{Map.class, List.class, VaultService.class, MarkerService.class,

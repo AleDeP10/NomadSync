@@ -120,7 +120,7 @@ class WorkspaceMarkerStrategyTest {
                 + "but shaped for a different marker type (e.g. a VaultMarker's own fields)")
         void deserialize_validJsonWrongShape_throwsMarkerDeserializationException() {
             String vaultShapedJson = """
-                    {"id":"id-1","repoSlug":"Alice/vault","catalogPath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
+                    {"id":"id-1","repoSlug":"Alice/vault","workspacePath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
 
             assertThatThrownBy(() -> strategy.deserialize(vaultShapedJson))
                     .isInstanceOf(MarkerDeserializationException.class)
