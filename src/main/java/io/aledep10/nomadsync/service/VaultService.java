@@ -1,12 +1,10 @@
 package io.aledep10.nomadsync.service;
 
-import io.aledep10.nomadsync.exception.VaultException;
-import io.aledep10.nomadsync.exception.VaultIntegrityException;
-import io.aledep10.nomadsync.exception.VaultParseException;
+import io.aledep10.nomadsync.config.NomadProperties;
+import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.marker.VaultMarker;
-import io.aledep10.nomadsync.exception.MarkerClaimException;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
 
@@ -87,6 +85,92 @@ import java.util.stream.Stream;
  * line documents a real, distinct write.</p>
  */
 public class VaultService {
+
+     /**
+     * Resolves the {@code --vault} flag to a {@link Vault} instance.
+     *
+     * <ul>
+     *   <li>{@code null} flag → returns {@code null} (broadcast or mandatory error handled by caller)</li>
+     *   <li>{@code owner/name} → exact {@link Vault#getRepoSlug()} match, otherwise {@link VaultNotFoundException}</li>
+     *   <li>{@code name} → resolves if exactly one vault has that name;
+     *       {@link VaultNotFoundException} if zero match, {@link VaultAmbiguousException} if multiple</li>
+     * </ul>
+     *
+     * <p>Unlike the {@code null}-flag case, a non-null unresolvable flag is always
+     * a fatal error for the caller — a vault name typed by the user and not found
+     * must never be silently downgraded to a broadcast on all vaults.</p>
+     *
+     * @param vaultFlag  the raw {@code --vault} value, or {@code null} if absent
+     * @param vaults     the list of registered vaults
+     * @return the matching {@link Vault}, or {@code null} if {@code vaultFlag} is {@code null}
+     * @throws VaultNotFoundException  if {@code vaultFlag} is non-null and matches no vault
+     * @throws VaultAmbiguousException if {@code vaultFlag} is a bare name matching multiple vaults
+     */
+    public static Vault resolveVaultFlag(String vaultFlag, List<Vault> vaults)
+            throws VaultNotFoundException, VaultAmbiguousException {
+        if (vaultFlag == null) return null;
+
+        if (vaultFlag.contains("/")) {
+            return vaults.stream()
+                    .filter(v -> v.getRepoSlug().equals(vaultFlag))
+                    .findFirst()
+                    .orElseThrow(() -> new VaultNotFoundException(vaultFlag));
+        }
+
+        List<Vault> matches = vaults.stream()
+                .filter(v -> v.getName().equals(vaultFlag))
+                .toList();
+
+        if (matches.isEmpty()) {
+            throw new VaultNotFoundException(vaultFlag);
+        }
+        if (matches.size() > 1) {
+            throw new VaultAmbiguousException(vaultFlag, matches);
+        }
+        return matches.getFirst();
+    }
+
+    /**
+     * Logs all registered vault repoSlugs at ERROR level — used in resolution
+     * error messages to help the user identify the correct {@code --vault} value.
+     *
+     * @param vaults     the list of registered vaults
+     * @param logService shared logging service
+     */
+    public static void listRegistered(List<Vault> vaults, LogService logService) {
+        logService.error("Registered: "
+                + vaults.stream()
+                .map(Vault::getRepoSlug)
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("(none)"));
+    }
+
+    /**
+     * Applies {@code --git.*} flags to the mutable credential and configuration
+     * fields of the given {@link Vault}.
+     *
+     * <p>Unknown keys are logged as warnings and silently ignored — they do not
+     * cause the command to fail.</p>
+     *
+     * @param gitFlags   map of {@code git.*} flag keys to their values
+     * @param vault      the vault to mutate
+     * @param logService shared logging service
+     */
+    public static void applyGitFlagsToVault(Map<String, String> gitFlags,
+                                            Vault vault, LogService logService) {
+        gitFlags.forEach((key, value) -> {
+            switch (key) {
+                case NomadProperties.Git.NAME     -> vault.setGitName(value);
+                case NomadProperties.Git.EMAIL    -> vault.setGitEmail(value);
+                case NomadProperties.Git.USERNAME -> vault.setGitUsername(value);
+                case NomadProperties.Git.TOKEN    -> vault.setGitToken(value);
+                case NomadProperties.Git.BRANCH   -> vault.setGitBranch(value);
+                case NomadProperties.Git.REMOTE   -> vault.setGitRemote(value);
+                default -> logService.warn("applyGitFlagsToVault: unknown flag '"
+                        + key + "' - ignored");
+            }
+        });
+    }
 
     public static final String CATALOG_FILE_NAME = "catalog.json";
     public static final String BACKUPS_FOLDER_NAME = "backups";

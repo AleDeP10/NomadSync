@@ -6,15 +6,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.aledep10.nomadsync.Main;
-import io.aledep10.nomadsync.dto.SocketMessageDto;
-import io.aledep10.nomadsync.dto.VaultDto;
-import io.aledep10.nomadsync.dto.VaultMarkerDto;
-import io.aledep10.nomadsync.dto.VaultRootDto;
+import io.aledep10.nomadsync.dto.*;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEvent;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.marker.VaultMarker;
+import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
 import java.io.File;
 import java.io.IOException;
@@ -43,10 +40,25 @@ public final class JsonMapper {
     private JsonMapper() {}
 
     public static Path loadDefaultWorkspacePath(File registryFile) throws IOException {
-        if (!registryFile.exists()) return null;
-        Main.WorkspacesRegistrySnapshot registry = MAPPER.readValue(registryFile, Main.WorkspacesRegistrySnapshot.class);
-        Main.DefaultWorkspaceEntry entry = registry.defaultWorkspace();
-        return (entry == null || StringUtil.isBlank(entry.path())) ? null : Path.of(entry.path());
+        return loadWorkspacesFromFile(registryFile).stream()
+                .filter(WorkspaceEntry::isDefault)
+                .map(WorkspaceEntry::getPath)
+                .filter(path -> !StringUtil.isBlank(path))
+                .findFirst()
+                .map(Path::of)
+                .orElse(null);
+    }
+
+    public static List<WorkspaceEntry> loadWorkspacesFromFile(File file) throws IOException {
+        if (!file.exists()) return List.of();
+        WorkspacesRegistryDto registry = MAPPER.readValue(file, WorkspacesRegistryDto.class);
+        return registry.getWorkspaces().stream().map(WorkspaceEntryDto::toDomain).toList();
+    }
+
+    public static void saveWorkspacesToFile(File workspacesFile, List<WorkspaceEntry> workspaces) throws IOException {
+        WorkspacesRegistryDto registry = new WorkspacesRegistryDto(
+                workspaces.stream().map(WorkspaceEntryDto::fromDomain).toList());
+        MAPPER.writerWithDefaultPrettyPrinter().writeValue(workspacesFile, registry);
     }
 
     // ── Vault persistence ─────────────────────────────────────────────────────
@@ -65,7 +77,7 @@ public final class JsonMapper {
     public static List<Vault> loadVaultsFromFile(File file) throws IOException {
         if (!file.exists()) return List.of();
         VaultRootDto root = MAPPER.readValue(file, VaultRootDto.class);
-        return root.vaults().stream().map(VaultDto::toDomain).toList();
+        return root.getVaults().stream().map(VaultDto::toDomain).toList();
     }
 
     /**

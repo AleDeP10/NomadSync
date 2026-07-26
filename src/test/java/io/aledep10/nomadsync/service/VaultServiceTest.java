@@ -1,17 +1,22 @@
 package io.aledep10.nomadsync.service;
 
+
+import io.aledep10.nomadsync.exception.VaultAmbiguousException;
 import io.aledep10.nomadsync.exception.VaultException;
+import io.aledep10.nomadsync.exception.VaultNotFoundException;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.marker.VaultMarker;
 import io.aledep10.nomadsync.marker.VaultMarkerStrategy;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -166,6 +171,112 @@ class VaultServiceTest {
     private VaultMarker readMarker(Path vaultContent) throws IOException {
         Path descriptor = vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
         return (VaultMarker) new VaultMarkerStrategy().deserialize(Files.readString(descriptor));
+    }
+
+
+    // ── resolveVaultFlag ──────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("resolveVaultFlag")
+    class ResolveVaultFlagTests {
+
+        @Test
+        @DisplayName("resolves vault by exact repo slug")
+        void resolvesVaultByExactRepoSlug() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath());
+            Vault resolved = (Vault) TestUtil.invoke(VaultService.class, "resolveVaultFlag",
+                    new Class<?>[]{String.class, List.class},
+                    "owner/name", List.of(vault));
+
+            Assertions.assertThat(resolved).isSameAs(vault);
+        }
+
+        @Test
+        @DisplayName("resolves vault by unambiguous name")
+        void resolvesVaultByName() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath());
+            Vault resolved = (Vault) TestUtil.invoke(VaultService.class, "resolveVaultFlag",
+                    new Class<?>[]{String.class, List.class},
+                    "name", List.of(vault));
+
+            Assertions.assertThat(resolved).isSameAs(vault);
+        }
+
+        @Test
+        @DisplayName("throws VaultAmbiguousException when name matches multiple vaults")
+        void ambiguousName_throwsAmbiguous() {
+            Vault vault1 = new Vault("id1", "owner1", "name", TestUtil.createPath("path1"));
+            Vault vault2 = new Vault("id2", "owner2", "name", TestUtil.createPath("path2"));
+
+            Assertions.assertThatThrownBy(() -> TestUtil.invoke(VaultService.class, "resolveVaultFlag",
+                            new Class<?>[]{String.class, List.class},
+                            "name", List.of(vault1, vault2)))
+                    .hasCauseInstanceOf(InvocationTargetException.class)
+                    .extracting(Throwable::getCause)
+                    .extracting(Throwable::getCause)
+                    .isInstanceOf(VaultAmbiguousException.class);
+        }
+
+        @Test
+        @DisplayName("throws VaultNotFoundException when no vault matches")
+        void noMatch_throwsNotFound() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath());
+
+            Assertions.assertThatThrownBy(() -> TestUtil.invoke(VaultService.class, "resolveVaultFlag",
+                            new Class<?>[]{String.class, List.class},
+                            "nonexistent", List.of(vault)))
+                    .hasCauseInstanceOf(InvocationTargetException.class)
+                    .extracting(Throwable::getCause)
+                    .extracting(Throwable::getCause)
+                    .isInstanceOf(VaultNotFoundException.class);
+        }
+    }
+
+    // ── applyGitFlagsToVault ──────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("applyGitFlagsToVault")
+    class ApplyGitFlagsToVaultTests {
+
+        @Test
+        @DisplayName("applies all known git flags to vault")
+        void applyGitFlagsToVault_appliesGitFields() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
+            Map<String, String> gitFlags = new LinkedHashMap<>();
+            gitFlags.put("git.name",     "Alice");
+            gitFlags.put("git.email",    "alice@example.com");
+            gitFlags.put("git.username", "alice-gh");
+            gitFlags.put("git.token",    "token123");
+            gitFlags.put("git.branch",   "develop");
+            gitFlags.put("git.remote",   "upstream");
+
+            TestUtil.invoke(VaultService.class, "applyGitFlagsToVault",
+                    new Class<?>[]{Map.class, Vault.class, LogService.class},
+                    gitFlags, vault, logService);
+
+            Assertions.assertThat(vault.getGitName()).isEqualTo("Alice");
+            Assertions.assertThat(vault.getGitEmail()).isEqualTo("alice@example.com");
+            Assertions.assertThat(vault.getGitUsername()).isEqualTo("alice-gh");
+            Assertions.assertThat(vault.getGitToken()).isEqualTo("token123");
+            Assertions.assertThat(vault.getGitBranch()).isEqualTo("develop");
+            Assertions.assertThat(vault.getGitRemote()).isEqualTo("upstream");
+        }
+
+        @Test
+        @DisplayName("ignores unknown git flags leaving vault fields unchanged")
+        void applyGitFlagsToVault_ignoresUnknownKeys() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
+            Map<String, String> gitFlags = new LinkedHashMap<>();
+            gitFlags.put("git.unknown", "value");
+
+            TestUtil.invoke(VaultService.class, "applyGitFlagsToVault",
+                    new Class<?>[]{Map.class, Vault.class, LogService.class},
+                    gitFlags, vault, logService);
+
+            Assertions.assertThat(vault.getName()).isEqualTo("name");
+            Assertions.assertThat(vault.getGitName()).isNull();
+            Assertions.assertThat(vault.getGitRemote()).isNull();
+        }
     }
 
     // ── load() ────────────────────────────────────────────────────────────────

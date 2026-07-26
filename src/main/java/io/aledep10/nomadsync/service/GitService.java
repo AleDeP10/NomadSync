@@ -548,7 +548,7 @@ public class GitService {
      *
      * <h2>Snapshot and conflict directory naming</h2>
      * <p>Both use {@link Vault#getRepoSlug()} with {@code /} replaced by {@code _}
-     * as the prefix — e.g. {@code AleDeP10_public-vault_2026-06-16_10-30}.
+     * as the prefix — e.g. {@code Alice_public-vault_2026-06-16_10-30}.
      * This avoids collisions between two vaults with the same {@code name} but
      * different {@code owner}s sharing the same {@code backupsRoot} or
      * {@code conflictsRoot}.</p>

@@ -99,7 +99,7 @@ public class LogService {
      *                   in use — base for resolving a relative or absent
      *                   {@link NomadProperties.Log#PATH}
      * @param repoSlug   vault identifier in {@code <owner>/<name>} form,
-     *                   e.g. {@code AleDeP10/public-vault}
+     *                   e.g. {@code Alice/public-vault}
      */
     public LogService(Properties properties, Path configDir, String repoSlug) {
         this(properties, configDir, buildWriters(properties, configDir), repoSlug);

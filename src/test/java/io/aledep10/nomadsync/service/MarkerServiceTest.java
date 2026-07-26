@@ -144,7 +144,7 @@ class MarkerServiceTest {
         @DisplayName("throws when an ancestor already carries a marker of a DIFFERENT type — cross-type protection")
         void ancestorConflict_crossType_throws(TempDirs tempDirs) throws Exception {
             Path parent = tempDirs.newDir("MarkerServiceTest", "claim-ancestor-cross-type");
-            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
 
             Path child = parent.resolve("nested-vault");
@@ -153,7 +153,7 @@ class MarkerServiceTest {
 
             assertThatThrownBy(() -> markerService.claim(MarkerType.VAULT, child.toString(), vaultMarker))
                     .isInstanceOf(MarkerClaimException.class)
-                    .hasMessageContaining("Belmani");
+                    .hasMessageContaining("Alice");
         }
 
         @Test
@@ -270,13 +270,13 @@ class MarkerServiceTest {
         @DisplayName("throws when an ancestor carries a marker of a DIFFERENT type (cross-type)")
         void ancestorHasDifferentTypeMarker_throws(TempDirs tempDirs) throws Exception {
             Path parent = tempDirs.newDir("MarkerServiceTest", "nesting-ancestor-cross-type");
-            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
             Path candidate = parent.resolve("child-vault");
 
             assertThatThrownBy(() -> markerService.checkNoNestingConflict(candidate.toString()))
                     .isInstanceOf(MarkerClaimException.class)
-                    .hasMessageContaining("Belmani");
+                    .hasMessageContaining("Alice");
         }
 
         @Test

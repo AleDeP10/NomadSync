@@ -29,7 +29,7 @@ installer/
 /src/main/resources/config.properties
 /src/main/resources/config.dev.properties
 /src/main/resources/config.prod.properties
-/src/main/resources/vaults.json
+/src/main/resources/catalog.json
 
 # Editor backup files of the above
 /src/main/resources/*.properties.bak
@@ -37,7 +37,7 @@ installer/
 
 # Explicitly ensure resource templates are ALWAYS tracked in Git
 !src/main/resources/config.template.properties
-!src/main/resources/vaults.template.json
+!src/main/resources/catalog.template.json
 
 # ------------------------------------------------------------
 # Logs & JVM Diagnostics

@@ -3,7 +3,7 @@
 # Usage: ./NomadSyncConfig.sh [--vault=<name|owner/name>] [--config=<path>] --git.<key>=<value> [...]
 #
 # Without --vault: updates config.properties (global defaults for all vaults).
-# With --vault:    updates vaults.json for the specified vault only.
+# With --vault:    updates catalog.json for the specified vault only.
 #                  Changes are applied immediately via bootstrapVault.
 #
 # Supported --git.* flags:

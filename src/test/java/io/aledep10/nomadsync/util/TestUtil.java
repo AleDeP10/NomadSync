@@ -1,14 +1,18 @@
 package io.aledep10.nomadsync.util;
 
+import io.aledep10.nomadsync.Main;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.service.VaultService;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.Properties;
 
 /**
@@ -247,5 +251,43 @@ public final class TestUtil {
      */
     public static String absolute(String raw) {
         return java.nio.file.Path.of(raw).toAbsolutePath().normalize().toString();
+    }
+
+    /**
+     * Builds an OS-native path string from the given segments, prefixing each
+     * with {@link OsUtil#separator()}.
+     *
+     * @param parts path segments without leading or trailing separators
+     * @return an OS-native path string
+     */
+    public static String createPath(String... parts) {
+        final StringBuilder buf = new StringBuilder();
+        Arrays.asList(parts).forEach(part -> buf.append(OsUtil.separator()).append(part));
+        return buf.toString();
+    }
+
+    /**
+     * Reflectively invokes a private static method on the given class
+     * (e.g. {@link Main}, {@link io.aledep10.nomadsync.cli.VaultCli}).
+     *
+     * @param clazz          the class declaring the private static method
+     * @param methodName     name of the private static method
+     * @param parameterTypes parameter types for method lookup
+     * @param args           arguments to pass to the method
+     * @return the method's return value, or {@code null} for {@code void} methods
+     * @throws RuntimeException wrapping any reflection or invocation exception —
+     *         when the invoked method throws a checked exception, the real cause
+     *         is nested two levels down: {@code RuntimeException.getCause()} is
+     *         an {@link InvocationTargetException}, whose own {@code getCause()}
+     *         is the exception actually thrown by the production method.
+     */
+    public static Object invoke(Class<?> clazz, String methodName, Class<?>[] parameterTypes, Object... args) {
+        try {
+            Method method = clazz.getDeclaredMethod(methodName, parameterTypes);
+            method.setAccessible(true);
+            return method.invoke(null, args);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }

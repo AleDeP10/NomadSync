@@ -57,7 +57,7 @@ class VaultMarkerStrategyTest {
         @Test
         @DisplayName("throws MarkerTypeMismatchException when given a WorkspaceMarker")
         void serialize_wrongMarkerType_throwsIllegalArgumentException() {
-            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("id-1", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("id-1", "Alice", "2026-01-01T00:00:00");
 
             assertThatThrownBy(() -> strategy.serialize(workspaceMarker))
                     .isInstanceOf(MarkerTypeMismatchException.class)
@@ -133,7 +133,7 @@ class VaultMarkerStrategyTest {
                 + "but shaped for a different marker type (e.g. a WorkspaceMarker's own fields)")
         void deserialize_validJsonWrongShape_throwsMarkerDeserializationException() {
             String workspaceShapedJson = """
-                    {"id":"id-1","workspaceName":"Belmani","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
+                    {"id":"id-1","workspaceName":"Alice","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
 
             assertThatThrownBy(() -> strategy.deserialize(workspaceShapedJson))
                     .isInstanceOf(MarkerDeserializationException.class);
@@ -160,7 +160,7 @@ class VaultMarkerStrategyTest {
         @Test
         @DisplayName("throws MarkerTypeMismatchException when given a WorkspaceMarker")
         void describeConflict_wrongMarkerType_throwsMarkerTypeMismatchException() {
-            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("id-1", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("id-1", "Alice", "2026-01-01T00:00:00");
 
             assertThatThrownBy(() -> strategy.describeConflict(workspaceMarker))
                     .isInstanceOf(MarkerTypeMismatchException.class)
