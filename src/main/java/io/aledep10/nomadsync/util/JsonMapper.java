@@ -66,35 +66,35 @@ public final class JsonMapper {
     /**
      * Loads the list of vaults from {@code catalog.json}.
      *
-     * <p>Deserialises via {@link VaultRootDto} → {@link VaultDto} → {@link Vault}
+     * <p>Deserialises via {@link CatalogDto} → {@link VaultDto} → {@link Vault}
      * to keep Jackson annotations out of the domain class. Returns an empty list
      * if the file does not exist — no exception is thrown.</p>
      *
-     * @param file the {@code catalog.json} file
+     * @param catalogFile the {@code catalog.json} file
      * @return list of domain {@link Vault} objects, or empty list if file absent
      * @throws IOException if the file exists but cannot be read or parsed
      */
-    public static List<Vault> loadVaultsFromFile(File file) throws IOException {
-        if (!file.exists()) return List.of();
-        VaultRootDto root = MAPPER.readValue(file, VaultRootDto.class);
-        return root.getVaults().stream().map(VaultDto::toDomain).toList();
+    public static List<Vault> loadVaultsFromFile(File catalogFile) throws IOException {
+        if (!catalogFile.exists()) return List.of();
+        CatalogDto catalog = MAPPER.readValue(catalogFile, CatalogDto.class);
+        return catalog.getVaults().stream().map(VaultDto::toDomain).toList();
     }
 
     /**
      * Persists the list of vaults to {@code catalog.json}.
      *
-     * <p>Serialises via {@link Vault} → {@link VaultDto} → {@link VaultRootDto}
+     * <p>Serialises via {@link Vault} → {@link VaultDto} → {@link CatalogDto}
      * to keep Jackson annotations out of the domain class. The file is written
      * with pretty-printing for human readability.</p>
      *
-     * @param vaultsFile the target {@code catalog.json} file
+     * @param catalogFile the target {@code catalog.json} file
      * @param vaults     the current in-memory vault list
      * @throws IOException if the file cannot be written
      */
-    public static void saveVaultsToFile(File vaultsFile, List<Vault> vaults) throws IOException {
-        VaultRootDto root = new VaultRootDto(
+    public static void saveVaultsToFile(File catalogFile, List<Vault> vaults) throws IOException {
+        CatalogDto catalog = new CatalogDto(
                 vaults.stream().map(VaultDto::fromDomain).toList());
-        MAPPER.writerWithDefaultPrettyPrinter().writeValue(vaultsFile, root);
+        MAPPER.writerWithDefaultPrettyPrinter().writeValue(catalogFile, catalog);
     }
 
     /**

@@ -203,7 +203,7 @@ public class LogService {
         LogLevel minLevel = LogLevel.valueOf(
                 properties.getProperty(NomadProperties.Log.LEVEL, LogLevel.INFO.name()));
         Set<String> tokens = Arrays.stream(
-                        PropertiesUtil.get(properties, NomadProperties.Log.WRITERS, "console,file")
+                        PropertiesUtil.get(properties, NomadProperties.Log.WRITERS, "console")
                                 .split(","))
                 .map(String::trim)
                 .collect(Collectors.toCollection(TreeSet::new));

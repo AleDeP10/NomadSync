@@ -8,6 +8,7 @@ import io.aledep10.nomadsync.util.FileUtil;
 import io.aledep10.nomadsync.util.PropertiesUtil;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -15,6 +16,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 // VaultMarkerStrategy and WorkspaceMarkerStrategy already live in this same
 // package (io.aledep10.nomadsync.marker) — no import needed for either.
@@ -233,7 +235,8 @@ public class MarkerService {
             return;
         }
         if (existing != null && !strategy.sameClaimant(existing, marker.id())) {
-            logService.warn("refresh - " + path + " already marked by a different claimant - not overwriting");
+            logService.warn("refresh - " + path + " already marked by a different claimant ("
+                    + existing.id() + " vs " + marker.id() + ") - not overwriting");
             return;
         }
         Marker toWrite = (existing == null) ? marker : existing.withRefreshedTimestamp(marker.lastUpdate());
@@ -243,6 +246,31 @@ public class MarkerService {
         } catch (IOException e) {
             logService.warn("refresh - unable to write " + type + " marker: " + e.getMessage());
         }
+    }
+
+    /**
+     * Unconditionally (re)writes the marker descriptor for an already-existing
+     * marker folder, regardless of the current claimant on disk — unlike
+     * {@link #refresh}, never compares {@code sameClaimant}; unlike {@link #claim},
+     * never creates the folder (must already exist). Reserved for legitimate
+     * identity-transfer operations where the marker's own id is derived from its
+     * path and therefore must change together with it (e.g. a workspace relocate).
+     *
+     * @throws MarkerClaimException if no marker folder exists at {@code path}, or
+     *                               if the descriptor cannot be written
+     */
+    public void overwrite(MarkerType type, String path, Marker marker) throws MarkerClaimException {
+        Path folder = markerFolder(Path.of(path), type);
+        if (!Files.isDirectory(folder)) {
+            throw new MarkerClaimException("path '" + path + "' has no existing marker folder to overwrite");
+        }
+        Path descriptor = folder.resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+        try {
+            Files.writeString(descriptor, strategies.get(type).serialize(marker));
+        } catch (IOException e) {
+            throw new MarkerClaimException("Unable to overwrite marker descriptor at " + descriptor + ": " + e.getMessage(), e);
+        }
+        logService.info("overwrite - " + type + " - descriptor rewritten at " + path);
     }
 
     // ── Path resolution helpers ─────────────────────────────────────────────

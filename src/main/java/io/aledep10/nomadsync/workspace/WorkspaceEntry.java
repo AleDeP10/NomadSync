@@ -48,6 +48,22 @@ public class WorkspaceEntry {
         this.isDefault = isDefault;
     }
 
+    /**
+     * Returns a new, independent instance with the same field values.
+     *
+     * <p>Used by {@link io.aledep10.nomadsync.service.WorkspaceService}'s query
+     * methods ({@code findAll}/{@code findByName}/{@code findDefault}) so the live
+     * instance held in its internal cache is never handed out — mutating the
+     * returned copy has no effect on the source of truth (see
+     * {@code NomadSync-WSP-005}).</p>
+     *
+     * @return a new {@link WorkspaceEntry} with the same {@code workspaceName},
+     *         {@code path}, and {@code isDefault} as this one
+     */
+    public WorkspaceEntry copy() {
+        return new WorkspaceEntry(workspaceName, path, isDefault);
+    }
+
     public String getWorkspaceName() {
         return workspaceName;
     }

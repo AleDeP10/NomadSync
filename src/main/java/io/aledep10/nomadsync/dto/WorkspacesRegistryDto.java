@@ -25,6 +25,13 @@ import java.util.List;
  * shape; what matters is that this one matches the calling code that already
  * depends on it.</p>
  *
+ * <h2>Root DTO — a recurring micro-pattern, not a shared abstraction</h2>
+ * <p>{@link CatalogDto} follows the identical recipe for {@code catalog.json}:
+ * a single field, a {@code @JsonCreator} constructor with one
+ * {@code @JsonProperty}, one plain getter. The two are deliberately
+ * <strong>not</strong> unified under a shared generic base — see
+ * {@link CatalogDto}'s Javadoc for the full rationale.</p>
+ *
  * <h2>File structure</h2>
  * <pre>{@code
  * {

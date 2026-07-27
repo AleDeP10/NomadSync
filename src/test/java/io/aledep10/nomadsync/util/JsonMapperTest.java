@@ -104,17 +104,17 @@ class JsonMapperTest {
         @DisplayName("saveWorkspacesToFile followed by loadWorkspacesFromFile round-trips workspaceName, path and isDefault, preserving order")
         void saveThenLoad_roundTripsAllFieldsInOrder() throws IOException {
             File registryFile = tempDir.resolve("workspaces.json").toFile();
-            WorkspaceEntry defaultEntry = new WorkspaceEntry("default", tempDir.resolve("default").toString(), true);
+            WorkspaceEntry defaultWorkspace = new WorkspaceEntry("default", tempDir.resolve("default").toString(), true);
             WorkspaceEntry secondary = new WorkspaceEntry("laptop-work", tempDir.resolve("laptop").toString(), false);
 
-            JsonMapper.saveWorkspacesToFile(registryFile, List.of(defaultEntry, secondary));
+            JsonMapper.saveWorkspacesToFile(registryFile, List.of(defaultWorkspace, secondary));
             List<WorkspaceEntry> loaded = JsonMapper.loadWorkspacesFromFile(registryFile);
 
             // WorkspaceEntry#equals compares only workspaceName (NomadSync-WSP-001) —
             // path and isDefault are asserted explicitly, not via equals-based matchers.
             assertThat(loaded.size() == 2).isTrue();
             assertThat(loaded.get(0).getWorkspaceName()).isEqualTo("default");
-            assertThat(loaded.get(0).getPath()).isEqualTo(defaultEntry.getPath());
+            assertThat(loaded.get(0).getPath()).isEqualTo(defaultWorkspace.getPath());
             assertThat(loaded.get(0).isDefault()).isTrue();
             assertThat(loaded.get(1).getWorkspaceName()).isEqualTo("laptop-work");
             assertThat(loaded.get(1).getPath()).isEqualTo(secondary.getPath());
@@ -125,10 +125,10 @@ class JsonMapperTest {
         @DisplayName("saveWorkspacesToFile never writes an explicit isDefault:false — the key is omitted entirely for non-default entries")
         void save_omitsIsDefaultKeyForNonDefaultEntries() throws IOException {
             File registryFile = tempDir.resolve("workspaces.json").toFile();
-            WorkspaceEntry defaultEntry = new WorkspaceEntry("default", tempDir.resolve("default").toString(), true);
+            WorkspaceEntry defaultWorkspace = new WorkspaceEntry("default", tempDir.resolve("default").toString(), true);
             WorkspaceEntry secondary = new WorkspaceEntry("laptop-work", tempDir.resolve("laptop").toString(), false);
 
-            JsonMapper.saveWorkspacesToFile(registryFile, List.of(defaultEntry, secondary));
+            JsonMapper.saveWorkspacesToFile(registryFile, List.of(defaultWorkspace, secondary));
             String raw = Files.readString(registryFile.toPath());
 
             // Boolean, not primitive boolean, on WorkspaceEntryDto (see NomadSync-WSP-001
