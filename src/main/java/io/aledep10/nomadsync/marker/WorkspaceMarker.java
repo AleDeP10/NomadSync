@@ -1,7 +1,5 @@
 package io.aledep10.nomadsync.marker;
 
-import io.aledep10.nomadsync.util.DateFormats;
-
 import java.util.UUID;
 
 /**

@@ -8,7 +8,6 @@ import io.aledep10.nomadsync.util.FileUtil;
 import io.aledep10.nomadsync.util.PropertiesUtil;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -16,10 +15,6 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Properties;
-import java.util.UUID;
-
-// VaultMarkerStrategy and WorkspaceMarkerStrategy already live in this same
-// package (io.aledep10.nomadsync.marker) — no import needed for either.
 
 /**
  * Generic path-protection engine for the entire marker protocol — claims,

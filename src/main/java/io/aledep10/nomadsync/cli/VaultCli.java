@@ -13,7 +13,6 @@ import io.aledep10.nomadsync.vault.Vault;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -53,17 +52,17 @@ public class VaultCli extends AbstractCli {
         return 2;
     }
 
-    public int execute(String subcommand, Map<String, String> flags, List<Vault> vaults) {
+    public int execute(String subcommand, Map<String, String> flags) {
         return switch (subcommand) {
-            case "create"   -> handleVaultCreate(flags, vaults);
-            case "add"      -> handleVaultAdd(flags, vaults);
-            case "update"   -> handleVaultUpdate(flags, vaults);
-            case "remove"   -> handleVaultRemove(flags, vaults);
-            case "relocate" -> handleVaultRelocate(flags, vaults);
-            case "list"     -> handleVaultList(flags, vaults);
+            case "create"   -> handleVaultCreate(flags);
+            case "add"      -> handleVaultAdd(flags);
+            case "update"   -> handleVaultUpdate(flags);
+            case "remove"   -> handleVaultRemove(flags);
+            case "relocate" -> handleVaultRelocate(flags);
+            case "list"     -> handleVaultList(flags);
             case "show"     -> {
                 int maxLines = Integer.parseInt(flags.getOrDefault("maxLines", "5"));
-                yield handleVaultShow(flags, vaults, maxLines);
+                yield handleVaultShow(flags, maxLines);
             }
             default -> {
                 logService.error("Unknown vault subcommand: " + subcommand +
@@ -127,15 +126,13 @@ public class VaultCli extends AbstractCli {
      * {@code vault add}).</p>
      *
      * @param flags        parsed CLI flags
-     * @param vaults       the list of already-registered vaults, used to pre-check
-     *                     {@code repoSlug} duplication before touching the filesystem
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
      *         path not a directory, non-empty target directory,
      *         {@code init}/{@code create}/{@code bootstrapVault} failure);
      *         {@code 2} if the vault is already registered or the path already
      *         contains a Git repository (no-op)
      */
-    int handleVaultCreate(Map<String, String> flags, List<Vault> vaults) {
+    int handleVaultCreate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_CREATE, "handleVaultCreate")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultCreate")) return 1;
 
@@ -144,7 +141,7 @@ public class VaultCli extends AbstractCli {
         String path     = flags.get("path");
         String repoSlug = owner + "/" + name;
 
-        if (vaults.stream().anyMatch(v -> v.getRepoSlug().equals(repoSlug))) {
+        if (vaultService.findAll().stream().anyMatch(v -> v.getRepoSlug().equals(repoSlug))) {
             logService.warn("handleVaultCreate - " + repoSlug + " - already registered, skipping");
             return 2;
         }
@@ -233,12 +230,10 @@ public class VaultCli extends AbstractCli {
      * <p>Required flags: {@code --owner}, {@code --name}, {@code --path}.</p>
      *
      * @param flags        parsed CLI flags
-     * @param vaults       the list of already-registered vaults, used to pre-check
-     *                     {@code repoSlug} duplication before touching the filesystem
      * @return {@code 0} on success, {@code 1} on any error, {@code 2} if the
      *         {@code repoSlug} is already registered (no-op)
      */
-    int handleVaultAdd(Map<String, String> flags, List<Vault> vaults) {
+    int handleVaultAdd(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_ADD, "handleVaultAdd")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultAdd")) return 1;
 
@@ -247,7 +242,7 @@ public class VaultCli extends AbstractCli {
         String path     = flags.get("path");
         String repoSlug = owner + "/" + name;
 
-        if (vaults.stream().anyMatch(v -> v.getRepoSlug().equals(repoSlug))) {
+        if (vaultService.findAll().stream().anyMatch(v -> v.getRepoSlug().equals(repoSlug))) {
             logService.warn("handleVaultAdd - " + repoSlug + " - already registered, skipping");
             return 2;
         }
@@ -304,11 +299,10 @@ public class VaultCli extends AbstractCli {
      * {@code --path}, {@code --git.*}.</p>
      *
      * @param flags        parsed CLI flags
-     * @param vaults       the list of registered vaults
      * @return {@code 0} on success, {@code 1} on any error, {@code 2} if no
      *         changes were requested (no-op)
      */
-    int handleVaultUpdate(Map<String, String> flags, List<Vault> vaults) {
+    int handleVaultUpdate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_UPDATE, "handleVaultUpdate")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultUpdate")) return 1;
         if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultUpdate")) return 1;
@@ -386,11 +380,10 @@ public class VaultCli extends AbstractCli {
      * <p>Required flags: {@code --vault}. Optional: {@code --force}.</p>
      *
      * @param flags        parsed CLI flags
-     * @param vaults       the list of registered vaults
      * @return {@code 0} on success, {@code 1} on any error, {@code 2} if the
      *         user declines the confirmation prompt (no-op)
      */
-    int handleVaultRemove(Map<String, String> flags, List<Vault> vaults) {
+    int handleVaultRemove(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_REMOVE, "handleVaultRemove")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRemove")) return 1;
         if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultRemove")) return 1;
@@ -504,14 +497,13 @@ public class VaultCli extends AbstractCli {
      * </ul>
      *
      * @param flags         parsed CLI flags
-     * @param vaults        the list of registered vaults
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
      *         vault not resolved, credential-only request with no structural
      *         change, snapshot/reset/copy/update/bootstrap failure); {@code 2}
      *         if nothing was requested at all, or if the user declines the
      *         confirmation prompt (both no-op)
      */
-    int handleVaultRelocate(Map<String, String> flags, List<Vault> vaults) {
+    int handleVaultRelocate(Map<String, String> flags) {
 
         if (hasUnknownFlags(flags, FLAGS_VAULT_RELOCATE, "handleVaultRelocate")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRelocate")) return 1;
@@ -683,14 +675,14 @@ public class VaultCli extends AbstractCli {
      * under normal operation the list is always non-null.</p>
      *
      * @param flags      parsed CLI flags
-     * @param vaults     the list of registered vaults
      * @return {@code 0} on success, {@code 1} if the vault list is null or an
      *         unknown flag is present
      */
-    int handleVaultList(Map<String, String> flags, List<Vault> vaults) {
+    int handleVaultList(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_LIST, "handleVaultList")) return 1;
         if (hasBlankOptionalValue(flags, Set.of(), "handleVaultList")) return 1;
 
+        List<Vault> vaults = vaultService.findAll();
         if (vaults == null) {
             logService.error("handleVaultList: vault list is null");
             return 1;
@@ -721,11 +713,10 @@ public class VaultCli extends AbstractCli {
      * whether they have been overridden at vault level.</p>
      *
      * @param flags      parsed CLI flags
-     * @param vaults     the list of registered vaults
      * @param maxLines   maximum number of status lines to display
      * @return {@code 0} on success, {@code 1} if the vault cannot be resolved
      */
-    int handleVaultShow(Map<String, String> flags, List<Vault> vaults, int maxLines) {
+    int handleVaultShow(Map<String, String> flags, int maxLines) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_SHOW, "handleVaultShow")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultShow")) return 1;
         if (hasBlankOptionalValue(flags, Set.of(), "handleVaultShow")) return 1;

@@ -160,7 +160,7 @@ public class Main {
         if ("vault".equals(command)) {
             // vault subcommands are allowed on an empty registry (e.g. vault add)
             String subcommand = flags.getOrDefault("sub", "list");
-            int result = vaultCli.execute(subcommand, flags, vaults);
+            int result = vaultCli.execute(subcommand, flags);
             exit(logService, result);
         }
 

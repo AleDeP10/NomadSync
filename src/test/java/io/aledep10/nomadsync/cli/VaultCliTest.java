@@ -88,7 +88,7 @@ class VaultCliTest {
         @Test
         @DisplayName("returns 1 and logs an error for an unrecognized subcommand")
         void unknownSubcommand_returnsOne() {
-            int result = vaultCli.execute("bogus", flags(), List.of());
+            int result = vaultCli.execute("bogus", flags());
 
             assertThat(result).isEqualTo(1);
         }
@@ -96,7 +96,7 @@ class VaultCliTest {
         @Test
         @DisplayName("dispatches 'list' to handleVaultList")
         void list_dispatchesCorrectly() {
-            int result = vaultCli.execute("list", flags(), List.of());
+            int result = vaultCli.execute("list", flags());
 
             assertThat(result).isEqualTo(0);
         }
@@ -114,7 +114,7 @@ class VaultCliTest {
             String path = installDir.resolve("vault-1").toString();
 
             int result = vaultCli.handleVaultCreate(
-                    flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+                    flags("owner", "Alice", "name", "portfolio", "path", path));
 
             assertThat(result).isEqualTo(0);
             assertThat(vaultService.findByRepoSlug("Alice/portfolio")).isPresent();
@@ -125,11 +125,11 @@ class VaultCliTest {
         @DisplayName("is a no-op (2) when the repoSlug is already registered")
         void duplicateRepoSlug_isNoOp() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
             int result = vaultCli.handleVaultCreate(
-                    flags("owner", "Alice", "name", "portfolio", "path", installDir.resolve("vault-2").toString()),
-                    vaultService.findAll());
+                    flags("owner", "Alice", "name", "portfolio",
+                            "path", installDir.resolve("vault-2").toString()));
 
             assertThat(result).isEqualTo(2);
         }
@@ -142,7 +142,7 @@ class VaultCliTest {
             Files.writeString(path.resolve("something.txt"), "unrelated content");
 
             int result = vaultCli.handleVaultCreate(
-                    flags("owner", "Alice", "name", "portfolio", "path", path.toString()), vaultService.findAll());
+                    flags("owner", "Alice", "name", "portfolio", "path", path.toString()));
 
             assertThat(result).isEqualTo(1);
         }
@@ -154,7 +154,7 @@ class VaultCliTest {
             Files.createDirectories(path.resolve(".git"));
 
             int result = vaultCli.handleVaultCreate(
-                    flags("owner", "Alice", "name", "portfolio", "path", path.toString()), vaultService.findAll());
+                    flags("owner", "Alice", "name", "portfolio", "path", path.toString()));
 
             assertThat(result).isEqualTo(2);
         }
@@ -170,11 +170,11 @@ class VaultCliTest {
         @DisplayName("registers an existing git repository")
         void registersExistingRepo() throws VaultException {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "temp", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "temp", "path", path));
             vaultService.delete(vaultService.findByRepoSlug("Alice/temp").orElseThrow().getId());
 
             int result = vaultCli.handleVaultAdd(
-                    flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+                    flags("owner", "Alice", "name", "portfolio", "path", path));
 
             assertThat(result).isEqualTo(0);
             assertThat(vaultService.findByRepoSlug("Alice/portfolio")).isPresent();
@@ -187,7 +187,7 @@ class VaultCliTest {
             Files.createDirectories(path);
 
             int result = vaultCli.handleVaultAdd(
-                    flags("owner", "Alice", "name", "portfolio", "path", path.toString()), vaultService.findAll());
+                    flags("owner", "Alice", "name", "portfolio", "path", path.toString()));
 
             assertThat(result).isEqualTo(1);
         }
@@ -197,8 +197,7 @@ class VaultCliTest {
         void missingPath_errors() {
             int result = vaultCli.handleVaultAdd(
                     flags("owner", "Alice", "name", "portfolio", "path",
-                            installDir.resolve("does-not-exist").toString()),
-                    vaultService.findAll());
+                            installDir.resolve("does-not-exist").toString()));
 
             assertThat(result).isEqualTo(1);
         }
@@ -214,9 +213,9 @@ class VaultCliTest {
         @DisplayName("is a no-op (2) when no optional flag is provided")
         void noFlags_isNoOp() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
-            int result = vaultCli.handleVaultUpdate(flags("vault", "Alice/portfolio"), vaultService.findAll());
+            int result = vaultCli.handleVaultUpdate(flags("vault", "Alice/portfolio"));
 
             assertThat(result).isEqualTo(2);
         }
@@ -225,10 +224,9 @@ class VaultCliTest {
         @DisplayName("updates the name and persists it")
         void updatesName() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
-            int result = vaultCli.handleVaultUpdate(
-                    flags("vault", "Alice/portfolio", "name", "renamed"), vaultService.findAll());
+            int result = vaultCli.handleVaultUpdate(flags("vault", "Alice/portfolio", "name", "renamed"));
 
             assertThat(result).isEqualTo(0);
             assertThat(vaultService.findByRepoSlug("Alice/renamed")).isPresent();
@@ -249,7 +247,7 @@ class VaultCliTest {
         void pathChange_claimsMarkerAtNewLocation() throws IOException {
             String oldPath = installDir.resolve("vault-1").toString();
             String newPath = installDir.resolve("vault-1-moved").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", oldPath), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", oldPath));
 
             // 'vault update --path' assumes the user already relocated the files
             // themselves — unlike 'vault relocate', it never moves anything physically.
@@ -261,8 +259,7 @@ class VaultCliTest {
             FileUtil.copyRecursively(source, target);
             FileUtil.deleteRecursively(target.resolve(MarkerType.VAULT.folderName()));
 
-            int result = vaultCli.handleVaultUpdate(
-                    flags("vault", "Alice/portfolio", "path", newPath), vaultService.findAll());
+            int result = vaultCli.handleVaultUpdate(flags("vault", "Alice/portfolio", "path", newPath));
 
             assertThat(result).isEqualTo(0);
             Vault updated = vaultService.findByRepoSlug("Alice/portfolio").orElseThrow();
@@ -276,19 +273,20 @@ class VaultCliTest {
         void forceRelocatesToNewPath() {
             String oldPath = installDir.resolve("vault-1").toString();
             String newPath = installDir.resolve("vault-1-relocated").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", oldPath), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", oldPath));
 
             int result = vaultCli.handleVaultRelocate(
-                    flags("vault", "Alice/portfolio", "path", newPath, "force", ""), vaultService.findAll());
+                    flags("vault", "Alice/portfolio", "path", newPath, "force", ""));
 
             assertThat(result).isEqualTo(0);
 
             Vault relocated = vaultService.findByRepoSlug("Alice/portfolio").orElseThrow();
-            assertThat(relocated.getPath()).isEqualTo(Path.of(newPath).toAbsolutePath().normalize().toString());
+            Path target = Path.of(newPath);
+            assertThat(relocated.getPath()).isEqualTo(target.toAbsolutePath().normalize().toString());
 
             // New location: git history reset but present, marker claimed there
-            assertThat(Files.isDirectory(Path.of(newPath).resolve(".git"))).isTrue();
-            assertThat(Files.isDirectory(Path.of(newPath).resolve(MarkerType.VAULT.folderName()))).isTrue();
+            assertThat(Files.isDirectory(target.resolve(".git"))).isTrue();
+            assertThat(Files.isDirectory(target.resolve(MarkerType.VAULT.folderName()))).isTrue();
 
             // Old location: fully gone, not just unmarked
             assertThat(Files.exists(Path.of(oldPath))).isFalse();
@@ -298,21 +296,22 @@ class VaultCliTest {
         @DisplayName("--path explicitly equal to the current path is a no-op (2), nothing is touched physically")
         void samePathExplicit_isNoOp() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
             int result = vaultCli.handleVaultRelocate(
-                    flags("vault", "Alice/portfolio", "path", path, "force", ""), vaultService.findAll());
+                    flags("vault", "Alice/portfolio", "path", path, "force", ""));
 
             assertThat(result).isEqualTo(2);
             Vault unchanged = vaultService.findByRepoSlug("Alice/portfolio").orElseThrow();
-            assertThat(unchanged.getPath()).isEqualTo(Path.of(path).toAbsolutePath().normalize().toString());
-            assertThat(Files.isDirectory(Path.of(path).resolve(MarkerType.VAULT.folderName()))).isTrue();
+            Path source = Path.of(path);
+            assertThat(unchanged.getPath()).isEqualTo(source.toAbsolutePath().normalize().toString());
+            assertThat(Files.isDirectory(source.resolve(MarkerType.VAULT.folderName()))).isTrue();
         }
 
         @Test
         @DisplayName("resolution failure logs the error and lists registered vaults")
         void unknownVault_errors() {
-            int result = vaultCli.handleVaultUpdate(flags("vault", "ghost/vault", "name", "x"), vaultService.findAll());
+            int result = vaultCli.handleVaultUpdate(flags("vault", "ghost/vault", "name", "x"));
 
             assertThat(result).isEqualTo(1);
         }
@@ -328,10 +327,9 @@ class VaultCliTest {
         @DisplayName("--force removes without prompting, keeps the local directory")
         void forceRemoves() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
-            int result = vaultCli.handleVaultRemove(
-                    flags("vault", "Alice/portfolio", "force", ""), vaultService.findAll());
+            int result = vaultCli.handleVaultRemove(flags("vault", "Alice/portfolio", "force", ""));
 
             assertThat(result).isEqualTo(0);
             assertThat(vaultService.findByRepoSlug("Alice/portfolio")).isEmpty();
@@ -342,12 +340,12 @@ class VaultCliTest {
         @DisplayName("declining the confirmation prompt is a no-op (2)")
         void declinePrompt_isNoOp() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
             InputStream originalIn = System.in;
             System.setIn(new ByteArrayInputStream("n\n".getBytes()));
             try {
-                int result = vaultCli.handleVaultRemove(flags("vault", "Alice/portfolio"), vaultService.findAll());
+                int result = vaultCli.handleVaultRemove(flags("vault", "Alice/portfolio"));
                 assertThat(result).isEqualTo(2);
                 assertThat(vaultService.findByRepoSlug("Alice/portfolio")).isPresent();
             } finally {
@@ -366,10 +364,9 @@ class VaultCliTest {
         @DisplayName("is a no-op (2) when nothing was requested")
         void noChanges_isNoOp() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
-            int result = vaultCli.handleVaultRelocate(
-                    flags("vault", "Alice/portfolio", "force", ""), vaultService.findAll());
+            int result = vaultCli.handleVaultRelocate(flags("vault", "Alice/portfolio", "force", ""));
 
             assertThat(result).isEqualTo(2);
         }
@@ -378,10 +375,10 @@ class VaultCliTest {
         @DisplayName("rejects a credential-only request, directs to 'vault update'")
         void credentialOnly_rejected() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
             int result = vaultCli.handleVaultRelocate(
-                    flags("vault", "Alice/portfolio", "git.token", "abc", "force", ""), vaultService.findAll());
+                    flags("vault", "Alice/portfolio", "git.token", "abc", "force", ""));
 
             assertThat(result).isEqualTo(1);
         }
@@ -390,10 +387,10 @@ class VaultCliTest {
         @DisplayName("--force relocates to a new owner, discarding history")
         void forceRelocatesToNewOwner() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
             int result = vaultCli.handleVaultRelocate(
-                    flags("vault", "Alice/portfolio", "owner", "Bob", "force", ""), vaultService.findAll());
+                    flags("vault", "Alice/portfolio", "owner", "Bob", "force", ""));
 
             assertThat(result).isEqualTo(0);
             assertThat(vaultService.findByRepoSlug("Bob/portfolio")).isPresent();
@@ -408,12 +405,12 @@ class VaultCliTest {
                     "no second drive/filesystem available on this machine - skipped here, covered by SMK/E2E instead");
 
             String oldPath = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", oldPath), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", oldPath));
 
             String newPath = secondRoot.resolve("nomadsync-cross-drive-test-" + UUID.randomUUID()).toString();
 
             int result = vaultCli.handleVaultRelocate(
-                    flags("vault", "Alice/portfolio", "path", newPath, "force", ""), vaultService.findAll());
+                    flags("vault", "Alice/portfolio", "path", newPath, "force", ""));
 
             assertThat(result).isEqualTo(1);
             Vault unchanged = vaultService.findByRepoSlug("Alice/portfolio").orElseThrow();
@@ -446,22 +443,16 @@ class VaultCliTest {
         @Test
         @DisplayName("succeeds with an empty registry")
         void emptyRegistry_succeeds() {
-            assertThat(vaultCli.handleVaultList(flags(), List.of())).isEqualTo(0);
+            assertThat(vaultCli.handleVaultList(flags())).isEqualTo(0);
         }
 
         @Test
         @DisplayName("succeeds and lists every registered vault")
         void listsRegisteredVaults() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
-            assertThat(vaultCli.handleVaultList(flags(), vaultService.findAll())).isEqualTo(0);
-        }
-
-        @Test
-        @DisplayName("errors defensively on a null vault list")
-        void nullList_errors() {
-            assertThat(vaultCli.handleVaultList(flags(), null)).isEqualTo(1);
+            assertThat(vaultCli.handleVaultList(flags())).isEqualTo(0);
         }
     }
 
@@ -475,9 +466,9 @@ class VaultCliTest {
         @DisplayName("shows mandatory fields for a resolved vault")
         void showsResolvedVault() {
             String path = installDir.resolve("vault-1").toString();
-            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path), vaultService.findAll());
+            vaultCli.handleVaultCreate(flags("owner", "Alice", "name", "portfolio", "path", path));
 
-            int result = vaultCli.handleVaultShow(flags("vault", "Alice/portfolio"), vaultService.findAll(), 5);
+            int result = vaultCli.handleVaultShow(flags("vault", "Alice/portfolio"), 5);
 
             assertThat(result).isEqualTo(0);
         }
@@ -485,7 +476,7 @@ class VaultCliTest {
         @Test
         @DisplayName("errors when the vault cannot be resolved")
         void unresolvedVault_errors() {
-            int result = vaultCli.handleVaultShow(flags("vault", "ghost/vault"), vaultService.findAll(), 5);
+            int result = vaultCli.handleVaultShow(flags("vault", "ghost/vault"), 5);
 
             assertThat(result).isEqualTo(1);
         }
