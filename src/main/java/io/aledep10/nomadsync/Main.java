@@ -24,10 +24,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
-import static io.aledep10.nomadsync.service.VaultService.applyGitFlagsToVault;
-import static io.aledep10.nomadsync.service.VaultService.listRegistered;
-import static io.aledep10.nomadsync.service.VaultService.resolveVaultFlag;
-
 /**
  * Entry point for NomadSync.
  *
@@ -154,6 +150,7 @@ public class Main {
         MarkerService    markerService    = new MarkerService(properties, logService);
         VaultService     vaultService     = new VaultService(configDir, markerService, gitignoreService, logService);
         GitService       gitService       = new GitService(properties, vaultService, gitignoreService, logService);
+        VaultCli         vaultCli         = new VaultCli(vaultService, markerService, gitService, logService);
         NotificationHook hook             = new LogNotificationHook(logService);
 
         // ── 4. Load vaults ────────────────────────────────────────────────────
@@ -163,8 +160,7 @@ public class Main {
         if ("vault".equals(command)) {
             // vault subcommands are allowed on an empty registry (e.g. vault add)
             String subcommand = flags.getOrDefault("sub", "list");
-            int result = VaultCli.execute(
-                    subcommand, flags, vaults, vaultService, gitService, markerService, logService);
+            int result = vaultCli.execute(subcommand, flags, vaults);
             exit(logService, result);
         }
 
@@ -175,7 +171,7 @@ public class Main {
         }
 
         if ("status".equals(command)) {
-            exit(logService, handleStatus(vaultFlag, vaults, gitService, logService));
+            exit(logService, handleStatus(vaultFlag, vaults, vaultService, gitService, logService));
         }
 
         if ("config".equals(command)) {
@@ -187,10 +183,10 @@ public class Main {
         // ── 6. Resolve --vault flag ───────────────────────────────────────────
         Vault targetVault;
         try {
-            targetVault = resolveVaultFlag(vaultFlag, vaults);
+            targetVault = vaultService.resolveVaultFlag(vaultFlag);
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("Main - " + e.getMessage());
-            listRegistered(vaults, logService);
+            vaultService.listRegistered();
             exit(logService, 1);
             return;
         }
@@ -199,7 +195,7 @@ public class Main {
         EventType eventType = operationToEventType(command, logService);
         if (eventType != null && eventType.isMandatoryVault() && targetVault == null) {
             logService.error("command '" + command + "' requires --vault=<name|owner/name>");
-            listRegistered(vaults, logService);
+            vaultService.listRegistered();
             exit(logService, 1);
             return;
         }
@@ -639,6 +635,7 @@ public class Main {
      *
      * @param vaultFlag  the raw {@code --vault} value, or {@code null} for broadcast
      * @param vaults     the list of registered vaults
+     * @param vaultService vault operations service
      * @param gitService Git operations service
      * @param logService shared logging service
      * @return {@code 0} if the status was printed successfully for every target
@@ -646,16 +643,16 @@ public class Main {
      *         {@code git status} failed for at least one target vault
      */
     private static int handleStatus(String vaultFlag, List<Vault> vaults,
-                                    GitService gitService, LogService logService) {
+                                    VaultService vaultService, GitService gitService, LogService logService) {
         List<Vault> targets;
 
         try {
             targets = vaultFlag != null
-                    ? List.of(resolveVaultFlag(vaultFlag, vaults))
+                    ? List.of(vaultService.resolveVaultFlag(vaultFlag))
                     : vaults;
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleStatus - " + e.getMessage());
-            listRegistered(vaults, logService);
+            vaultService.listRegistered();
             return 1;
         }
 
@@ -725,14 +722,14 @@ public class Main {
         if (vaultFlag != null) {
             Vault vault;
             try {
-                vault = resolveVaultFlag(vaultFlag, vaults);
+                vault = vaultService.resolveVaultFlag(vaultFlag);
             } catch (VaultNotFoundException | VaultAmbiguousException e) {
                 logService.error("handleConfig - " + e.getMessage());
-                listRegistered(vaults, logService);
+                vaultService.listRegistered();
                 return 1;
             }
 
-            applyGitFlagsToVault(gitFlags, vault, logService);
+            vaultService.applyGitFlagsToVault(gitFlags, vault);
 
             try {
                 vaultService.update(vault);
@@ -793,35 +790,5 @@ public class Main {
         };
         logService.debug("operationToEventType: " + command + " → " + eventType);
         return eventType;
-    }
-
-    /**
-     * Computes the Levenshtein edit distance between two strings — the minimum
-     * number of single-character insertions, deletions, or substitutions needed
-     * to transform one into the other. Case-insensitive, since flag names are
-     * conventionally lowercase and a typo shouldn't hide behind a case mismatch.
-     *
-     * @param a first string
-     * @param b second string
-     * @return the edit distance, always {@code >= 0}
-     */
-    public static int levenshteinDistance(String a, String b) {
-        String s1 = a.toLowerCase();
-        String s2 = b.toLowerCase();
-        int[][] dp = new int[s1.length() + 1][s2.length() + 1];
-
-        for (int i = 0; i <= s1.length(); i++) dp[i][0] = i;
-        for (int j = 0; j <= s2.length(); j++) dp[0][j] = j;
-
-        for (int i = 1; i <= s1.length(); i++) {
-            for (int j = 1; j <= s2.length(); j++) {
-                int cost = (s1.charAt(i - 1) == s2.charAt(j - 1)) ? 0 : 1;
-                dp[i][j] = Math.min(Math.min(
-                                dp[i - 1][j] + 1,      // deletion
-                                dp[i][j - 1] + 1),     // insertion
-                        dp[i - 1][j - 1] + cost); // substitution
-            }
-        }
-        return dp[s1.length()][s2.length()];
     }
 }

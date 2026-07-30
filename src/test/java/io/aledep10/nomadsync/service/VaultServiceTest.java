@@ -1,6 +1,5 @@
 package io.aledep10.nomadsync.service;
 
-
 import io.aledep10.nomadsync.exception.VaultAmbiguousException;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.exception.VaultNotFoundException;
@@ -16,7 +15,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
 
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -173,7 +171,6 @@ class VaultServiceTest {
         return (VaultMarker) new VaultMarkerStrategy().deserialize(Files.readString(descriptor));
     }
 
-
     // ── resolveVaultFlag ──────────────────────────────────────────────────────
 
     @Nested
@@ -182,52 +179,45 @@ class VaultServiceTest {
 
         @Test
         @DisplayName("resolves vault by exact repo slug")
-        void resolvesVaultByExactRepoSlug() {
-            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath());
-            Vault resolved = (Vault) TestUtil.invoke(VaultService.class, "resolveVaultFlag",
-                    new Class<?>[]{String.class, List.class},
-                    "owner/name", List.of(vault));
+        void resolvesVaultByExactRepoSlug(TempDirs tempDirs) throws IOException, VaultException {
+            Path path = newVaultDir(tempDirs, "vault-1");
+            Vault created = vaultService.create("owner", "name", path.toString());
 
-            Assertions.assertThat(resolved).isSameAs(vault);
+            Vault resolved = vaultService.resolveVaultFlag("owner/name");
+
+            Assertions.assertThat(resolved).isSameAs(created);
         }
 
         @Test
         @DisplayName("resolves vault by unambiguous name")
-        void resolvesVaultByName() {
-            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath());
-            Vault resolved = (Vault) TestUtil.invoke(VaultService.class, "resolveVaultFlag",
-                    new Class<?>[]{String.class, List.class},
-                    "name", List.of(vault));
+        void resolvesVaultByName(TempDirs tempDirs) throws IOException, VaultException {
+            Path path = newVaultDir(tempDirs, "vault-1");
+            Vault created = vaultService.create("owner", "name", path.toString());
 
-            Assertions.assertThat(resolved).isSameAs(vault);
+            Vault resolved = vaultService.resolveVaultFlag("name");
+
+            Assertions.assertThat(resolved).isSameAs(created);
         }
 
         @Test
         @DisplayName("throws VaultAmbiguousException when name matches multiple vaults")
-        void ambiguousName_throwsAmbiguous() {
-            Vault vault1 = new Vault("id1", "owner1", "name", TestUtil.createPath("path1"));
-            Vault vault2 = new Vault("id2", "owner2", "name", TestUtil.createPath("path2"));
+        void ambiguousName_throwsAmbiguous(TempDirs tempDirs) throws IOException, VaultException {
+            Path path1 = newVaultDir(tempDirs, "vault-1");
+            Path path2 = newVaultDir(tempDirs, "vault-2");
+            vaultService.create("owner1", "name", path1.toString());
+            vaultService.create("owner2", "name", path2.toString());
 
-            Assertions.assertThatThrownBy(() -> TestUtil.invoke(VaultService.class, "resolveVaultFlag",
-                            new Class<?>[]{String.class, List.class},
-                            "name", List.of(vault1, vault2)))
-                    .hasCauseInstanceOf(InvocationTargetException.class)
-                    .extracting(Throwable::getCause)
-                    .extracting(Throwable::getCause)
+            Assertions.assertThatThrownBy(() -> vaultService.resolveVaultFlag("name"))
                     .isInstanceOf(VaultAmbiguousException.class);
         }
 
         @Test
         @DisplayName("throws VaultNotFoundException when no vault matches")
-        void noMatch_throwsNotFound() {
-            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath());
+        void noMatch_throwsNotFound(TempDirs tempDirs) throws IOException, VaultException {
+            Path path = newVaultDir(tempDirs, "vault-1");
+            vaultService.create("owner", "name", path.toString());
 
-            Assertions.assertThatThrownBy(() -> TestUtil.invoke(VaultService.class, "resolveVaultFlag",
-                            new Class<?>[]{String.class, List.class},
-                            "nonexistent", List.of(vault)))
-                    .hasCauseInstanceOf(InvocationTargetException.class)
-                    .extracting(Throwable::getCause)
-                    .extracting(Throwable::getCause)
+            Assertions.assertThatThrownBy(() -> vaultService.resolveVaultFlag("nonexistent"))
                     .isInstanceOf(VaultNotFoundException.class);
         }
     }
@@ -250,9 +240,7 @@ class VaultServiceTest {
             gitFlags.put("git.branch",   "develop");
             gitFlags.put("git.remote",   "upstream");
 
-            TestUtil.invoke(VaultService.class, "applyGitFlagsToVault",
-                    new Class<?>[]{Map.class, Vault.class, LogService.class},
-                    gitFlags, vault, logService);
+            vaultService.applyGitFlagsToVault(gitFlags, vault);
 
             Assertions.assertThat(vault.getGitName()).isEqualTo("Alice");
             Assertions.assertThat(vault.getGitEmail()).isEqualTo("alice@example.com");
@@ -269,9 +257,7 @@ class VaultServiceTest {
             Map<String, String> gitFlags = new LinkedHashMap<>();
             gitFlags.put("git.unknown", "value");
 
-            TestUtil.invoke(VaultService.class, "applyGitFlagsToVault",
-                    new Class<?>[]{Map.class, Vault.class, LogService.class},
-                    gitFlags, vault, logService);
+            vaultService.applyGitFlagsToVault(gitFlags, vault);
 
             Assertions.assertThat(vault.getName()).isEqualTo("name");
             Assertions.assertThat(vault.getGitName()).isNull();

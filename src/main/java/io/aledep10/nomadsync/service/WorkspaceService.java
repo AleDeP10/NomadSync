@@ -284,7 +284,8 @@ public class WorkspaceService {
 
         boolean firstEver = workspaces.isEmpty();
         WorkspaceEntry workspace = new WorkspaceEntry(workspaceName, absolutePath, firstEver);
-        markerService.refresh(MarkerType.WORKSPACE, absolutePath, WorkspaceMarker.create(workspaceName));
+        markerService.refresh(MarkerType.WORKSPACE, absolutePath,
+                WorkspaceMarker.create(stableMarkerId(absolutePath), workspaceName, DateFormats.nowLog()));
 
         workspaces.put(workspace.getWorkspaceName(), workspace);
         save();
@@ -414,6 +415,7 @@ public class WorkspaceService {
         }
         JsonMapper.saveVaultsToFile(catalogFile, rebased);
     }
+
     /**
      * Removes a registered workspace entry from the registry — never touches
      * the local directory (see {@link #erase} for physical deletion).

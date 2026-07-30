@@ -182,6 +182,7 @@ public final class TestUtil {
      */
     public static Properties forLogService(TestVault vault, LogLevel level) {
         Properties properties = new Properties();
+        properties.setProperty("log.writers", "console,file");
         properties.setProperty("log.path",  vault.logFilePath().toString());
         properties.setProperty("log.level", level.name());
         return properties;

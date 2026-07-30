@@ -172,14 +172,18 @@ public class MarkerService {
      */
     public void claim(MarkerType type, String path, Marker marker) throws MarkerClaimException {
         checkNoNestingConflict(path);
-        Path folder = markerFolder(Path.of(path), type);
+        Path dir = Path.of(path);
+        Path folder = markerFolder(dir, type);
         try {
             Files.createDirectory(folder);
         } catch (FileAlreadyExistsException e) {
             throw new MarkerClaimException("path '" + path + "' is already claimed - "
                     + describeConflictBestEffort(type, folder));
         } catch (IOException e) {
-            throw new MarkerClaimException("Unable to claim path " + path + ": " + e.getMessage(), e);
+            String reason = Files.isDirectory(dir)
+                    ? e.getMessage()
+                    : "target directory '" + path + "' does not exist";
+            throw new MarkerClaimException("Unable to claim path " + path + ": " + reason, e);
         }
         Path descriptor = folder.resolve(MarkerType.DESCRIPTOR_FILE_NAME);
         try {

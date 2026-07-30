@@ -101,23 +101,22 @@ public class VaultService {
      * must never be silently downgraded to a broadcast on all vaults.</p>
      *
      * @param vaultFlag  the raw {@code --vault} value, or {@code null} if absent
-     * @param vaults     the list of registered vaults
      * @return the matching {@link Vault}, or {@code null} if {@code vaultFlag} is {@code null}
      * @throws VaultNotFoundException  if {@code vaultFlag} is non-null and matches no vault
      * @throws VaultAmbiguousException if {@code vaultFlag} is a bare name matching multiple vaults
      */
-    public static Vault resolveVaultFlag(String vaultFlag, List<Vault> vaults)
+    public Vault resolveVaultFlag(String vaultFlag)
             throws VaultNotFoundException, VaultAmbiguousException {
         if (vaultFlag == null) return null;
 
         if (vaultFlag.contains("/")) {
-            return vaults.stream()
+            return vaults.values().stream()
                     .filter(v -> v.getRepoSlug().equals(vaultFlag))
                     .findFirst()
                     .orElseThrow(() -> new VaultNotFoundException(vaultFlag));
         }
 
-        List<Vault> matches = vaults.stream()
+        List<Vault> matches = vaults.values().stream()
                 .filter(v -> v.getName().equals(vaultFlag))
                 .toList();
 
@@ -133,13 +132,10 @@ public class VaultService {
     /**
      * Logs all registered vault repoSlugs at ERROR level — used in resolution
      * error messages to help the user identify the correct {@code --vault} value.
-     *
-     * @param vaults     the list of registered vaults
-     * @param logService shared logging service
      */
-    public static void listRegistered(List<Vault> vaults, LogService logService) {
+    public void listRegistered() {
         logService.error("Registered: "
-                + vaults.stream()
+                + vaults.values().stream()
                 .map(Vault::getRepoSlug)
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("(none)"));
@@ -154,10 +150,8 @@ public class VaultService {
      *
      * @param gitFlags   map of {@code git.*} flag keys to their values
      * @param vault      the vault to mutate
-     * @param logService shared logging service
      */
-    public static void applyGitFlagsToVault(Map<String, String> gitFlags,
-                                            Vault vault, LogService logService) {
+    public void applyGitFlagsToVault(Map<String, String> gitFlags, Vault vault) {
         gitFlags.forEach((key, value) -> {
             switch (key) {
                 case NomadProperties.Git.NAME     -> vault.setGitName(value);

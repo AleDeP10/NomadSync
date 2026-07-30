@@ -74,7 +74,7 @@ public class GitService {
     private final String           gitExecutable;
     private final VaultService     vaultService;
     private final GitignoreService gitignoreService;
-    private final LogService        logService;
+    private final LogService       logService;
 
     /**
      * Constructs the service from the provided configuration.

@@ -3,6 +3,7 @@ package io.aledep10.nomadsync.cli;
 import io.aledep10.nomadsync.Main;
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
+import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.service.MarkerService;
@@ -16,23 +17,53 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
-import static io.aledep10.nomadsync.service.VaultService.*;
+public class VaultCli extends AbstractCli {
 
-public class VaultCli {
+    private final VaultService vaultService;
+    private final MarkerService markerService;
+    private final GitService gitService;
 
-    public static int execute(String subcommand, Map<String, String> flags, List<Vault> vaults,
-                              VaultService vaultService, GitService gitService,
-                              MarkerService markerService, LogService logService) {
+    public VaultCli(VaultService vaultService, MarkerService markerService,
+                    GitService gitService, LogService logService) {
+        super(logService);
+        this.vaultService = vaultService;
+        this.markerService = markerService;
+        this.gitService = gitService;
+    }
+
+
+    @Override
+    protected Map<String, String> syntaxHints() {
+        return Map.of("vault", "--vault=<name|owner/name>");
+    }
+
+    @Override
+    protected List<String> keysToCheck() {
+        return List.of("workspacePath");
+    }
+
+    /**
+     * Calibrated for vault flag names (typically 4-15 characters, e.g.
+     * {@code owner}, {@code gitBranch}): 2 catches single-character typos
+     * without matching genuinely unrelated flags that happen to share a few
+     * characters.
+     */
+    @Override
+    protected int flagSuggestionMaxDistance() {
+        return 2;
+    }
+
+    public int execute(String subcommand, Map<String, String> flags, List<Vault> vaults) {
         return switch (subcommand) {
-            case "create"   -> handleVaultCreate(flags, vaults, vaultService, gitService, logService);
-            case "add"      -> handleVaultAdd(flags, vaults, vaultService, gitService, logService);
-            case "update"   -> handleVaultUpdate(flags, vaults, vaultService, gitService, logService);
-            case "remove"   -> handleVaultRemove(flags, vaults, vaultService, logService);
-            case "relocate" -> handleVaultRelocate(flags, vaults, vaultService, markerService, gitService, logService);
-            case "list"     -> handleVaultList(flags, vaults, logService);
+            case "create"   -> handleVaultCreate(flags, vaults);
+            case "add"      -> handleVaultAdd(flags, vaults);
+            case "update"   -> handleVaultUpdate(flags, vaults);
+            case "remove"   -> handleVaultRemove(flags, vaults);
+            case "relocate" -> handleVaultRelocate(flags, vaults);
+            case "list"     -> handleVaultList(flags, vaults);
             case "show"     -> {
                 int maxLines = Integer.parseInt(flags.getOrDefault("maxLines", "5"));
-                yield handleVaultShow(flags, vaults, maxLines, gitService, logService);
+                yield handleVaultShow(flags, vaults, maxLines);
             }
             default -> {
                 logService.error("Unknown vault subcommand: " + subcommand +
@@ -68,40 +99,6 @@ public class VaultCli {
     private static final Set<String> FLAGS_VAULT_SHOW   = Set.of("vault", "defaults");
 
     /**
-     * Detects any flag keys in {@code flags} that do not belong to the given
-     * known set for the current subcommand.
-     *
-     * <p>The internal {@code "sub"} key injected by the parser is always
-     * permitted and never reported. For each unrecognised key, logs one error
-     * line — including a "did you mean...?" suggestion (via
-     * {@link #nearestKnownFlag}) when a known flag is within Levenshtein
-     * distance {@link #FLAG_SUGGESTION_MAX_DISTANCE}, to help catch typos.</p>
-     *
-     * @param flags      parsed CLI flags (global flags already removed)
-     * @param knownFlags set of keys valid for the current subcommand
-     * @param handler    handler name used as log prefix, e.g. {@code "handleVaultAdd"}
-     * @param logService shared logging service
-     * @return {@code true} if at least one unrecognised key is present,
-     *         {@code false} if all keys are recognised
-     */
-    private static boolean hasUnknownFlags(Map<String, String> flags, Set<String> knownFlags,
-                                           String handler, LogService logService) {
-        List<String> unknown = flags.keySet().stream()
-                .filter(k -> !k.equals("sub") && !knownFlags.contains(k))
-                .sorted()
-                .toList();
-        if (unknown.isEmpty()) return false;
-
-        unknown.forEach(k -> {
-            Optional<String> suggestion = nearestKnownFlag(k, knownFlags);
-            String message = "unknown flag '--" + k + "'"
-                    + suggestion.map(s -> " — did you mean '--" + s + "'?").orElse("");
-            logService.error(handler + ": " + message);
-        });
-        return true;
-    }
-
-    /**
      * Handles {@code vault create} — initialises a brand-new local Git repository
      * at {@code --path} and registers it as a vault, in that order.
      *
@@ -132,21 +129,15 @@ public class VaultCli {
      * @param flags        parsed CLI flags
      * @param vaults       the list of already-registered vaults, used to pre-check
      *                     {@code repoSlug} duplication before touching the filesystem
-     * @param vaultService vault persistence service
-     * @param gitService   Git operations service
-     * @param logService   shared logging service
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
      *         path not a directory, non-empty target directory,
      *         {@code init}/{@code create}/{@code bootstrapVault} failure);
      *         {@code 2} if the vault is already registered or the path already
      *         contains a Git repository (no-op)
      */
-    public static int handleVaultCreate(Map<String, String> flags, List<Vault> vaults,
-                                        VaultService vaultService,
-                                        GitService gitService,
-                                        LogService logService) {
-        if (hasUnknownFlags(flags, FLAGS_VAULT_CREATE, "handleVaultCreate", logService)) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultCreate", logService)) return 1;
+    int handleVaultCreate(Map<String, String> flags, List<Vault> vaults) {
+        if (hasUnknownFlags(flags, FLAGS_VAULT_CREATE, "handleVaultCreate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultCreate")) return 1;
 
         String owner    = flags.get("owner");
         String name     = flags.get("name");
@@ -209,7 +200,7 @@ public class VaultCli {
         flags.forEach((k, v) -> {
             if (k.startsWith("git.")) gitFlags.put(k, v);
         });
-        applyGitFlagsToVault(gitFlags, vault, logService);
+        vaultService.applyGitFlagsToVault(gitFlags, vault);
 
         try {
             gitService.bootstrapVault(vault);
@@ -244,18 +235,12 @@ public class VaultCli {
      * @param flags        parsed CLI flags
      * @param vaults       the list of already-registered vaults, used to pre-check
      *                     {@code repoSlug} duplication before touching the filesystem
-     * @param vaultService vault persistence service
-     * @param gitService   Git operations service
-     * @param logService   shared logging service
      * @return {@code 0} on success, {@code 1} on any error, {@code 2} if the
      *         {@code repoSlug} is already registered (no-op)
      */
-    public static int handleVaultAdd(Map<String, String> flags, List<Vault> vaults,
-                                     VaultService vaultService,
-                                     GitService gitService,
-                                     LogService logService) {
-        if (hasUnknownFlags(flags, FLAGS_VAULT_ADD, "handleVaultAdd", logService)) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultAdd", logService)) return 1;
+    int handleVaultAdd(Map<String, String> flags, List<Vault> vaults) {
+        if (hasUnknownFlags(flags, FLAGS_VAULT_ADD, "handleVaultAdd")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultAdd")) return 1;
 
         String owner    = flags.get("owner");
         String name     = flags.get("name");
@@ -289,7 +274,7 @@ public class VaultCli {
         flags.forEach((k, v) -> {
             if (k.startsWith("git.")) gitFlags.put(k, v);
         });
-        applyGitFlagsToVault(gitFlags, vault, logService);
+        vaultService.applyGitFlagsToVault(gitFlags, vault);
 
         try {
             gitService.bootstrapVault(vault);
@@ -320,55 +305,59 @@ public class VaultCli {
      *
      * @param flags        parsed CLI flags
      * @param vaults       the list of registered vaults
-     * @param vaultService vault persistence service
-     * @param gitService   Git operations service
-     * @param logService   shared logging service
      * @return {@code 0} on success, {@code 1} on any error, {@code 2} if no
      *         changes were requested (no-op)
      */
-    public static int handleVaultUpdate(Map<String, String> flags, List<Vault> vaults,
-                                        VaultService vaultService,
-                                        GitService gitService,
-                                        LogService logService) {
-        if (hasUnknownFlags(flags, FLAGS_VAULT_UPDATE, "handleVaultUpdate", logService)) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultUpdate", logService)) return 1;
-        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultUpdate", logService)) return 1;
+    int handleVaultUpdate(Map<String, String> flags, List<Vault> vaults) {
+        if (hasUnknownFlags(flags, FLAGS_VAULT_UPDATE, "handleVaultUpdate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultUpdate")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultUpdate")) return 1;
 
         Vault vault;
         try {
-            vault = resolveVaultFlag(flags.get("vault"), vaults);
+            vault = vaultService.resolveVaultFlag(flags.get("vault"));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultUpdate - " + e.getMessage());
-            listRegistered(vaults, logService);
+            vaultService.listRegistered();
             return 1;
         }
 
-        boolean changed = false;
-        if (flags.containsKey("owner")) { vault.setOwner(flags.get("owner")); changed = true; }
-        if (flags.containsKey("name"))  { vault.setName(flags.get("name"));   changed = true; }
-        if (flags.containsKey("path"))  { vault.setPath(flags.get("path"));   changed = true; }
-
         Map<String, String> gitFlags = new LinkedHashMap<>();
         flags.forEach((k, v) -> { if (k.startsWith("git.")) gitFlags.put(k, v); });
-        if (!gitFlags.isEmpty()) {
-            applyGitFlagsToVault(gitFlags, vault, logService);
-            changed = true;
-        }
+
+        boolean changed = flags.containsKey("owner") || flags.containsKey("name")
+                || flags.containsKey("path") || !gitFlags.isEmpty();
 
         if (!changed) {
             logService.info("handleVaultUpdate: no changes requested.");
             return 2;
         }
 
+        // Construct a fresh copy instead of mutating `vault` in place — same reasoning
+        // as handleVaultRelocate (NomadSync-VLT-013): `vault` is the same reference held
+        // inside VaultService's internal map, and update() relies on findById() to read
+        // the PREVIOUS state for change detection. Mutating in place would make that
+        // comparison always see "no change", silently skipping claim/release.
+        Vault updated = new Vault(vault.getId(),
+                flags.getOrDefault("owner", vault.getOwner()),
+                flags.getOrDefault("name", vault.getName()),
+                flags.getOrDefault("path", vault.getPath()),
+                vault.getGitName(), vault.getGitEmail(), vault.getGitUsername(),
+                vault.getGitToken(), vault.getGitBranch(), vault.getGitRemote());
+
+        if (!gitFlags.isEmpty()) {
+            vaultService.applyGitFlagsToVault(gitFlags, updated);
+        }
+
         try {
-            vaultService.update(vault);
+            vaultService.update(updated);
         } catch (VaultException e) {
             logService.error("handleVaultUpdate - " + e.getMessage(), e);
             return 1;
         }
 
         try {
-            gitService.bootstrapVault(vault);
+            gitService.bootstrapVault(updated);
         } catch (GitException e) {
             logService.error("handleVaultUpdate - bootstrapVault failed: " + e.getMessage(), e);
             return 1;
@@ -378,7 +367,7 @@ public class VaultCli {
             return 1;
         }
 
-        logService.info("Vault updated: " + vault.getRepoSlug());
+        logService.info("Vault updated: " + updated.getRepoSlug());
         return 0;
     }
 
@@ -398,24 +387,20 @@ public class VaultCli {
      *
      * @param flags        parsed CLI flags
      * @param vaults       the list of registered vaults
-     * @param vaultService vault persistence service
-     * @param logService   shared logging service
      * @return {@code 0} on success, {@code 1} on any error, {@code 2} if the
      *         user declines the confirmation prompt (no-op)
      */
-    public static int handleVaultRemove(Map<String, String> flags, List<Vault> vaults,
-                                        VaultService vaultService,
-                                        LogService logService) {
-        if (hasUnknownFlags(flags, FLAGS_VAULT_REMOVE, "handleVaultRemove", logService)) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRemove", logService)) return 1;
-        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultRemove", logService)) return 1;
+    int handleVaultRemove(Map<String, String> flags, List<Vault> vaults) {
+        if (hasUnknownFlags(flags, FLAGS_VAULT_REMOVE, "handleVaultRemove")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRemove")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultRemove")) return 1;
 
         Vault vault;
         try {
-            vault = resolveVaultFlag(flags.get("vault"), vaults);
+            vault = vaultService.resolveVaultFlag(flags.get("vault"));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultRemove - " + e.getMessage());
-            listRegistered(vaults, logService);
+            vaultService.listRegistered();
             return 1;
         }
 
@@ -520,32 +505,24 @@ public class VaultCli {
      *
      * @param flags         parsed CLI flags
      * @param vaults        the list of registered vaults
-     * @param vaultService  vault persistence service
-     * @param markerService marker claim/release service
-     * @param gitService    Git operations service
-     * @param logService    shared logging service
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
      *         vault not resolved, credential-only request with no structural
      *         change, snapshot/reset/copy/update/bootstrap failure); {@code 2}
      *         if nothing was requested at all, or if the user declines the
      *         confirmation prompt (both no-op)
      */
-    public static int handleVaultRelocate(Map<String, String> flags, List<Vault> vaults,
-                                          VaultService vaultService,
-                                          MarkerService markerService,
-                                          GitService gitService,
-                                          LogService logService) {
+    int handleVaultRelocate(Map<String, String> flags, List<Vault> vaults) {
 
-        if (hasUnknownFlags(flags, FLAGS_VAULT_RELOCATE, "handleVaultRelocate", logService)) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRelocate", logService)) return 1;
-        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultRelocate", logService)) return 1;
+        if (hasUnknownFlags(flags, FLAGS_VAULT_RELOCATE, "handleVaultRelocate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRelocate")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultRelocate")) return 1;
 
         Vault vault;
         try {
-            vault = resolveVaultFlag(flags.get("vault"), vaults);
+            vault = vaultService.resolveVaultFlag(flags.get("vault"));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultRelocate - " + e.getMessage());
-            listRegistered(vaults, logService);
+            vaultService.listRegistered();
             return 1;
         }
 
@@ -580,6 +557,26 @@ public class VaultCli {
                 markerService.checkNoNestingConflict(newPath);
             } catch (MarkerClaimException e) {
                 logService.error("handleVaultRelocate - " + e.getMessage());
+                return 1;
+            }
+
+            try {
+                markerService.checkNoNestingConflict(newPath);
+            } catch (MarkerClaimException e) {
+                logService.error("handleVaultRelocate - " + e.getMessage());
+                return 1;
+            }
+
+            try {
+                if (isCrossDrive(Path.of(vault.getPath()), Path.of(newPath))) {
+                    logService.error("handleVaultRelocate - relocating across a different drive/filesystem "
+                            + "is not supported in this version - move the directory with a system tool, "
+                            + "then use 'vault add' at the new location");
+                    return 1;
+                }
+            } catch (IOException e) {
+                logService.error("handleVaultRelocate - unable to determine filesystem for '" + newPath
+                        + "': " + e.getMessage(), e);
                 return 1;
             }
         }
@@ -627,12 +624,14 @@ public class VaultCli {
                 logService.error("handleVaultRelocate - copy failed: " + e.getMessage(), e);
                 return 1;
             }
-            // The raw copy may have carried over the OLD .vault marker (if one existed at
-            // the original location) — it must not occupy the new location's claim slot,
-            // since vaultService.update() below will atomically claim a fresh marker there
-            // via claimVaultPath. Remove it defensively; harmless no-op if none was copied.
+            // The raw copy may have carried over the OLD .nomadsync-vault marker folder
+            // (if one existed at the original location) — it must not occupy the new
+            // location's claim slot, since vaultService.update() below will atomically
+            // claim a fresh marker there via claimVaultMarker. Recursive delete, not
+            // deleteIfExists: the folder always contains at least descriptor.json once
+            // claimed, so it is never empty.
             try {
-                Files.deleteIfExists(target.resolve(".vault"));
+                FileUtil.deleteRecursively(target.resolve(MarkerType.VAULT.folderName()));
             } catch (IOException e) {
                 logService.warn("handleVaultRelocate - unable to remove copied marker at new path: "
                         + e.getMessage());
@@ -653,7 +652,7 @@ public class VaultCli {
         Vault updated = new Vault(vault.getId(), newOwner, newName, newPath,
                 vault.getGitName(), vault.getGitEmail(), vault.getGitUsername(),
                 vault.getGitToken(), vault.getGitBranch(), vault.getGitRemote());
-        applyGitFlagsToVault(gitFlags, updated, logService);
+        vaultService.applyGitFlagsToVault(gitFlags, updated);
 
         try {
             vaultService.update(updated);
@@ -685,13 +684,12 @@ public class VaultCli {
      *
      * @param flags      parsed CLI flags
      * @param vaults     the list of registered vaults
-     * @param logService shared logging service
      * @return {@code 0} on success, {@code 1} if the vault list is null or an
      *         unknown flag is present
      */
-    public static int handleVaultList(Map<String, String> flags, List<Vault> vaults, LogService logService) {
-        if (hasUnknownFlags(flags, FLAGS_VAULT_LIST, "handleVaultList", logService)) return 1;
-        if (hasBlankOptionalValue(flags, Set.of(), "handleVaultList", logService)) return 1;
+    int handleVaultList(Map<String, String> flags, List<Vault> vaults) {
+        if (hasUnknownFlags(flags, FLAGS_VAULT_LIST, "handleVaultList")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(), "handleVaultList")) return 1;
 
         if (vaults == null) {
             logService.error("handleVaultList: vault list is null");
@@ -725,24 +723,19 @@ public class VaultCli {
      * @param flags      parsed CLI flags
      * @param vaults     the list of registered vaults
      * @param maxLines   maximum number of status lines to display
-     * @param gitService Git operations service
-     * @param logService shared logging service
      * @return {@code 0} on success, {@code 1} if the vault cannot be resolved
      */
-    public static int handleVaultShow(Map<String, String> flags, List<Vault> vaults,
-                                      int maxLines,
-                                      GitService gitService,
-                                      LogService logService) {
-        if (hasUnknownFlags(flags, FLAGS_VAULT_SHOW, "handleVaultShow", logService)) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultShow", logService)) return 1;
-        if (hasBlankOptionalValue(flags, Set.of(), "handleVaultShow", logService)) return 1;
+    int handleVaultShow(Map<String, String> flags, List<Vault> vaults, int maxLines) {
+        if (hasUnknownFlags(flags, FLAGS_VAULT_SHOW, "handleVaultShow")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultShow")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(), "handleVaultShow")) return 1;
 
         Vault vault;
         try {
-            vault = resolveVaultFlag(flags.get("vault"), vaults);
+            vault = vaultService.resolveVaultFlag(flags.get("vault"));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultShow - " + e.getMessage());
-            listRegistered(vaults, logService);
+            vaultService.listRegistered();
             return 1;
         }
 
@@ -782,128 +775,7 @@ public class VaultCli {
         return 0;
     }
 
-    /**
-     * Returns the value if non-null, or a placeholder indicating the field
-     * falls back to {@code config.properties}.
-     *
-     * @param value the per-vault override value, or {@code null} if not set
-     * @return the value, or {@code "(from config)"} if absent
-     */
-    public static String orDefault(String value) {
+    private static String orDefault(String value) {
         return value != null ? value : "(from config)";
     }
-
-    /**
-     * Detects required flags that are either entirely absent from {@code flags} or
-     * present with a blank value — both are treated as the same violation: the
-     * caller did not supply a real value for a field that cannot be meaningfully
-     * empty.
-     *
-     * <p>Intended for structural flags ({@code --vault}, {@code --owner},
-     * {@code --name}, {@code --path}) that must always resolve to a real value.
-     * Do <strong>not</strong> use this for {@code --git.*} flags — a blank
-     * {@code --git.token} (for example) is a deliberately supported way to clear
-     * a per-vault credential override, not an error.</p>
-     *
-     * <p>Each invalid key produces its own log line, using a known syntax hint
-     * when available (e.g. {@code --vault=<name|owner/name>}) so the message
-     * conveys the expected format, not just that the flag is missing.</p>
-     *
-     * @param flags       parsed CLI flags
-     * @param requiredKeys the set of flag keys that must be present and non-blank
-     * @param handler     handler name used as log prefix, e.g. {@code "handleVaultUpdate"}
-     * @param logService  shared logging service
-     * @return {@code true} if at least one required key is absent or blank,
-     *         {@code false} if all are present with a real value
-     */
-    public static boolean hasBlankRequiredFlags(Map<String, String> flags, Set<String> requiredKeys,
-                                                String handler, LogService logService) {
-        List<String> invalid = requiredKeys.stream()
-                .filter(k -> !flags.containsKey(k) || flags.get(k).isBlank())
-                .sorted()
-                .toList();
-        if (invalid.isEmpty()) return false;
-        invalid.forEach(k -> {
-            String hint = FLAG_SYNTAX_HINTS.getOrDefault(k, "--" + k + "=<value>");
-            logService.error(handler + ": requires " + hint);
-        });
-        return true;
-    }
-
-    /**
-     * Detects structural flags that are present in {@code flags} but hold a
-     * blank value — unlike {@link #hasBlankRequiredFlags}, absence is not a
-     * violation here: these keys are legitimately optional (e.g. {@code --path}
-     * on {@code vault update}, left out to mean "don't touch it"). Only
-     * "provided but empty" is treated as user error, since a blank structural
-     * value never has a meaningful interpretation.
-     *
-     * <p>{@code --workspacePath} is always implicitly checked in addition to
-     * {@code structuralKeys}, regardless of what the caller passes — it is a
-     * global flag present on every command, and a blank value
-     * ({@code --workspacePath=}) is never valid on any of them. Callers do not
-     * need to (and should not) include {@code "workspacePath"} in
-     * {@code structuralKeys} themselves.</p>
-     *
-     * @param flags         parsed CLI flags
-     * @param structuralKeys optional structural keys to check when present
-     *                       (e.g. {@code owner}, {@code name}, {@code path});
-     *                       may be empty if the handler has none of its own —
-     *                       {@code --workspacePath} is still checked in that case
-     * @param handler       handler name used as log prefix, e.g. {@code "handleVaultUpdate"}
-     * @param logService    shared logging service
-     * @return {@code true} if at least one checked key is present but blank,
-     *         {@code false} otherwise
-     */
-    public static boolean hasBlankOptionalValue(Map<String, String> flags, Set<String> structuralKeys,
-                                                String handler, LogService logService) {
-        Set<String> keysToCheck = new java.util.HashSet<>(structuralKeys);
-        keysToCheck.add("workspacePath");
-
-        List<String> blank = keysToCheck.stream()
-                .filter(flags::containsKey)
-                .filter(k -> flags.get(k).isBlank())
-                .sorted()
-                .toList();
-        if (blank.isEmpty()) return false;
-        blank.forEach(k -> logService.error(handler + ": --" + k + " was provided but has no value"));
-        return true;
-    }
-
-    /**
-     * Known syntax hints for required flags whose expected format is not obvious
-     * from the key name alone — used by {@link #hasBlankRequiredFlags} to produce
-     * an actionable error message instead of a generic "cannot be blank".
-     */
-    public static final Map<String, String> FLAG_SYNTAX_HINTS = Map.of(
-            "vault", "--vault=<name|owner/name>"
-    );
-
-
-    /**
-     * Finds the closest known flag to an unrecognized one, by Levenshtein
-     * distance — used to produce a "did you mean...?" hint. Returns empty if no
-     * known flag is within {@link #FLAG_SUGGESTION_MAX_DISTANCE}, avoiding a
-     * misleading suggestion for a flag that is simply unrelated (e.g. belongs to
-     * a different command entirely) rather than a typo.
-     *
-     * @param unknownFlag the flag key that was not recognized
-     * @param knownFlags  the set of valid flag keys for the current command
-     * @return the nearest match within threshold, or empty if none qualifies
-     */
-    private static Optional<String> nearestKnownFlag(String unknownFlag, Set<String> knownFlags) {
-        return knownFlags.stream()
-                .map(known -> Map.entry(known, Main.levenshteinDistance(unknownFlag, known)))
-                .filter(e -> e.getValue() <= FLAG_SUGGESTION_MAX_DISTANCE)
-                .min(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey);
-    }
-
-    /**
-     * Maximum edit distance for a "did you mean...?" suggestion to be shown.
-     * Calibrated for short flag names (typically 4-15 characters): 2 catches
-     * single-character typos (missing/swapped/doubled letter) without matching
-     * genuinely unrelated flags that happen to share a few characters.
-     */
-    private static final int FLAG_SUGGESTION_MAX_DISTANCE = 2;
 }

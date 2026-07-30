@@ -29,24 +29,6 @@ public final class WorkspaceMarker extends Marker {
         return new WorkspaceMarker(id, workspaceName, now, now);
     }
 
-    /**
-     * Creates a brand-new marker with a freshly generated {@code id} and the
-     * current timestamp — convenience for production call sites that don't
-     * need control over either. Not deterministic: never use in tests.
-     */
-    public static WorkspaceMarker create(String workspaceName) {
-        return create(UUID.randomUUID().toString(), workspaceName, DateFormats.nowLog());
-    }
-
-    /**
-     * Creates a brand-new marker with a freshly generated {@code id} but an
-     * explicit timestamp — for tests that want a deterministic timestamp
-     * without caring about the specific {@code id} value.
-     */
-    static WorkspaceMarker create(String workspaceName, String now) {
-        return create(UUID.randomUUID().toString(), workspaceName, now);
-    }
-
     public String workspaceName() { return workspaceName; }
 
     @Override
