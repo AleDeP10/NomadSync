@@ -41,6 +41,7 @@ import java.util.Set;
 public class WorkspaceCli extends AbstractCli {
 
     public static final String COMMAND = "workspace";
+    public static final String DEFAULT_SUBCOMMAND = "list";
     public static final String FLAG_WORKSPACE = "workspace";
     public static final String FLAG_WORKSPACE_NAME = "workspaceName";
     public static final String FLAG_PATH = "path";

@@ -18,6 +18,7 @@ import java.util.*;
 public class VaultCli extends AbstractCli {
 
     public static final String COMMAND = "vault";
+    public static final String DEFAULT_SUBCOMMAND = "list";
     public static final String FLAG_VAULT = "vault";
     public static final String FLAG_OWNER = "owner";
     public static final String FLAG_NAME = "name";

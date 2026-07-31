@@ -109,6 +109,14 @@ public class Main {
     public static final String FLAG_WORKSPACE_PATH = "workspacePath";
     public static final String FLAG_DAEMON = "daemon";
 
+    private static final String COMMAND_PULL = "pull";
+    private static final String COMMAND_PUSH = "push";
+    private static final String COMMAND_SYNC = "sync";
+    private static final String COMMAND_COMMIT = "commit";
+    private static final String COMMAND_AUTOSAVE = "autosave";
+    private static final String COMMAND_STATUS = "status";
+    private static final String COMMAND_CONFIG = "config";
+
 
     public static void main(String[] args) {
 
@@ -165,13 +173,13 @@ public class Main {
         // ── 5. Early-exit commands — no orchestrators needed ──────────────────
         if (VaultCli.COMMAND.equals(command)) {
             // vault subcommands are allowed on an empty registry (e.g. vault add)
-            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, "list");
+            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, VaultCli.DEFAULT_SUBCOMMAND);
             int result = vaultCli.execute(subcommand, flags);
             exit(logService, result);
         }
         if (WorkspaceCli.COMMAND.equals(command)) {
-            // vault subcommands are allowed on an empty registry (e.g. vault add)
-            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, "list");
+            // workspace subcommands are allowed on an empty registry (e.g. workspace add)
+            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, WorkspaceCli.DEFAULT_SUBCOMMAND);
             int result = workspaceCli.execute(subcommand, flags);
             exit(logService, result);
         }
@@ -182,11 +190,11 @@ public class Main {
             exit(logService, 0);
         }
 
-        if ("status".equals(command)) {
+        if (COMMAND_STATUS.equals(command)) {
             exit(logService, handleStatus(vaultFlag, vaults, vaultService, gitService, logService));
         }
 
-        if ("config".equals(command)) {
+        if (COMMAND_CONFIG.equals(command)) {
             exit(logService, handleConfig(flags, configFile, properties, logService));
         }
 
@@ -279,22 +287,22 @@ public class Main {
 
         // ── 12. CLI → event ───────────────────────────────────────────────────
         switch (command) {
-            case "pull" -> {
+            case COMMAND_PULL -> {
                 SyncEvent event = new SyncEvent(EventType.PULL_LOGON,
                         targetVault != null ? targetVault.getId() : null);
                 broadcastQueue.publish(event);
             }
-            case "push" -> {
+            case COMMAND_PUSH -> {
                 SyncEvent event = new SyncEvent(EventType.PUSH_LOGOFF,
                         targetVault != null ? targetVault.getId() : null);
                 broadcastQueue.publish(event);
             }
-            case "sync" -> {
+            case COMMAND_SYNC -> {
                 SyncEvent event = new SyncEvent(EventType.SYNCHRONIZE,
                         targetVault != null ? targetVault.getId() : null);
                 broadcastQueue.publish(event);
             }
-            case "commit" -> {
+            case COMMAND_COMMIT -> {
                 // targetVault guaranteed non-null (mandatory-vault check above)
                 String message = openEditorForMessage(flags, properties, logService);
                 if (message == null || message.isBlank()) {
@@ -305,7 +313,7 @@ public class Main {
                 broadcastQueue.publish(
                         new SyncEvent(EventType.COMMIT_MANUAL, targetVault.getId(), message));
             }
-            case "autosave" -> { /* AutosaveScheduler handles periodic publishing */ }
+            case COMMAND_AUTOSAVE -> { /* AutosaveScheduler handles periodic publishing */ }
             default -> {
                 logService.error("Unknown command: " + command);
                 exit(logService, 1);
@@ -680,23 +688,23 @@ public class Main {
     // ── config command ────────────────────────────────────────────────────────
 
     /**
-     * Handles the {@code config} command.
+     * Handles the {@code config} command — updates matching {@code git.*} keys
+     * in {@code config.properties} (global configuration) and persists to disk.
+     * Note: {@link Properties#store} does not preserve comments from the
+     * original file.
      *
-     * <p>Updates matching {@code git.*} keys in {@code config.properties} and persists to disk.
-     * Note: {@link Properties#store} does not preserve comments from the original file.</p>
+     * <p>Scoped to global configuration only — per-vault credential updates go
+     * through {@code vault update --git.*=...}.</p>
      *
      * @param flags        parsed CLI flags
-     * @param properties   loaded application properties
      * @param configFile   resolved path to the target workspace's {@code config.properties}
+     * @param properties   loaded application properties
      * @param logService   shared logging service
-     * @return {@code 0} on success, {@code 1} on error (vault not resolved, or
-     *         persistence/bootstrap/write failure), {@code 2} if no {@code --git.*}
-     *         flag was provided (no-op)
+     * @return {@code 0} on success, {@code 1} on a write failure, {@code 2} if
+     *         no {@code --git.*} flag was provided (no-op)
      */
-    private static int handleConfig(Map<String, String> flags,
-                                    Path configFile,
-                                    Properties properties,
-                                    LogService logService) {
+    private static int handleConfig(Map<String, String> flags, Path configFile,
+                                    Properties properties, LogService logService) {
 
         Map<String, String> gitFlags = new LinkedHashMap<>();
         flags.forEach((k, v) -> {
@@ -721,7 +729,6 @@ public class Main {
                     + e.getMessage(), e);
             return 1;
         }
-
         return 0;
     }
 
@@ -738,10 +745,10 @@ public class Main {
      */
     private static EventType operationToEventType(String command, LogService logService) {
         EventType eventType = switch (command) {
-            case "pull"     -> EventType.PULL_LOGON;
-            case "push"     -> EventType.PUSH_LOGOFF;
-            case "sync"     -> EventType.SYNCHRONIZE;
-            case "commit"   -> EventType.COMMIT_MANUAL;
+            case COMMAND_PULL     -> EventType.PULL_LOGON;
+            case COMMAND_PUSH     -> EventType.PUSH_LOGOFF;
+            case COMMAND_SYNC     -> EventType.SYNCHRONIZE;
+            case COMMAND_COMMIT   -> EventType.COMMIT_MANUAL;
             default         -> null;        // includes also "autosave", "status", "config", "vault", "workspace"
         };
         logService.debug("operationToEventType: " + command + " → " + eventType);
