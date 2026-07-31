@@ -7,7 +7,6 @@ import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.marker.VaultMarker;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
-import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
 import java.io.File;
 import java.io.IOException;

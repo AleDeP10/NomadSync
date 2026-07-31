@@ -78,7 +78,8 @@ class WorkspaceCliTest {
         void create_dispatchesCorrectly() {
             String path = installDir.resolve("ws-1").toString();
 
-            int result = workspaceCli.execute("create", flags("workspaceName", "default", "path", path));
+            int result = workspaceCli.execute("create",
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
             assertThat(result).isEqualTo(0);
         }
@@ -95,7 +96,8 @@ class WorkspaceCliTest {
         void createsAndRegistersAsDefault() {
             String path = installDir.resolve("ws-1").toString();
 
-            int result = workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", path));
+            int result = workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
             assertThat(result).isEqualTo(0);
             WorkspaceEntry created = workspaceService.findByName("default").orElseThrow();
@@ -107,10 +109,12 @@ class WorkspaceCliTest {
         @DisplayName("errors on a duplicate workspaceName")
         void duplicateName_errors() {
             String path = installDir.resolve("ws-1").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", path));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
             int result = workspaceCli.handleWorkspaceCreate(
-                    flags("workspaceName", "default", "path", installDir.resolve("ws-2").toString()));
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default",
+                            WorkspaceCli.FLAG_PATH, installDir.resolve("ws-2").toString()));
 
             assertThat(result).isEqualTo(1);
         }
@@ -128,7 +132,8 @@ class WorkspaceCliTest {
             Path path = installDir.resolve("already-there");
             Files.createDirectories(path.resolve(MarkerType.WORKSPACE.folderName()));
 
-            int result = workspaceCli.handleWorkspaceAdd(flags("workspaceName", "default", "path", path.toString()));
+            int result = workspaceCli.handleWorkspaceAdd(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path.toString()));
 
             assertThat(result).isEqualTo(0);
             assertThat(workspaceService.findByName("default")).isPresent();
@@ -140,7 +145,8 @@ class WorkspaceCliTest {
             Path path = installDir.resolve("unmarked");
             Files.createDirectories(path);
 
-            int result = workspaceCli.handleWorkspaceAdd(flags("workspaceName", "default", "path", path.toString()));
+            int result = workspaceCli.handleWorkspaceAdd(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path.toString()));
 
             assertThat(result).isEqualTo(1);
         }
@@ -156,9 +162,11 @@ class WorkspaceCliTest {
         @DisplayName("changes workspaceName, leaves path and isDefault untouched")
         void renamesSuccessfully() {
             String path = installDir.resolve("ws-1").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", path));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
-            int result = workspaceCli.handleWorkspaceRename(flags("workspace", "default", "workspaceName", "primary"));
+            int result = workspaceCli.handleWorkspaceRename(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_WORKSPACE_NAME, "primary"));
 
             assertThat(result).isEqualTo(0);
             assertThat(workspaceService.findByName("default")).isEmpty();
@@ -169,7 +177,8 @@ class WorkspaceCliTest {
         @Test
         @DisplayName("errors when --workspace does not resolve to a registered entry")
         void unknownWorkspace_errors() {
-            int result = workspaceCli.handleWorkspaceRename(flags("workspace", "ghost", "workspaceName", "primary"));
+            int result = workspaceCli.handleWorkspaceRename(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "ghost", WorkspaceCli.FLAG_WORKSPACE_NAME, "primary"));
 
             assertThat(result).isEqualTo(1);
         }
@@ -186,10 +195,11 @@ class WorkspaceCliTest {
         void forceRelocates() {
             String oldPath = installDir.resolve("ws-1").toString();
             String newPath = installDir.resolve("ws-1-moved").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", oldPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, oldPath));
 
             int result = workspaceCli.handleWorkspaceRelocate(
-                    flags("workspace", "default", "path", newPath, "force", ""));
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_PATH, newPath, AbstractCli.FLAG_FORCE, ""));
 
             assertThat(result).isEqualTo(0);
             WorkspaceEntry relocated = workspaceService.findByName("default").orElseThrow();
@@ -202,7 +212,8 @@ class WorkspaceCliTest {
         @DisplayName("errors when --workspace does not resolve to a registered entry")
         void unknownWorkspace_errors() {
             int result = workspaceCli.handleWorkspaceRelocate(
-                    flags("workspace", "ghost", "path", installDir.resolve("x").toString(), "force", ""));
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "ghost", WorkspaceCli.FLAG_PATH,
+                            installDir.resolve("x").toString(), AbstractCli.FLAG_FORCE, ""));
 
             assertThat(result).isEqualTo(1);
         }
@@ -212,12 +223,14 @@ class WorkspaceCliTest {
         void declinePrompt_isNoOp() {
             String oldPath = installDir.resolve("ws-1").toString();
             String newPath = installDir.resolve("ws-1-moved").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", oldPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, oldPath));
 
             InputStream originalIn = System.in;
             System.setIn(new ByteArrayInputStream("n\n".getBytes()));
             try {
-                int result = workspaceCli.handleWorkspaceRelocate(flags("workspace", "default", "path", newPath));
+                int result = workspaceCli.handleWorkspaceRelocate(
+                        flags(WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_PATH, newPath));
                 assertThat(result).isEqualTo(2);
                 assertThat(workspaceService.findByName("default").orElseThrow().getPath())
                         .isEqualTo(Path.of(oldPath).toAbsolutePath().normalize().toString());
@@ -238,10 +251,13 @@ class WorkspaceCliTest {
         void forceRemoves() {
             String defaultPath = installDir.resolve("ws-1").toString();
             String secondaryPath = installDir.resolve("ws-2").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", defaultPath));
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "secondary", "path", secondaryPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, defaultPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "secondary", WorkspaceCli.FLAG_PATH, secondaryPath));
 
-            int result = workspaceCli.handleWorkspaceRemove(flags("workspace", "secondary", "force", ""));
+            int result = workspaceCli.handleWorkspaceRemove(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "secondary", AbstractCli.FLAG_FORCE, ""));
 
             assertThat(result).isEqualTo(0);
             assertThat(workspaceService.findByName("secondary")).isEmpty();
@@ -252,9 +268,11 @@ class WorkspaceCliTest {
         @DisplayName("refuses to remove the current default workspace")
         void refusesToRemoveDefault() {
             String path = installDir.resolve("ws-1").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", path));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
-            int result = workspaceCli.handleWorkspaceRemove(flags("workspace", "default", "force", ""));
+            int result = workspaceCli.handleWorkspaceRemove(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "default", AbstractCli.FLAG_FORCE, ""));
 
             assertThat(result).isEqualTo(1);
             assertThat(workspaceService.findByName("default")).isPresent();
@@ -272,10 +290,13 @@ class WorkspaceCliTest {
         void forceErases() {
             String defaultPath = installDir.resolve("ws-1").toString();
             String secondaryPath = installDir.resolve("ws-2").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", defaultPath));
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "secondary", "path", secondaryPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, defaultPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "secondary", WorkspaceCli.FLAG_PATH, secondaryPath));
 
-            int result = workspaceCli.handleWorkspaceErase(flags("workspace", "secondary", "force", ""));
+            int result = workspaceCli.handleWorkspaceErase(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "secondary", AbstractCli.FLAG_FORCE, ""));
 
             assertThat(result).isEqualTo(0);
             assertThat(workspaceService.findByName("secondary")).isEmpty();
@@ -286,9 +307,11 @@ class WorkspaceCliTest {
         @DisplayName("refuses to erase the current default workspace")
         void refusesToEraseDefault() {
             String path = installDir.resolve("ws-1").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", path));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
-            int result = workspaceCli.handleWorkspaceErase(flags("workspace", "default", "force", ""));
+            int result = workspaceCli.handleWorkspaceErase(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "default", AbstractCli.FLAG_FORCE, ""));
 
             assertThat(result).isEqualTo(1);
             assertThat(Files.isDirectory(Path.of(path))).isTrue();
@@ -306,10 +329,12 @@ class WorkspaceCliTest {
         void togglesDefault() {
             String defaultPath = installDir.resolve("ws-1").toString();
             String secondaryPath = installDir.resolve("ws-2").toString();
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "default", "path", defaultPath));
-            workspaceCli.handleWorkspaceCreate(flags("workspaceName", "secondary", "path", secondaryPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, defaultPath));
+            workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "secondary", WorkspaceCli.FLAG_PATH, secondaryPath));
 
-            int result = workspaceCli.handleWorkspaceUse(flags("workspace", "secondary"));
+            int result = workspaceCli.handleWorkspaceUse(flags(WorkspaceCli.FLAG_WORKSPACE, "secondary"));
 
             assertThat(result).isEqualTo(0);
             assertThat(workspaceService.findByName("secondary").orElseThrow().isDefault()).isTrue();
@@ -319,7 +344,7 @@ class WorkspaceCliTest {
         @Test
         @DisplayName("errors when --workspace does not resolve to a registered entry")
         void unknownWorkspace_errors() {
-            int result = workspaceCli.handleWorkspaceUse(flags("workspace", "ghost"));
+            int result = workspaceCli.handleWorkspaceUse(flags(WorkspaceCli.FLAG_WORKSPACE, "ghost"));
 
             assertThat(result).isEqualTo(1);
         }
@@ -327,11 +352,14 @@ class WorkspaceCliTest {
         @Test
         @DisplayName("--path alone (no --workspace) errors with guidance to 'add' then 'use'")
         void pathAloneWithoutWorkspace_errorsWithGuidance() {
-            int result = workspaceCli.handleWorkspaceUse(flags("path", installDir.resolve("ghost").toString()));
+            int result = workspaceCli.handleWorkspaceUse(
+                    flags(WorkspaceCli.FLAG_PATH, installDir.resolve("ghost").toString()));
 
             assertThat(result).isEqualTo(1);
         }
     }
+
+    // ── list ──────────────────────────────────────────────────────────────
 
     @Nested
     @DisplayName("handleWorkspaceList")
@@ -347,9 +375,11 @@ class WorkspaceCliTest {
         @DisplayName("succeeds and lists every registered workspace")
         void listsRegisteredWorkspaces() {
             workspaceCli.handleWorkspaceCreate(
-                    flags("workspaceName", "default", "path", installDir.resolve("ws-1").toString()));
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default",
+                            WorkspaceCli.FLAG_PATH, installDir.resolve("ws-1").toString()));
             workspaceCli.handleWorkspaceCreate(
-                    flags("workspaceName", "secondary", "path", installDir.resolve("ws-2").toString()));
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "secondary",
+                            WorkspaceCli.FLAG_PATH, installDir.resolve("ws-2").toString()));
 
             assertThat(workspaceCli.handleWorkspaceList(flags())).isEqualTo(0);
         }

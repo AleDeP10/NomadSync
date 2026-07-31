@@ -1,10 +1,7 @@
 package io.aledep10.nomadsync.util;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.aledep10.nomadsync.dto.*;
 import io.aledep10.nomadsync.orchestrator.EventType;
@@ -15,7 +12,6 @@ import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.List;
 

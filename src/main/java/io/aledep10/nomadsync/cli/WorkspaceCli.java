@@ -33,9 +33,9 @@ import java.util.Set;
  *       — {@link WorkspaceService#use(String)} has no logic to auto-register
  *       an unregistered ("ghost") path under a name, so promoting one via a
  *       bare {@code --path} is not supported here.</li>
- *   <li>No {@code list}/{@code show} — not part of the seven subcommands
- *       decided for this iteration; there is currently no CLI-visible way to
- *       inspect the registry.</li>
+ *   <li>No {@code show} — not part of the seven subcommands decided for this
+ *       iteration; a workspace only has {@code workspaceName}/{@code path} to
+ *       show, already visible in {@code list}.</li>
  * </ul>
  */
 public class WorkspaceCli extends AbstractCli {
@@ -56,7 +56,7 @@ public class WorkspaceCli extends AbstractCli {
 
     @Override
     protected Map<String, String> syntaxHints() {
-        return Map.of(FLAG_WORKSPACE, "--workspace=<name>");
+        return Map.of(FLAG_WORKSPACE, "--" + FLAG_WORKSPACE + "=<name>");
     }
 
     /**
@@ -94,14 +94,14 @@ public class WorkspaceCli extends AbstractCli {
     // "sub" is injected internally by the parser and is always implicitly allowed.
     // Global flags (workspacePath, vault, daemon) are removed from the map before
     // these handlers are invoked, so they must not appear here.
-    private static final Set<String> FLAGS_WORKSPACE_CREATE = Set.of("workspaceName", "path");
+    private static final Set<String> FLAGS_WORKSPACE_CREATE = Set.of(FLAG_WORKSPACE_NAME, FLAG_PATH);
     // Allowed flags — same set as FLAGS_WORKSPACE_CREATE (workspaceName, path).
     private static final Set<String> FLAGS_WORKSPACE_ADD      = FLAGS_WORKSPACE_CREATE;
-    private static final Set<String> FLAGS_WORKSPACE_RENAME   = Set.of(FLAG_WORKSPACE, "workspaceName");
-    private static final Set<String> FLAGS_WORKSPACE_RELOCATE = Set.of(FLAG_WORKSPACE, "path", FLAG_FORCE);
+    private static final Set<String> FLAGS_WORKSPACE_RENAME   = Set.of(FLAG_WORKSPACE, FLAG_WORKSPACE_NAME);
+    private static final Set<String> FLAGS_WORKSPACE_RELOCATE = Set.of(FLAG_WORKSPACE, FLAG_PATH, FLAG_FORCE);
     private static final Set<String> FLAGS_WORKSPACE_REMOVE   = Set.of(FLAG_WORKSPACE, FLAG_FORCE);
     private static final Set<String> FLAGS_WORKSPACE_ERASE    = Set.of(FLAG_WORKSPACE, FLAG_FORCE);
-    private static final Set<String> FLAGS_WORKSPACE_USE      = Set.of(FLAG_WORKSPACE, "path");
+    private static final Set<String> FLAGS_WORKSPACE_USE      = Set.of(FLAG_WORKSPACE, FLAG_PATH);
     private static final Set<String> FLAGS_WORKSPACE_LIST     = Set.of();
 
     /**
@@ -116,10 +116,10 @@ public class WorkspaceCli extends AbstractCli {
      */
     int handleWorkspaceCreate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_CREATE, "handleWorkspaceCreate")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("workspaceName", "path"), "handleWorkspaceCreate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE_NAME, FLAG_PATH), "handleWorkspaceCreate")) return 1;
 
-        String workspaceName = flags.get("workspaceName");
-        String path = flags.get("path");
+        String workspaceName = flags.get(FLAG_WORKSPACE_NAME);
+        String path = flags.get(FLAG_PATH);
 
         try {
             WorkspaceEntry created = workspaceService.create(workspaceName, path);
@@ -144,10 +144,10 @@ public class WorkspaceCli extends AbstractCli {
      */
     int handleWorkspaceAdd(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_ADD, "handleWorkspaceAdd")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("workspaceName", "path"), "handleWorkspaceAdd")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE_NAME, FLAG_PATH), "handleWorkspaceAdd")) return 1;
 
-        String workspaceName = flags.get("workspaceName");
-        String path = flags.get("path");
+        String workspaceName = flags.get(FLAG_WORKSPACE_NAME);
+        String path = flags.get(FLAG_PATH);
 
         try {
             WorkspaceEntry added = workspaceService.add(workspaceName, path);
@@ -173,10 +173,10 @@ public class WorkspaceCli extends AbstractCli {
      */
     int handleWorkspaceRename(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_RENAME, "handleWorkspaceRename")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE, "workspaceName"), "handleWorkspaceRename")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE, FLAG_WORKSPACE_NAME), "handleWorkspaceRename")) return 1;
 
         String workspaceName = flags.get(FLAG_WORKSPACE);
-        String newWorkspaceName = flags.get("workspaceName");
+        String newWorkspaceName = flags.get(FLAG_WORKSPACE_NAME);
 
         try {
             WorkspaceEntry renamed = workspaceService.rename(workspaceName, newWorkspaceName);
@@ -202,16 +202,16 @@ public class WorkspaceCli extends AbstractCli {
      *
      * @param flags parsed CLI flags
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
-     *         unresolved {@code --workspace}, nesting conflict, move/rebase
-     *         failure); {@code 2} if the user declines the confirmation
-     *         prompt (no-op)
+     *         unresolved {@code --workspace}, nesting conflict, cross-drive
+     *         target, move/rebase failure); {@code 2} if the user declines
+     *         the confirmation prompt (no-op)
      */
     int handleWorkspaceRelocate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_RELOCATE, "handleWorkspaceRelocate")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE, "path"), "handleWorkspaceRelocate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE, FLAG_PATH), "handleWorkspaceRelocate")) return 1;
 
         String workspaceName = flags.get(FLAG_WORKSPACE);
-        String newPath = Path.of(flags.get("path")).toAbsolutePath().normalize().toString();
+        String newPath = Path.of(flags.get(FLAG_PATH)).toAbsolutePath().normalize().toString();
 
         Optional<WorkspaceEntry> existing = workspaceService.findByName(workspaceName);
         if (existing.isEmpty()) {
@@ -378,13 +378,13 @@ public class WorkspaceCli extends AbstractCli {
      */
     int handleWorkspaceUse(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_USE, "handleWorkspaceUse")) return 1;
-        if (hasBlankOptionalValue(flags, Set.of("path"), "handleWorkspaceUse")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(FLAG_PATH), "handleWorkspaceUse")) return 1;
 
         String workspaceName = flags.get(FLAG_WORKSPACE);
         if (workspaceName == null || workspaceName.isBlank()) {
-            if (flags.containsKey("path")) {
+            if (flags.containsKey(FLAG_PATH)) {
                 logService.error("handleWorkspaceUse: a bare --path cannot be promoted directly - "
-                        + "register it first with 'workspace add --workspaceName=<name> --path=" + flags.get("path")
+                        + "register it first with 'workspace add --workspaceName=<name> --path=" + flags.get(FLAG_PATH)
                         + "', then 'workspace use --workspace=<name>'");
             } else {
                 logService.error("handleWorkspaceUse: requires --workspace=<name>");
@@ -409,11 +409,10 @@ public class WorkspaceCli extends AbstractCli {
      * <p>No mandatory flags.</p>
      *
      * @param flags parsed CLI flags
-     * @return {@code 0} on success, {@code 1} on an unknown/blank flag
+     * @return {@code 0} on success, {@code 1} on an unknown flag
      */
     int handleWorkspaceList(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_LIST, "handleWorkspaceList")) return 1;
-        if (hasBlankOptionalValue(flags, Set.of(), "handleWorkspaceList")) return 1;
 
         List<WorkspaceEntry> workspaces = workspaceService.findAll();
         if (workspaces.isEmpty()) {
