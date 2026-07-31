@@ -1,5 +1,7 @@
 package io.aledep10.nomadsync.vault;
 
+import io.aledep10.nomadsync.service.VaultService;
+
 import java.nio.file.Path;
 
 /**
@@ -12,7 +14,7 @@ import java.nio.file.Path;
  * {@link io.aledep10.nomadsync.service.VaultService}.</p>
  *
  * <p>{@link #getRepoSlug()} is derived from {@link #owner} and {@link #name}
- * as {@code <owner>/<name>} (e.g. {@code AleDeP10/public-vault}). It is the
+ * as {@code <owner>/<name>} (e.g. {@code Alice/public-vault}). It is the
  * canonical unique identifier across devices and is used as the
  * {@code universalId} field in structured log entries, as the uniqueness
  * constraint enforced by {@link io.aledep10.nomadsync.service.VaultService},
@@ -33,10 +35,10 @@ import java.nio.file.Path;
  *
  * <h2>Git credentials</h2>
  * <p>{@link #gitUsername} is the GitHub username used for authentication — it
- * may differ from {@link #owner}. Example: Alessandro ({@code AleDeP10})
- * contributes to a vault owned by Gabriela ({@code belmani-apex}); his
- * {@code gitUsername} is {@code AleDeP10} while {@code owner} is
- * {@code belmani-apex}.</p>
+ * may differ from {@link #owner}. Example: a contributor, Alice
+ * ({@code alice-dev}), contributes to a vault owned by an organisation,
+ * Acme Corp ({@code acme-corp}); her {@code gitUsername} is
+ * {@code alice-dev} while {@code owner} is {@code acme-corp}.</p>
  *
  * <p>All credential fields are optional — if absent, the global Git
  * configuration and credential store are used. Credential resolution order:
@@ -109,6 +111,24 @@ public class Vault {
         this.gitRemote   = gitRemote;
     }
 
+    /**
+     * Returns a new, independent instance with the same field values.
+     *
+     * <p>Used by {@link VaultService}'s query methods ({@code findAll}/
+     * {@code findById}/{@code findByRepoSlug}/{@code findAllByName}) so the live
+     * instance held in its internal cache is never handed out — mutating the
+     * returned copy has no effect on the source of truth until it is explicitly
+     * submitted through {@link VaultService#update(Vault)}. Same rationale as
+     * {@code WorkspaceEntry.copy()} ({@code NomadSync-WSP-005}).</p>
+     *
+     * @return a new {@link Vault} with the same {@code id}, {@code owner},
+     *         {@code name}, {@code path}, and Git fields as this one
+     */
+    public Vault copy() {
+        return new Vault(id, owner, name, path, gitName, gitEmail, gitUsername, gitToken, gitBranch, gitRemote);
+    }
+
+
     // ── Identity ──────────────────────────────────────────────────────────────
 
     /**
@@ -121,7 +141,7 @@ public class Vault {
 
     /**
      * Returns the canonical vault identifier: {@code <owner>/<name>},
-     * e.g. {@code AleDeP10/public-vault}.
+     * e.g. {@code Alice/public-vault}.
      *
      * <p>Derived from {@link #owner} and {@link #name} — not persisted separately
      * in {@code catalog.json}. Used as:</p>

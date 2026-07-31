@@ -1,12 +1,15 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.exception.VaultAmbiguousException;
 import io.aledep10.nomadsync.exception.VaultException;
+import io.aledep10.nomadsync.exception.VaultNotFoundException;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.marker.VaultMarker;
 import io.aledep10.nomadsync.marker.VaultMarkerStrategy;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -114,12 +117,12 @@ class VaultServiceTest {
     }
 
     @BeforeEach
-    void setUp(TempDirs tempDirs) throws IOException, VaultException {
+    void setUp(TempDirs tempDirs) throws IOException {
         testVault = tempDirs.newVault("VaultServiceTest");
         gitignoreService = new GitignoreService(logService);
-        Properties properties = TestUtil.forVaultService(testVault);
+        Properties properties = new Properties();
         markerService = new MarkerService(properties, logService);
-        vaultService = new VaultService(properties, testVault.vaultPath(), markerService, gitignoreService, logService);
+        vaultService = new VaultService(testVault.vaultPath(), markerService, gitignoreService, logService);
     }
 
     // No @AfterEach — testVault and every ad-hoc directory created via
@@ -166,6 +169,100 @@ class VaultServiceTest {
     private VaultMarker readMarker(Path vaultContent) throws IOException {
         Path descriptor = vaultContent.resolve(MarkerType.VAULT.folderName()).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
         return (VaultMarker) new VaultMarkerStrategy().deserialize(Files.readString(descriptor));
+    }
+
+    // ── resolveVaultFlag ──────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("resolveVaultFlag")
+    class ResolveVaultFlagTests {
+
+        @Test
+        @DisplayName("resolves vault by exact repo slug")
+        void resolvesVaultByExactRepoSlug(TempDirs tempDirs) throws IOException, VaultException {
+            Path path = newVaultDir(tempDirs, "vault-1");
+            Vault created = vaultService.create("owner", "name", path.toString());
+
+            Vault resolved = vaultService.resolveVaultFlag("owner/name");
+
+            Assertions.assertThat(resolved).isSameAs(created);
+        }
+
+        @Test
+        @DisplayName("resolves vault by unambiguous name")
+        void resolvesVaultByName(TempDirs tempDirs) throws IOException, VaultException {
+            Path path = newVaultDir(tempDirs, "vault-1");
+            Vault created = vaultService.create("owner", "name", path.toString());
+
+            Vault resolved = vaultService.resolveVaultFlag("name");
+
+            Assertions.assertThat(resolved).isSameAs(created);
+        }
+
+        @Test
+        @DisplayName("throws VaultAmbiguousException when name matches multiple vaults")
+        void ambiguousName_throwsAmbiguous(TempDirs tempDirs) throws IOException, VaultException {
+            Path path1 = newVaultDir(tempDirs, "vault-1");
+            Path path2 = newVaultDir(tempDirs, "vault-2");
+            vaultService.create("owner1", "name", path1.toString());
+            vaultService.create("owner2", "name", path2.toString());
+
+            Assertions.assertThatThrownBy(() -> vaultService.resolveVaultFlag("name"))
+                    .isInstanceOf(VaultAmbiguousException.class);
+        }
+
+        @Test
+        @DisplayName("throws VaultNotFoundException when no vault matches")
+        void noMatch_throwsNotFound(TempDirs tempDirs) throws IOException, VaultException {
+            Path path = newVaultDir(tempDirs, "vault-1");
+            vaultService.create("owner", "name", path.toString());
+
+            Assertions.assertThatThrownBy(() -> vaultService.resolveVaultFlag("nonexistent"))
+                    .isInstanceOf(VaultNotFoundException.class);
+        }
+    }
+
+    // ── applyGitFlagsToVault ──────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("applyGitFlagsToVault")
+    class ApplyGitFlagsToVaultTests {
+
+        @Test
+        @DisplayName("applies all known git flags to vault")
+        void applyGitFlagsToVault_appliesGitFields() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
+            Map<String, String> gitFlags = new LinkedHashMap<>();
+            gitFlags.put("git.name",     "Alice");
+            gitFlags.put("git.email",    "alice@example.com");
+            gitFlags.put("git.username", "alice-gh");
+            gitFlags.put("git.token",    "token123");
+            gitFlags.put("git.branch",   "develop");
+            gitFlags.put("git.remote",   "upstream");
+
+            vaultService.applyGitFlagsToVault(gitFlags, vault);
+
+            Assertions.assertThat(vault.getGitName()).isEqualTo("Alice");
+            Assertions.assertThat(vault.getGitEmail()).isEqualTo("alice@example.com");
+            Assertions.assertThat(vault.getGitUsername()).isEqualTo("alice-gh");
+            Assertions.assertThat(vault.getGitToken()).isEqualTo("token123");
+            Assertions.assertThat(vault.getGitBranch()).isEqualTo("develop");
+            Assertions.assertThat(vault.getGitRemote()).isEqualTo("upstream");
+        }
+
+        @Test
+        @DisplayName("ignores unknown git flags leaving vault fields unchanged")
+        void applyGitFlagsToVault_ignoresUnknownKeys() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
+            Map<String, String> gitFlags = new LinkedHashMap<>();
+            gitFlags.put("git.unknown", "value");
+
+            vaultService.applyGitFlagsToVault(gitFlags, vault);
+
+            Assertions.assertThat(vault.getName()).isEqualTo("name");
+            Assertions.assertThat(vault.getGitName()).isNull();
+            Assertions.assertThat(vault.getGitRemote()).isNull();
+        }
     }
 
     // ── load() ────────────────────────────────────────────────────────────────
@@ -275,7 +372,7 @@ class VaultServiceTest {
             assertThat(marker).isNotNull();
             assertThat(marker.id()).isEqualTo(vault.getId());
             assertThat(marker.repoSlug()).isEqualTo("Alice/marker-fresh");
-            assertThat(marker.catalogPath()).isEqualTo(vaultService.catalogFile.getPath());
+            assertThat(marker.workspacePath()).isEqualTo(vaultService.catalogFile.getPath());
             assertThat(marker.createdAt()).isEqualTo(marker.lastUpdate());
         }
 
@@ -761,7 +858,7 @@ class VaultServiceTest {
             List<Vault> result = vaultService.findAllByName("findall-single");
 
             assertThat(result.size()).isEqualTo(1);
-            assertThat(result.get(0).getOwner()).isEqualTo("Alice");
+            assertThat(result.getFirst().getOwner()).isEqualTo("Alice");
         }
 
         @Test

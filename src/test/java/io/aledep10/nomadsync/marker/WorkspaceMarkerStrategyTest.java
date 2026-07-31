@@ -32,7 +32,7 @@ class WorkspaceMarkerStrategyTest {
         @Test
         @DisplayName("serialize() then deserialize() round-trips all fields")
         void serialize_thenDeserialize_roundTripsAllFields() {
-            WorkspaceMarker original = WorkspaceMarker.create("id-1", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker original = WorkspaceMarker.create("id-1", "Alice", "2026-01-01T00:00:00");
 
             String json = strategy.serialize(original);
             Marker restored = strategy.deserialize(json);
@@ -40,7 +40,7 @@ class WorkspaceMarkerStrategyTest {
             assertThat(restored).isEqualTo(original);
             assertThat(restored).isInstanceOf(WorkspaceMarker.class);
             WorkspaceMarker restoredWorkspace = (WorkspaceMarker) restored;
-            assertThat(restoredWorkspace.workspaceName()).isEqualTo("Belmani");
+            assertThat(restoredWorkspace.workspaceName()).isEqualTo("Alice");
             assertThat(restoredWorkspace.createdAt()).isEqualTo("2026-01-01T00:00:00");
             assertThat(restoredWorkspace.lastUpdate()).isEqualTo("2026-01-01T00:00:00");
         }
@@ -97,7 +97,7 @@ class WorkspaceMarkerStrategyTest {
         @DisplayName("throws MarkerDeserializationException, naming the field, when id is missing")
         void deserialize_missingId_throwsWithFieldNameInMessage() {
             String json = """
-                    {"workspaceName":"Belmani","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
+                    {"workspaceName":"Alice","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
 
             assertThatThrownBy(() -> strategy.deserialize(json))
                     .isInstanceOf(MarkerDeserializationException.class)
@@ -120,7 +120,7 @@ class WorkspaceMarkerStrategyTest {
                 + "but shaped for a different marker type (e.g. a VaultMarker's own fields)")
         void deserialize_validJsonWrongShape_throwsMarkerDeserializationException() {
             String vaultShapedJson = """
-                    {"id":"id-1","repoSlug":"Alice/vault","catalogPath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
+                    {"id":"id-1","repoSlug":"Alice/vault","workspacePath":"/path/catalog.json","createdAt":"2026-01-01T00:00:00","lastUpdate":"2026-01-01T00:00:00"}""";
 
             assertThatThrownBy(() -> strategy.deserialize(vaultShapedJson))
                     .isInstanceOf(MarkerDeserializationException.class)
@@ -166,7 +166,7 @@ class WorkspaceMarkerStrategyTest {
         @Test
         @DisplayName("matching id returns true")
         void sameClaimant_matchingId_returnsTrue() {
-            WorkspaceMarker existing = WorkspaceMarker.create("id-1", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker existing = WorkspaceMarker.create("id-1", "Alice", "2026-01-01T00:00:00");
 
             assertThat(strategy.sameClaimant(existing, "id-1")).isTrue();
         }
@@ -174,7 +174,7 @@ class WorkspaceMarkerStrategyTest {
         @Test
         @DisplayName("different id returns false")
         void sameClaimant_differentId_returnsFalse() {
-            WorkspaceMarker existing = WorkspaceMarker.create("id-1", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker existing = WorkspaceMarker.create("id-1", "Alice", "2026-01-01T00:00:00");
 
             assertThat(strategy.sameClaimant(existing, "id-2")).isFalse();
         }

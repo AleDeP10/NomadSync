@@ -2,9 +2,7 @@ package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.exception.MarkerClaimException;
 import io.aledep10.nomadsync.logging.LogLevel;
-import io.aledep10.nomadsync.marker.MarkerType;
-import io.aledep10.nomadsync.marker.VaultMarker;
-import io.aledep10.nomadsync.marker.WorkspaceMarker;
+import io.aledep10.nomadsync.marker.*;
 import io.aledep10.nomadsync.util.*;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -68,13 +66,13 @@ class MarkerServiceTest {
     @BeforeEach
     void setUp() {
         Properties properties = new Properties();
-        properties.setProperty("path.maxNestingDepth", "6");
+        properties.setProperty("marker.maxNestingDepth", "6");
         markerService = new MarkerService(properties, logService);
     }
 
     /**
      * Builds a throwaway {@link MarkerService} configured with a non-default
-     * {@code path.maxNestingDepth} — used <strong>only</strong> by
+     * {@code marker.maxNestingDepth} — used <strong>only</strong> by
      * {@link CheckNoNestingConflictTests#defaultOverload_usesConfiguredDepth},
      * to prove the no-argument {@code checkNoNestingConflict(String)} overload
      * genuinely reads its default from the constructor rather than coincidentally
@@ -88,7 +86,7 @@ class MarkerServiceTest {
      */
     private MarkerService markerServiceConfiguredWithNonDefaultDepth(int maxNestingDepth) {
         Properties properties = new Properties();
-        properties.setProperty("path.maxNestingDepth", String.valueOf(maxNestingDepth));
+        properties.setProperty("marker.maxNestingDepth", String.valueOf(maxNestingDepth));
         return new MarkerService(properties, logService);
     }
 
@@ -144,7 +142,7 @@ class MarkerServiceTest {
         @DisplayName("throws when an ancestor already carries a marker of a DIFFERENT type — cross-type protection")
         void ancestorConflict_crossType_throws(TempDirs tempDirs) throws Exception {
             Path parent = tempDirs.newDir("MarkerServiceTest", "claim-ancestor-cross-type");
-            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
 
             Path child = parent.resolve("nested-vault");
@@ -153,7 +151,7 @@ class MarkerServiceTest {
 
             assertThatThrownBy(() -> markerService.claim(MarkerType.VAULT, child.toString(), vaultMarker))
                     .isInstanceOf(MarkerClaimException.class)
-                    .hasMessageContaining("Belmani");
+                    .hasMessageContaining("Alice");
         }
 
         @Test
@@ -270,13 +268,13 @@ class MarkerServiceTest {
         @DisplayName("throws when an ancestor carries a marker of a DIFFERENT type (cross-type)")
         void ancestorHasDifferentTypeMarker_throws(TempDirs tempDirs) throws Exception {
             Path parent = tempDirs.newDir("MarkerServiceTest", "nesting-ancestor-cross-type");
-            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Belmani", "2026-01-01T00:00:00");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
             Path candidate = parent.resolve("child-vault");
 
             assertThatThrownBy(() -> markerService.checkNoNestingConflict(candidate.toString()))
                     .isInstanceOf(MarkerClaimException.class)
-                    .hasMessageContaining("Belmani");
+                    .hasMessageContaining("Alice");
         }
 
         @Test

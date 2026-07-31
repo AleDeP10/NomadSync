@@ -16,9 +16,6 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.Properties;
 
-// VaultMarkerStrategy and WorkspaceMarkerStrategy already live in this same
-// package (io.aledep10.nomadsync.marker) — no import needed for either.
-
 /**
  * Generic path-protection engine for the entire marker protocol — claims,
  * releases, confirms, and scans reserved marker folders on behalf of any
@@ -59,20 +56,20 @@ public class MarkerService {
 
     /**
      * @param properties  application properties — may contain
-     *                    {@code path.maxNestingDepth} (default 6), used only by
+     *                    {@code marker.maxNestingDepth} (default 6), used only by
      *                    the no-argument {@link #checkNoNestingConflict(String)}
      *                    overload's descendant scan
      * @param logService  shared logging service
      */
     public MarkerService(Properties properties, LogService logService) {
         this.logService = logService;
-        this.maxNestingDepth = PropertiesUtil.getInt(properties, NomadProperties.Path.MAX_NESTING_DEPTH, 6);
+        this.maxNestingDepth = PropertiesUtil.getInt(properties, NomadProperties.Marker.MAX_NESTING_DEPTH, 6);
         // Built internally, not received as a parameter — this map has exactly
         // one real assembly point in the whole codebase (here), so injecting it
         // from Main's dependency setup would only add ceremony without adding
         // flexibility. Growing the marker protocol to a new active type means
         // adding one line here — linear cost, not combinatorial, same trade-off
-        // already accepted for path.maxNestingDepth staying a single global value.
+        // already accepted for marker.maxNestingDepth staying a single global value.
         this.strategies = Map.of(
                 MarkerType.VAULT, new VaultMarkerStrategy(),
                 MarkerType.WORKSPACE, new WorkspaceMarkerStrategy());
@@ -80,7 +77,7 @@ public class MarkerService {
 
     /**
      * Convenience overload — uses the depth configured at construction time
-     * (from {@code path.maxNestingDepth}). See {@link #checkNoNestingConflict(String, int)}
+     * (from {@code marker.maxNestingDepth}). See {@link #checkNoNestingConflict(String, int)}
      * for the full contract.
      */
     public void checkNoNestingConflict(String candidatePath) throws MarkerClaimException {
@@ -170,14 +167,18 @@ public class MarkerService {
      */
     public void claim(MarkerType type, String path, Marker marker) throws MarkerClaimException {
         checkNoNestingConflict(path);
-        Path folder = markerFolder(Path.of(path), type);
+        Path dir = Path.of(path);
+        Path folder = markerFolder(dir, type);
         try {
             Files.createDirectory(folder);
         } catch (FileAlreadyExistsException e) {
             throw new MarkerClaimException("path '" + path + "' is already claimed - "
                     + describeConflictBestEffort(type, folder));
         } catch (IOException e) {
-            throw new MarkerClaimException("Unable to claim path " + path + ": " + e.getMessage(), e);
+            String reason = Files.isDirectory(dir)
+                    ? e.getMessage()
+                    : "target directory '" + path + "' does not exist";
+            throw new MarkerClaimException("Unable to claim path " + path + ": " + reason, e);
         }
         Path descriptor = folder.resolve(MarkerType.DESCRIPTOR_FILE_NAME);
         try {
@@ -233,7 +234,8 @@ public class MarkerService {
             return;
         }
         if (existing != null && !strategy.sameClaimant(existing, marker.id())) {
-            logService.warn("refresh - " + path + " already marked by a different claimant - not overwriting");
+            logService.warn("refresh - " + path + " already marked by a different claimant ("
+                    + existing.id() + " vs " + marker.id() + ") - not overwriting");
             return;
         }
         Marker toWrite = (existing == null) ? marker : existing.withRefreshedTimestamp(marker.lastUpdate());
@@ -243,6 +245,31 @@ public class MarkerService {
         } catch (IOException e) {
             logService.warn("refresh - unable to write " + type + " marker: " + e.getMessage());
         }
+    }
+
+    /**
+     * Unconditionally (re)writes the marker descriptor for an already-existing
+     * marker folder, regardless of the current claimant on disk — unlike
+     * {@link #refresh}, never compares {@code sameClaimant}; unlike {@link #claim},
+     * never creates the folder (must already exist). Reserved for legitimate
+     * identity-transfer operations where the marker's own id is derived from its
+     * path and therefore must change together with it (e.g. a workspace relocate).
+     *
+     * @throws MarkerClaimException if no marker folder exists at {@code path}, or
+     *                               if the descriptor cannot be written
+     */
+    public void overwrite(MarkerType type, String path, Marker marker) throws MarkerClaimException {
+        Path folder = markerFolder(Path.of(path), type);
+        if (!Files.isDirectory(folder)) {
+            throw new MarkerClaimException("path '" + path + "' has no existing marker folder to overwrite");
+        }
+        Path descriptor = folder.resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+        try {
+            Files.writeString(descriptor, strategies.get(type).serialize(marker));
+        } catch (IOException e) {
+            throw new MarkerClaimException("Unable to overwrite marker descriptor at " + descriptor + ": " + e.getMessage(), e);
+        }
+        logService.info("overwrite - " + type + " - descriptor rewritten at " + path);
     }
 
     // ── Path resolution helpers ─────────────────────────────────────────────

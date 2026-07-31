@@ -12,13 +12,13 @@ import java.util.UUID;
 public final class VaultMarker extends Marker {
 
     private final String repoSlug;
-    private final String catalogPath;
+    private final String workspacePath;
 
-    private VaultMarker(String id, String repoSlug, String catalogPath,
+    private VaultMarker(String id, String repoSlug, String workspacePath,
                          String createdAt, String lastUpdate) {
         super(id, MarkerType.VAULT, createdAt, lastUpdate);
         this.repoSlug = repoSlug;
-        this.catalogPath = catalogPath;
+        this.workspacePath = workspacePath;
     }
 
     /**
@@ -28,8 +28,8 @@ public final class VaultMarker extends Marker {
      * <p>Preferred form for tests: fully deterministic, no dependency on
      * {@link UUID#randomUUID()} or the system clock.</p>
      */
-    public static VaultMarker create(String id, String repoSlug, String catalogPath, String now) {
-        return new VaultMarker(id, repoSlug, catalogPath, now, now);
+    public static VaultMarker create(String id, String repoSlug, String workspacePath, String now) {
+        return new VaultMarker(id, repoSlug, workspacePath, now, now);
     }
 
     /**
@@ -37,8 +37,8 @@ public final class VaultMarker extends Marker {
      * current timestamp — convenience for production call sites that don't
      * need control over either. Not deterministic: never use in tests.
      */
-    public static VaultMarker create(String repoSlug, String catalogPath) {
-        return create(UUID.randomUUID().toString(), repoSlug, catalogPath, DateFormats.nowLog());
+    public static VaultMarker create(String repoSlug, String workspacePath) {
+        return create(UUID.randomUUID().toString(), repoSlug, workspacePath, DateFormats.nowLog());
     }
 
     /**
@@ -46,12 +46,12 @@ public final class VaultMarker extends Marker {
      * explicit timestamp — for tests that want a deterministic timestamp
      * without caring about the specific {@code id} value.
      */
-    static VaultMarker create(String repoSlug, String catalogPath, String now) {
-        return create(UUID.randomUUID().toString(), repoSlug, catalogPath, now);
+    static VaultMarker create(String repoSlug, String workspacePath, String now) {
+        return create(UUID.randomUUID().toString(), repoSlug, workspacePath, now);
     }
 
     public String repoSlug() { return repoSlug; }
-    public String catalogPath() { return catalogPath; }
+    public String workspacePath() { return workspacePath; }
 
     @Override
     public String localName() {
@@ -63,11 +63,11 @@ public final class VaultMarker extends Marker {
      */
     @Override
     public VaultMarker withRefreshedTimestamp(String now) {
-        return new VaultMarker(id(), repoSlug, catalogPath, createdAt(), now);
+        return new VaultMarker(id(), repoSlug, workspacePath, createdAt(), now);
     }
 
     @Override
     protected String typeSpecificFieldsForDebug() {
-        return "repoSlug=" + repoSlug + ", catalogPath=" + catalogPath;
+        return "repoSlug=" + repoSlug + ", workspacePath=" + workspacePath;
     }
 }

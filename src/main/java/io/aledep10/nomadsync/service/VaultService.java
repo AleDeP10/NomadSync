@@ -1,13 +1,10 @@
 package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.config.NomadProperties;
-import io.aledep10.nomadsync.exception.VaultException;
-import io.aledep10.nomadsync.exception.VaultIntegrityException;
-import io.aledep10.nomadsync.exception.VaultParseException;
+import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.marker.VaultMarker;
-import io.aledep10.nomadsync.exception.MarkerClaimException;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
 
@@ -57,7 +54,7 @@ import java.util.stream.Stream;
  * scan, release, and confirm-on-load — live in {@link MarkerService}, shared across
  * every {@link io.aledep10.nomadsync.marker.MarkerType}. This class's own
  * responsibility is narrower: build a {@link VaultMarker} with vault-specific
- * identity ({@code repoSlug}, {@code catalogPath}) and hand it to
+ * identity ({@code repoSlug}, {@code workspacePath}) and hand it to
  * {@code markerService}, translating any {@link MarkerClaimException} into this
  * class's own {@link VaultException} contract so callers of {@code create}/
  * {@code update}/{@code delete}/{@code load} see no change in the exceptions
@@ -89,6 +86,87 @@ import java.util.stream.Stream;
  */
 public class VaultService {
 
+     /**
+     * Resolves the {@code --vault} flag to a {@link Vault} instance.
+     *
+     * <ul>
+     *   <li>{@code null} flag → returns {@code null} (broadcast or mandatory error handled by caller)</li>
+     *   <li>{@code owner/name} → exact {@link Vault#getRepoSlug()} match, otherwise {@link VaultNotFoundException}</li>
+     *   <li>{@code name} → resolves if exactly one vault has that name;
+     *       {@link VaultNotFoundException} if zero match, {@link VaultAmbiguousException} if multiple</li>
+     * </ul>
+     *
+     * <p>Unlike the {@code null}-flag case, a non-null unresolvable flag is always
+     * a fatal error for the caller — a vault name typed by the user and not found
+     * must never be silently downgraded to a broadcast on all vaults.</p>
+     *
+     * @param vaultFlag  the raw {@code --vault} value, or {@code null} if absent
+     * @return the matching {@link Vault}, or {@code null} if {@code vaultFlag} is {@code null}
+     * @throws VaultNotFoundException  if {@code vaultFlag} is non-null and matches no vault
+     * @throws VaultAmbiguousException if {@code vaultFlag} is a bare name matching multiple vaults
+     */
+    public Vault resolveVaultFlag(String vaultFlag)
+            throws VaultNotFoundException, VaultAmbiguousException {
+        if (vaultFlag == null) return null;
+
+        if (vaultFlag.contains("/")) {
+            return vaults.values().stream()
+                    .filter(v -> v.getRepoSlug().equals(vaultFlag))
+                    .findFirst()
+                    .orElseThrow(() -> new VaultNotFoundException(vaultFlag));
+        }
+
+        List<Vault> matches = vaults.values().stream()
+                .filter(v -> v.getName().equals(vaultFlag))
+                .toList();
+
+        if (matches.isEmpty()) {
+            throw new VaultNotFoundException(vaultFlag);
+        }
+        if (matches.size() > 1) {
+            throw new VaultAmbiguousException(vaultFlag, matches);
+        }
+        return matches.getFirst();
+    }
+
+    /**
+     * Logs all registered vault repoSlugs at ERROR level — used in resolution
+     * error messages to help the user identify the correct {@code --vault} value.
+     */
+    public void listRegistered() {
+        logService.error("Registered: "
+                + vaults.values().stream()
+                .map(Vault::getRepoSlug)
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("(none)"));
+    }
+
+    /**
+     * Applies {@code --git.*} flags to the mutable credential and configuration
+     * fields of the given {@link Vault}.
+     *
+     * <p>Unknown keys are logged as warnings and silently ignored — they do not
+     * cause the command to fail.</p>
+     *
+     * @param gitFlags   map of {@code git.*} flag keys to their values
+     * @param vault      the vault to mutate
+     */
+    public void applyGitFlagsToVault(Map<String, String> gitFlags, Vault vault) {
+        gitFlags.forEach((key, value) -> {
+            switch (key) {
+                case NomadProperties.Git.NAME     -> vault.setGitName(value);
+                case NomadProperties.Git.EMAIL    -> vault.setGitEmail(value);
+                case NomadProperties.Git.USERNAME -> vault.setGitUsername(value);
+                case NomadProperties.Git.TOKEN    -> vault.setGitToken(value);
+                case NomadProperties.Git.BRANCH   -> vault.setGitBranch(value);
+                case NomadProperties.Git.REMOTE   -> vault.setGitRemote(value);
+                default -> logService.warn("applyGitFlagsToVault: unknown flag '"
+                        + key + "' - ignored");
+            }
+        });
+    }
+
+    public static final String CATALOG_FILE_NAME = "catalog.json";
     public static final String BACKUPS_FOLDER_NAME = "backups";
     public static final String CONFLICTS_FOLDER_NAME = "remote-conflicts";
 
@@ -115,9 +193,6 @@ public class VaultService {
      * workspace's config file lives. Absent, blank, or relative values are all
      * resolved uniformly; an already-absolute value is left untouched.</p>
      *
-     * @param properties    application properties, optionally containing
-     *                      {@code path.catalog}, {@code path.backups},
-     *                      {@code path.conflicts}
      * @param configDir     directory containing the {@code config.properties}
      *                      file in use — base for resolving all three path
      *                      properties above when relative or absent
@@ -127,22 +202,16 @@ public class VaultService {
      * @param gitignoreService  used to read active ignore patterns during snapshot creation
      * @param logService        shared logging service
      */
-    public VaultService(Properties properties, Path configDir,
+    public VaultService(Path configDir,
                         MarkerService markerService,
                         GitignoreService gitignoreService,
-                        LogService logService) throws VaultException {
-        try {
-            this.catalogFile = PropertiesUtil.resolveBareFilename(properties, NomadProperties.Path.CATALOG,
-                    "catalog.json", configDir, logService).toFile();
-        } catch (IllegalArgumentException e) {
-            throw new VaultException("Invalid catalog file: " + e.getMessage(), e);
-        }
+                        LogService logService) {
         this.markerService     = markerService;
         this.gitignoreService  = gitignoreService;
         this.logService        = logService;
-
-        this.backupsRoot = configDir.resolve(BACKUPS_FOLDER_NAME);
-        this.conflictsRoot = configDir.resolve(CONFLICTS_FOLDER_NAME);
+        this.catalogFile       = configDir.resolve(CATALOG_FILE_NAME).toFile();
+        this.backupsRoot       = configDir.resolve(BACKUPS_FOLDER_NAME);
+        this.conflictsRoot     = configDir.resolve(CONFLICTS_FOLDER_NAME);
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -449,7 +518,7 @@ public class VaultService {
      * @return a new list containing all registered vaults
      */
     public List<Vault> findAll() {
-        return new ArrayList<>(vaults.values());
+        return vaults.values().stream().map(Vault::copy).collect(Collectors.toList());
     }
 
     /**
@@ -462,7 +531,7 @@ public class VaultService {
      * @return an {@link Optional} containing the vault, or empty if not registered
      */
     public Optional<Vault> findById(String id) {
-        return Optional.ofNullable(vaults.get(id));
+        return Optional.ofNullable(vaults.get(id)).map(Vault::copy);
     }
 
     /**
@@ -480,7 +549,7 @@ public class VaultService {
     public Optional<Vault> findByRepoSlug(String repoSlug) {
         return vaults.values().stream()
                 .filter(v -> v.getRepoSlug().equals(repoSlug))
-                .findFirst();
+                .findFirst().map(Vault::copy);
     }
 
     /**
@@ -509,6 +578,7 @@ public class VaultService {
     public List<Vault> findAllByName(String name) {
         return vaults.values().stream()
                 .filter(v -> v.getName().equals(name))
+                .map(Vault::copy)
                 .collect(Collectors.toList());
     }
 

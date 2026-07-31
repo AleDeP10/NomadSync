@@ -9,6 +9,6 @@
 #   status   Show git status  (broadcast if --vault absent)
 #   commit   Local commit with editor message (--vault required)
 #   autosave Periodic autosave — managed by scheduler, no manual use needed
-#   config   Update config.properties or vaults.json
+#   config   Update config.properties or catalog.json
 
 java -jar NomadSync.jar "$@"

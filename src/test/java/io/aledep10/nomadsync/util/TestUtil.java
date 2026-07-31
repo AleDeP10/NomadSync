@@ -1,14 +1,18 @@
 package io.aledep10.nomadsync.util;
 
+import io.aledep10.nomadsync.Main;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.service.VaultService;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.Properties;
 
 /**
@@ -18,9 +22,9 @@ import java.util.Properties;
  * <h2>Lifecycle protocol</h2>
  * <pre>
  * {@literal @}BeforeAll  → testVault = TestUtil.getTestVault("MyTest")
- *             → logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG))
+ *             → logService = new LogService(TestUtil.forLogService(testVault, LogLevel#DEBUG))
  * {@literal @}BeforeEach → use testVault directly (no new getTestVault call)
- *             → properties = TestUtil.forOrchestrator(testVault)
+ *             → properties = TestUtil.forClient(testVault)
  * {@literal @}AfterEach  → TestUtil.cleanup(testVault)
  * </pre>
  *
@@ -178,54 +182,9 @@ public final class TestUtil {
      */
     public static Properties forLogService(TestVault vault, LogLevel level) {
         Properties properties = new Properties();
+        properties.setProperty("log.writers", "console,file");
         properties.setProperty("log.path",  vault.logFilePath().toString());
         properties.setProperty("log.level", level.name());
-        return properties;
-    }
-
-    /**
-     * Creates {@link Properties} configured for {@link io.aledep10.nomadsync.service.VaultService}.
-     *
-     * <p>The {@code catalog.json} file is named with the {@link TestVault#timestamp()}
-     * suffix — the same timestamp used to name the root directory. Since
-     * {@link #getTestVault(String)} guarantees timestamp uniqueness via a 1 ms sleep,
-     * this file name is unique across all test runs in the same JVM session.</p>
-     *
-     * <p>The file is not created by this method — {@code VaultService} creates it
-     * on the first {@code save()} call. The root directory itself is (re)created
-     * here defensively — a harmless no-op given {@link #getTestVault(String)}
-     * already creates it, but keeps this factory correct even if called against
-     * a {@link TestVault} whose root was cleaned up in between.</p>
-     *
-     * @param vault the test environment providing the root path and timestamp
-     * @return configured {@link Properties} ready for {@code VaultService} construction
-     */
-    public static Properties forVaultService(TestVault vault) throws IOException {
-        Files.createDirectories(vault.rootPath());
-        Properties properties = new Properties();
-        properties.setProperty("path.catalog", "vaults_" + vault.timestamp() + ".json");
-        return properties;
-    }
-
-    /**
-     * Creates {@link Properties} configured for {@link io.aledep10.nomadsync.orchestrator.SyncOrchestrator}
-     * and Git service tests.
-     *
-     * <p>Uses the vault path from the provided {@link TestVault} — no additional
-     * directory is created. The vault directory exists but is not initialised as a
-     * Git repository; callers that require a real repo must run {@code git init}
-     * on {@link TestVault#vaultPath()}.</p>
-     *
-     * <p>Does not include log properties — set those up separately via
-     * {@link #forLogService(TestVault, LogLevel)} in {@code @BeforeAll}.</p>
-     *
-     * @param vault the test environment providing the vault path
-     * @return configured {@link Properties} ready for service and orchestrator construction
-     */
-    public static Properties forOrchestrator(TestVault vault) {
-        Properties properties = new Properties();
-        properties.setProperty("vault.path",     vault.vaultPath().toString());
-        properties.setProperty("git.executable", TestConstants.GIT_EXECUTABLE);
         return properties;
     }
 
@@ -271,5 +230,43 @@ public final class TestUtil {
      */
     public static String absolute(String raw) {
         return java.nio.file.Path.of(raw).toAbsolutePath().normalize().toString();
+    }
+
+    /**
+     * Builds an OS-native path string from the given segments, prefixing each
+     * with {@link OsUtil#separator()}.
+     *
+     * @param parts path segments without leading or trailing separators
+     * @return an OS-native path string
+     */
+    public static String createPath(String... parts) {
+        final StringBuilder buf = new StringBuilder();
+        Arrays.asList(parts).forEach(part -> buf.append(OsUtil.separator()).append(part));
+        return buf.toString();
+    }
+
+    /**
+     * Reflectively invokes a private static method on the given class
+     * (e.g. {@link Main}, {@link io.aledep10.nomadsync.cli.VaultCli}).
+     *
+     * @param clazz          the class declaring the private static method
+     * @param methodName     name of the private static method
+     * @param parameterTypes parameter types for method lookup
+     * @param args           arguments to pass to the method
+     * @return the method's return value, or {@code null} for {@code void} methods
+     * @throws RuntimeException wrapping any reflection or invocation exception —
+     *         when the invoked method throws a checked exception, the real cause
+     *         is nested two levels down: {@code RuntimeException.getCause()} is
+     *         an {@link InvocationTargetException}, whose own {@code getCause()}
+     *         is the exception actually thrown by the production method.
+     */
+    public static Object invoke(Class<?> clazz, String methodName, Class<?>[] parameterTypes, Object... args) {
+        try {
+            Method method = clazz.getDeclaredMethod(methodName, parameterTypes);
+            method.setAccessible(true);
+            return method.invoke(null, args);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }

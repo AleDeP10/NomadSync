@@ -14,18 +14,18 @@ class WorkspaceMarkerTest {
     @Test
     @DisplayName("create() sets createdAt and lastUpdate to the same value")
     void create_setsCreatedAtEqualToLastUpdate() {
-        WorkspaceMarker marker = WorkspaceMarker.create("id-1", "Belmani", "2026-01-01T00:00:00");
+        WorkspaceMarker marker = WorkspaceMarker.create("id-1", "Alice", "2026-01-01T00:00:00");
 
         assertThat(marker.createdAt()).isEqualTo("2026-01-01T00:00:00");
         assertThat(marker.lastUpdate()).isEqualTo("2026-01-01T00:00:00");
         assertThat(marker.id()).isEqualTo("id-1");
-        assertThat(marker.workspaceName()).isEqualTo("Belmani");
+        assertThat(marker.workspaceName()).isEqualTo("Alice");
     }
 
     @Test
     @DisplayName("withRefreshedTimestamp() updates only lastUpdate, preserving every other field")
     void withRefreshedTimestamp_preservesIdentityFieldsAndCreatedAt() {
-        WorkspaceMarker original = WorkspaceMarker.create("id-1", "Belmani", "2026-01-01T00:00:00");
+        WorkspaceMarker original = WorkspaceMarker.create("id-1", "Alice", "2026-01-01T00:00:00");
 
         WorkspaceMarker refreshed = original.withRefreshedTimestamp("2026-01-02T00:00:00");
 

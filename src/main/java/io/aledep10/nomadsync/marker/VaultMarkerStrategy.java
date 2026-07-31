@@ -12,7 +12,7 @@ import io.aledep10.nomadsync.dto.VaultMarkerDto;
 public final class VaultMarkerStrategy extends AbstractMarkerTypeStrategy<VaultMarker, VaultMarkerDto> {
 
     public VaultMarkerStrategy() {
-        super(MarkerType.VAULT, VaultMarker.class, VaultMarkerDto.class, "id", "repoSlug", "catalogPath");
+        super(MarkerType.VAULT, VaultMarker.class, VaultMarkerDto.class, "id", "repoSlug", "workspacePath");
     }
 
     @Override

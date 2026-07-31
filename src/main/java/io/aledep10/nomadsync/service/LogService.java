@@ -99,7 +99,7 @@ public class LogService {
      *                   in use — base for resolving a relative or absent
      *                   {@link NomadProperties.Log#PATH}
      * @param repoSlug   vault identifier in {@code <owner>/<name>} form,
-     *                   e.g. {@code AleDeP10/public-vault}
+     *                   e.g. {@code Alice/public-vault}
      */
     public LogService(Properties properties, Path configDir, String repoSlug) {
         this(properties, configDir, buildWriters(properties, configDir), repoSlug);
@@ -203,7 +203,7 @@ public class LogService {
         LogLevel minLevel = LogLevel.valueOf(
                 properties.getProperty(NomadProperties.Log.LEVEL, LogLevel.INFO.name()));
         Set<String> tokens = Arrays.stream(
-                        PropertiesUtil.get(properties, NomadProperties.Log.WRITERS, "console,file")
+                        PropertiesUtil.get(properties, NomadProperties.Log.WRITERS, "console")
                                 .split(","))
                 .map(String::trim)
                 .collect(Collectors.toCollection(TreeSet::new));

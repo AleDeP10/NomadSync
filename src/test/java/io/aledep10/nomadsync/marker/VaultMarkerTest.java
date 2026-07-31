@@ -20,7 +20,7 @@ class VaultMarkerTest {
         assertThat(marker.lastUpdate()).isEqualTo("2026-01-01T00:00:00");
         assertThat(marker.id()).isEqualTo("id-1");
         assertThat(marker.repoSlug()).isEqualTo("Alice/vault");
-        assertThat(marker.catalogPath()).isEqualTo("/path/catalog.json");
+        assertThat(marker.workspacePath()).isEqualTo("/path/catalog.json");
     }
 
     @Test
@@ -32,7 +32,7 @@ class VaultMarkerTest {
 
         assertThat(refreshed.id()).isEqualTo(original.id());
         assertThat(refreshed.repoSlug()).isEqualTo(original.repoSlug());
-        assertThat(refreshed.catalogPath()).isEqualTo(original.catalogPath());
+        assertThat(refreshed.workspacePath()).isEqualTo(original.workspacePath());
         assertThat(refreshed.createdAt()).isEqualTo(original.createdAt());
         assertThat(refreshed.lastUpdate()).isEqualTo("2026-01-02T00:00:00");
     }
