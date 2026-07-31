@@ -1,5 +1,7 @@
 package io.aledep10.nomadsync.vault;
 
+import io.aledep10.nomadsync.service.VaultService;
+
 import java.nio.file.Path;
 
 /**
@@ -108,6 +110,24 @@ public class Vault {
         this.gitBranch   = gitBranch;
         this.gitRemote   = gitRemote;
     }
+
+    /**
+     * Returns a new, independent instance with the same field values.
+     *
+     * <p>Used by {@link VaultService}'s query methods ({@code findAll}/
+     * {@code findById}/{@code findByRepoSlug}/{@code findAllByName}) so the live
+     * instance held in its internal cache is never handed out — mutating the
+     * returned copy has no effect on the source of truth until it is explicitly
+     * submitted through {@link VaultService#update(Vault)}. Same rationale as
+     * {@code WorkspaceEntry.copy()} ({@code NomadSync-WSP-005}).</p>
+     *
+     * @return a new {@link Vault} with the same {@code id}, {@code owner},
+     *         {@code name}, {@code path}, and Git fields as this one
+     */
+    public Vault copy() {
+        return new Vault(id, owner, name, path, gitName, gitEmail, gitUsername, gitToken, gitBranch, gitRemote);
+    }
+
 
     // ── Identity ──────────────────────────────────────────────────────────────
 

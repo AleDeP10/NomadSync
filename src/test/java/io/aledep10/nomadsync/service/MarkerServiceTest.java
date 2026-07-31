@@ -2,9 +2,7 @@ package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.exception.MarkerClaimException;
 import io.aledep10.nomadsync.logging.LogLevel;
-import io.aledep10.nomadsync.marker.MarkerType;
-import io.aledep10.nomadsync.marker.VaultMarker;
-import io.aledep10.nomadsync.marker.WorkspaceMarker;
+import io.aledep10.nomadsync.marker.*;
 import io.aledep10.nomadsync.util.*;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;

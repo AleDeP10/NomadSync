@@ -6,7 +6,6 @@ import io.aledep10.nomadsync.util.StringUtil;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,17 +37,11 @@ import java.util.Set;
  * {@code *Service} method directly with typed parameters — it has no natural
  * use for a {@code Map<String, String>} of CLI flags, so making the CLI's own
  * flag-handling layer public would serve a consumer that doesn't exist.</p>
- *
- * <h2>{@link #keysToCheck()} — additive, not exclusive</h2>
- * <p>{@link #hasBlankOptionalValue} checks the union of its
- * {@code structuralKeys} parameter (specific to the calling handler) and
- * {@link #keysToCheck()} (global keys always checked regardless of handler,
- * e.g. {@code --workspacePath} — present on every command, never valid blank
- * on any of them). Subclasses return only the always-on set; callers of
- * {@code hasBlankOptionalValue} still pass their own per-handler structural
- * keys as before.</p>
  */
 public abstract class AbstractCli {
+
+    public static final String FLAG_FORCE = "force";
+    public static final String FLAG_SUBCOMMAND = "sub";
 
     protected final LogService logService;
 
@@ -81,7 +74,7 @@ public abstract class AbstractCli {
      */
     protected boolean hasUnknownFlags(Map<String, String> flags, Set<String> knownFlags, String handler) {
         List<String> unknown = flags.keySet().stream()
-                .filter(k -> !k.equals("sub") && !knownFlags.contains(k))
+                .filter(k -> !k.equals(FLAG_SUBCOMMAND) && !knownFlags.contains(k))
                 .sorted()
                 .toList();
         if (unknown.isEmpty()) return false;
@@ -140,7 +133,6 @@ public abstract class AbstractCli {
      */
     protected abstract Map<String, String> syntaxHints();
 
-
     /**
      * Detects structural flags that are present in {@code flags} but hold a
      * blank value — unlike {@link #hasBlankRequiredFlags}, absence is not a
@@ -149,24 +141,17 @@ public abstract class AbstractCli {
      * "provided but empty" is treated as user error, since a blank structural
      * value never has a meaningful interpretation.
      *
-     * <p>Checks the union of {@code structuralKeys} and {@link #keysToCheck()} —
-     * see class-level Javadoc.</p>
-     *
      * @param flags          parsed CLI flags
-     * @param structuralKeys optional structural keys to check when present
-     *                       (e.g. {@code owner}, {@code name}, {@code path});
-     *                       may be empty if the handler has none of its own —
-     *                       {@link #keysToCheck()}'s keys are still checked in
-     *                       that case
+     * @param structuralKeys structural keys to check when present (e.g.
+     *                       {@code owner}, {@code name}, {@code path}) — the
+     *                       caller's full set for the current handler; may be
+     *                       empty if the handler has none
      * @param handler        handler name used as log prefix, e.g. {@code "handleVaultUpdate"}
      * @return {@code true} if at least one checked key is present but blank,
      *         {@code false} otherwise
      */
     public boolean hasBlankOptionalValue(Map<String, String> flags, Set<String> structuralKeys, String handler) {
-        Set<String> allKeysToCheck = new HashSet<>(structuralKeys);
-        allKeysToCheck.addAll(keysToCheck());
-
-        List<String> blank = allKeysToCheck.stream()
+        List<String> blank = structuralKeys.stream()
                 .filter(flags::containsKey)
                 .filter(k -> flags.get(k).isBlank())
                 .sorted()
@@ -175,15 +160,6 @@ public abstract class AbstractCli {
         blank.forEach(k -> logService.error(handler + ": --" + k + " was provided but has no value"));
         return true;
     }
-
-    /**
-     * Global structural keys always checked by {@link #hasBlankOptionalValue}
-     * in addition to whatever {@code structuralKeys} the caller passes —
-     * e.g. {@code --workspacePath}, present on every command, never valid
-     * blank on any of them. Return an empty list if a subclass has none
-     * beyond what every caller already passes explicitly.
-     */
-    protected abstract List<String> keysToCheck();
 
     /**
      * Finds the closest known flag to an unrecognized one, by Levenshtein
@@ -219,7 +195,8 @@ public abstract class AbstractCli {
      *
      * <p>{@code target} need not exist yet — walks up to the nearest existing
      * ancestor to determine its file store, since a not-yet-created path has none
-     * of its own.</p>
+     * of its own. {@code source} is expected to already exist (the vault/workspace
+     * being relocated) — callers must not pass a nonexistent source.</p>
      *
      * @throws IOException if the file store cannot be determined for either path
      */

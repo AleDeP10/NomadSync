@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync;
 
+import io.aledep10.nomadsync.cli.VaultCli;
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.service.MarkerService;
 import io.aledep10.nomadsync.orchestrator.EventType;
@@ -174,13 +175,16 @@ class MainTest {
         @Test
         @DisplayName("parses a simple command with flags, no positional subcommand")
         void simpleCommand_parsesFlags() throws Exception {
-            Object result = invokeParseArgs(new String[]{"pull", "--vault=Alice/portfolio", "--config=x.properties"});
+            Object result = invokeParseArgs(new String[] {
+                    "pull",
+                    "--" + VaultCli.FLAG_VAULT + "=Alice/portfolio",
+                    "--" + Main.FLAG_WORKSPACE_PATH + "=/path/to/workspace"});
 
             assertThat(isFailure(result)).isFalse();
             assertThat(getCommand(result)).isEqualTo("pull");
             Map<String, String> flags = getFlags(result);
-            assertThat(flags.get("vault")).isEqualTo("Alice/portfolio");
-            assertThat(flags.get("config")).isEqualTo("x.properties");
+            assertThat(flags.get(VaultCli.FLAG_VAULT)).isEqualTo("Alice/portfolio");
+            assertThat(flags.get(Main.FLAG_WORKSPACE_PATH)).isEqualTo("/path/to/workspace");
             assertThat(flags.containsKey("sub")).isFalse();
         }
 
@@ -189,29 +193,32 @@ class MainTest {
         @Test
         @DisplayName("injects \"sub\" when the second argument is a positional vault subcommand")
         void vaultWithPositionalSubcommand_injectsSubKey() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault", "relocate", "--vault=x", "--path=/y"});
+            Object result = invokeParseArgs(new String[]{
+                    VaultCli.COMMAND,
+                    "relocate",
+                    "--" + VaultCli.FLAG_VAULT + "=x", "--path=/y"});
 
             assertThat(isFailure(result)).isFalse();
             Map<String, String> flags = getFlags(result);
             assertThat(flags.get("sub")).isEqualTo("relocate");
-            assertThat(flags.get("vault")).isEqualTo("x");
+            assertThat(flags.get(VaultCli.FLAG_VAULT)).isEqualTo("x");
             assertThat(flags.get("path")).isEqualTo("/y");
         }
 
         @Test
         @DisplayName("does not inject \"sub\" when the second argument is itself a flag")
         void vaultWithFlagAsSecondArg_doesNotInjectSub() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault", "--vault=x"});
+            Object result = invokeParseArgs(new String[]{VaultCli.COMMAND, "--" + VaultCli.FLAG_VAULT + "=x"});
 
             Map<String, String> flags = getFlags(result);
             assertThat(flags.containsKey("sub")).isFalse();
-            assertThat(flags.get("vault")).isEqualTo("x");
+            assertThat(flags.get(VaultCli.FLAG_VAULT)).isEqualTo("x");
         }
 
         @Test
         @DisplayName("does not inject \"sub\" when \"vault\" is the only argument")
         void vaultAlone_doesNotInjectSub() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault"});
+            Object result = invokeParseArgs(new String[]{VaultCli.COMMAND});
 
             assertThat(isFailure(result)).isFalse();
             assertThat(getFlags(result).containsKey("sub")).isFalse();
@@ -222,7 +229,7 @@ class MainTest {
         @Test
         @DisplayName("last value wins on a duplicated flag, and a single warning is printed")
         void duplicateFlag_lastValueWinsAndWarns() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault", "add", "--owner=Alice", "--owner=Bob"});
+            Object result = invokeParseArgs(new String[]{VaultCli.COMMAND, "add", "--owner=Alice", "--owner=Bob"});
 
             assertThat(getFlags(result).get("owner")).isEqualTo("Bob");
             assertThat(outputStream.toString())
@@ -232,7 +239,7 @@ class MainTest {
         @Test
         @DisplayName("prints exactly one warning line per duplicated key, not one per occurrence")
         void tripleDuplicateFlag_printsOnlyOneWarningLine() {
-            invokeParseArgs(new String[]{"vault", "add", "--owner=Alice", "--owner=Bob", "--owner=Carol"});
+            invokeParseArgs(new String[]{VaultCli.COMMAND, "add", "--owner=Alice", "--owner=Bob", "--owner=Carol"});
 
             String output = outputStream.toString();
             int occurrences = output.split("Warning: --owner was specified more than once", -1).length - 1;
@@ -242,7 +249,8 @@ class MainTest {
         @Test
         @DisplayName("does not warn when --force is repeated — exempt as a harmless pure flag")
         void repeatedForce_doesNotWarn() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault", "relocate", "--vault=x", "--force", "--force"});
+            Object result = invokeParseArgs(new String[]{
+                    VaultCli.COMMAND, "relocate", "--" + VaultCli.FLAG_VAULT + "=x", "--force", "--force"});
 
             assertThat(isFailure(result)).isFalse();
             assertThat(outputStream.toString()).doesNotContain("--force was specified more than once");
@@ -254,8 +262,8 @@ class MainTest {
         @DisplayName("REGRESSION: a value with no leading '--' (missing '=' after a flag) "
                 + "is rejected as a stray argument, not silently swallowed as a flag's value")
         void strayArgument_missingEquals_returnsFailure() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault", "relocate",
-                    "--vault=nomad-test-vault", "--path", "C:\\vaults\\nomad-test"});
+            Object result = invokeParseArgs(new String[]{VaultCli.COMMAND, "relocate",
+                    "--" + VaultCli.FLAG_VAULT + "=nomad-test-vault", "--path", "C:\\vaults\\nomad-test"});
 
             assertThat(isFailure(result)).isTrue();
             assertThat(getErrorExitCode(result)).isEqualTo(1);
@@ -267,7 +275,9 @@ class MainTest {
         @Test
         @DisplayName("a flag with '=' but no following stray token is fine, even if its value is blank")
         void flagWithEqualsButBlankValue_isNotAStrayArgument() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault", "update", "--vault=x", "--git.token="});
+            Object result = invokeParseArgs(new String[]{
+                    VaultCli.COMMAND, "update",
+                    "--" + VaultCli.FLAG_VAULT + "=x", "--git.token="});
 
             assertThat(isFailure(result)).isFalse();
             assertThat(getFlags(result).get("git.token")).isEqualTo("");
@@ -277,7 +287,8 @@ class MainTest {
         @DisplayName("a flag with no '=' at all captures a blank value — distinct from a stray token, "
                 + "which has no leading '--'")
         void flagWithNoEqualsSign_capturesBlankValue() throws Exception {
-            Object result = invokeParseArgs(new String[]{"vault", "update", "--vault=x", "--git.token"});
+            Object result = invokeParseArgs(new String[]{
+                    VaultCli.COMMAND, "update", "--" + VaultCli.FLAG_VAULT + "=x", "--git.token"});
 
             assertThat(isFailure(result)).isFalse();
             assertThat(getFlags(result).get("git.token")).isEqualTo("");

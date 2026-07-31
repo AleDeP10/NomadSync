@@ -1,6 +1,8 @@
 package io.aledep10.nomadsync;
 
+import io.aledep10.nomadsync.cli.AbstractCli;
 import io.aledep10.nomadsync.cli.VaultCli;
+import io.aledep10.nomadsync.cli.WorkspaceCli;
 import io.aledep10.nomadsync.config.NomadProperties;
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.hook.LogNotificationHook;
@@ -70,9 +72,9 @@ import java.util.*;
  *
  * <h2>Configuration</h2>
  * <p>Configuration is loaded from the filesystem at startup via
- * {@link java.io.FileInputStream} — path defaults to {@code ./config.properties}
+ * {@link FileInputStream} — path defaults to {@code ./config.properties}
  * and can be overridden with {@code --config=<path>}. All property keys are
- * declared as constants in {@link io.aledep10.nomadsync.config.NomadProperties}.
+ * declared as constants in {@link NomadProperties}.
  * Built-in classpath defaults are available via
  * {@link io.aledep10.nomadsync.config.NomadPropertiesLoader} — the two sources
  * are complementary: classpath for defaults bundled in the JAR, filesystem for
@@ -104,7 +106,9 @@ import java.util.*;
 public class Main {
 
     public static final String CONFIG_FILE_NAME = "config.properties";
-    public static final String FLAG_FORCE = "force";
+    public static final String FLAG_WORKSPACE_PATH = "workspacePath";
+    public static final String FLAG_DAEMON = "daemon";
+
 
     public static void main(String[] args) {
 
@@ -117,12 +121,12 @@ public class Main {
         String command = parsed.command();
         Map<String, String> flags = parsed.flags();
 
-        String vaultFlag         = flags.get("vault");
-        String workspacePathArg  = flags.get("workspacePath");
-        boolean daemon           = flags.containsKey("daemon");
+        String vaultFlag         = flags.get(VaultCli.FLAG_VAULT);
+        String workspacePathArg  = flags.get(FLAG_WORKSPACE_PATH);
+        boolean daemon           = flags.containsKey(FLAG_DAEMON);
 
-        flags.remove("workspacePath");
-        flags.remove("daemon");
+        flags.remove(FLAG_WORKSPACE_PATH);
+        flags.remove(FLAG_DAEMON);
 
         // ── 2. Resolve and validate the workspace ─────────────────────────────
         Path workspacePath = resolveWorkspacePathOrExit(workspacePathArg);
@@ -148,19 +152,27 @@ public class Main {
         LogService       logService       = new LogService(properties, configDir);
         GitignoreService gitignoreService = new GitignoreService(logService);
         MarkerService    markerService    = new MarkerService(properties, logService);
+        WorkspaceService workspaceService = new WorkspaceService(resolveJarDirectory(), markerService, logService);
         VaultService     vaultService     = new VaultService(configDir, markerService, gitignoreService, logService);
         GitService       gitService       = new GitService(properties, vaultService, gitignoreService, logService);
         VaultCli         vaultCli         = new VaultCli(vaultService, markerService, gitService, logService);
+        WorkspaceCli     workspaceCli     = new WorkspaceCli(workspaceService, markerService, logService);
         NotificationHook hook             = new LogNotificationHook(logService);
 
         // ── 4. Load vaults ────────────────────────────────────────────────────
         final List<Vault> vaults = loadVaults(vaultService, logService);
 
         // ── 5. Early-exit commands — no orchestrators needed ──────────────────
-        if ("vault".equals(command)) {
+        if (VaultCli.COMMAND.equals(command)) {
             // vault subcommands are allowed on an empty registry (e.g. vault add)
-            String subcommand = flags.getOrDefault("sub", "list");
+            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, "list");
             int result = vaultCli.execute(subcommand, flags);
+            exit(logService, result);
+        }
+        if (WorkspaceCli.COMMAND.equals(command)) {
+            // vault subcommands are allowed on an empty registry (e.g. vault add)
+            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, "list");
+            int result = workspaceCli.execute(subcommand, flags);
             exit(logService, result);
         }
 
@@ -175,9 +187,7 @@ public class Main {
         }
 
         if ("config".equals(command)) {
-            exit(logService,
-                    handleConfig(
-                            flags, vaultFlag, vaults, vaultService, gitService, properties, configFile, logService));
+            exit(logService, handleConfig(flags, configFile, properties, logService));
         }
 
         // ── 6. Resolve --vault flag ───────────────────────────────────────────
@@ -344,8 +354,8 @@ public class Main {
      * the caller only needs to exit with {@link #errorExitCode()}.</p>
      */
     private record ParsedArgs(String command, Map<String, String> flags, Integer errorExitCode) {
-        static ParsedArgs failure(int exitCode) {
-            return new ParsedArgs(null, null, exitCode);
+        static ParsedArgs failure() {
+            return new ParsedArgs(null, null, 1);
         }
         static ParsedArgs success(String command, Map<String, String> flags) {
             return new ParsedArgs(command, flags, null);
@@ -381,18 +391,18 @@ public class Main {
             System.err.println(
                     "Usage: java -jar NomadSync.jar <pull|push|sync|commit|autosave|status|config|vault> " +
                             "[subcommand] [--workspacePath=<path>] [--vault=<name|owner/name>] [--git.*=<value>]");
-            return ParsedArgs.failure(1);
+            return ParsedArgs.failure();
         }
         String command = args[0];
 
-        // For commands that accept a positional subcommand (currently: vault),
+        // For commands that accept a positional subcommand (currently: vault, workspace),
         // args[1] — if present and not a flag — is extracted as "sub" before
         // the remaining flags are parsed. This keeps the public CLI surface clean:
         // users write `vault add` rather than `vault --sub=add`.
         Map<String, String> flags = new LinkedHashMap<>();
         int flagOffset = 1;
-        if ("vault".equals(command) && args.length > 1 && !args[1].startsWith("--")) {
-            flags.put("sub", args[1]);
+        if (List.of(VaultCli.COMMAND, WorkspaceCli.COMMAND).contains(command) && args.length > 1 && !args[1].startsWith("--")) {
+            flags.put(AbstractCli.FLAG_SUBCOMMAND, args[1]);
             flagOffset = 2;
         }
         final int startFrom = flagOffset;
@@ -421,7 +431,7 @@ public class Main {
         if (!strayArgs.isEmpty()) {
             System.err.println("Unrecognized argument(s): " + String.join(", ", strayArgs)
                     + " - did you forget '=' after a flag? (e.g. --path=<value>, not --path <value>)");
-            return ParsedArgs.failure(1);
+            return ParsedArgs.failure();
         }
 
         return ParsedArgs.success(command, flags);
@@ -433,27 +443,15 @@ public class Main {
      * (presence-only, no value that could be silently overwritten by a
      * duplicate) where repeating them changes nothing about the outcome.
      */
-    private static final Set<String> DUPLICATE_CHECK_EXEMPT_FLAGS = Set.of(FLAG_FORCE);
+    private static final Set<String> DUPLICATE_CHECK_EXEMPT_FLAGS = Set.of(AbstractCli.FLAG_FORCE);
 
     // ── Default workspace path resolution ─────────────────────────────────────
 
     private static final String WORKSPACES_REGISTRY_FILE_NAME = "workspaces.json";
 
-    /**
-     * Minimal shape read from {@code workspaces.json} for this single purpose —
-     * only {@code defaultWorkspace.path} is ever consulted here. Not the real
-     * registry DTO (that belongs to the full CRUD work — {@code workspace create}/
-     * {@code add}/{@code rename}/etc.) — deliberately narrow, so this stopgap read
-     * can be superseded later without having anticipated more of that surface than
-     * this one call site actually needs today.
-     */
-    public record DefaultWorkspaceEntry(String workspaceName, String path) {}
-    public record WorkspacesRegistrySnapshot(DefaultWorkspaceEntry defaultWorkspace) {}
-
-
     private static Path resolveWorkspacePathOrExit(String workspacePathArg) {
         try {
-            return (workspacePathArg == null || workspacePathArg.isBlank())
+            return (StringUtil.isBlank(workspacePathArg))
                     ? JsonMapper.loadDefaultWorkspacePath(
                     resolveJarDirectory().resolve(WORKSPACES_REGISTRY_FILE_NAME).toFile())
                     : Path.of(workspacePathArg).toAbsolutePath().normalize();
@@ -684,19 +682,10 @@ public class Main {
     /**
      * Handles the {@code config} command.
      *
-     * <p>With {@code --vault}: updates the matching vault's per-vault fields in
-     * {@code catalog.json} and re-runs {@link GitService#bootstrapVault(Vault)}
-     * to apply the changes immediately.</p>
-     *
-     * <p>Without {@code --vault}: updates matching {@code git.*} keys in
-     * {@code config.properties} and persists to disk. Note: {@link Properties#store}
-     * does not preserve comments from the original file.</p>
+     * <p>Updates matching {@code git.*} keys in {@code config.properties} and persists to disk.
+     * Note: {@link Properties#store} does not preserve comments from the original file.</p>
      *
      * @param flags        parsed CLI flags
-     * @param vaultFlag    the raw {@code --vault} value, or {@code null} for global update
-     * @param vaults       the list of registered vaults
-     * @param vaultService vault persistence service
-     * @param gitService   Git operations service
      * @param properties   loaded application properties
      * @param configFile   resolved path to the target workspace's {@code config.properties}
      * @param logService   shared logging service
@@ -704,14 +693,14 @@ public class Main {
      *         persistence/bootstrap/write failure), {@code 2} if no {@code --git.*}
      *         flag was provided (no-op)
      */
-    private static int handleConfig(Map<String, String> flags, String vaultFlag,
-                                    List<Vault> vaults, VaultService vaultService,
-                                    GitService gitService, Properties properties,
-                                    Path configFile, LogService logService) {
+    private static int handleConfig(Map<String, String> flags,
+                                    Path configFile,
+                                    Properties properties,
+                                    LogService logService) {
 
         Map<String, String> gitFlags = new LinkedHashMap<>();
         flags.forEach((k, v) -> {
-            if (k.startsWith("git.")) gitFlags.put(k, v);
+            if (k.startsWith(VaultCli.GIT_FLAG_PREFIX)) gitFlags.put(k, v);
         });
 
         if (gitFlags.isEmpty()) {
@@ -719,53 +708,20 @@ public class Main {
             return 2;
         }
 
-        if (vaultFlag != null) {
-            Vault vault;
-            try {
-                vault = vaultService.resolveVaultFlag(vaultFlag);
-            } catch (VaultNotFoundException | VaultAmbiguousException e) {
-                logService.error("handleConfig - " + e.getMessage());
-                vaultService.listRegistered();
-                return 1;
-            }
-
-            vaultService.applyGitFlagsToVault(gitFlags, vault);
-
-            try {
-                vaultService.update(vault);
-                logService.info("handleConfig - vault " + vault.getRepoSlug()
-                        + " updated in catalog.json");
-                gitService.bootstrapVault(vault);
-                logService.info("handleConfig - bootstrapVault re-applied for "
-                        + vault.getRepoSlug());
-            } catch (VaultException e) {
-                logService.error("handleConfig - failed to persist vault update: "
-                        + e.getMessage(), e);
-                return 1;
-            } catch (GitException e) {
-                logService.error("handleConfig - bootstrapVault failed: " + e.getMessage(), e);
-                return 1;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logService.error("handleConfig - bootstrapVault interrupted: " + e.getMessage(), e);
-                return 1;
-            }
-
-        } else {
-            gitFlags.forEach((k, v) -> {
-                properties.setProperty(k, v);
-                String logged = NomadProperties.Git.TOKEN.equals(k) ? "<hidden>" : v;
-                logService.info("handleConfig - set " + k + "=" + logged);
-            });
-            try (FileOutputStream out = new FileOutputStream(configFile.toFile())) {
-                properties.store(out, "NomadSync configuration - updated by 'NomadSync config'");
-                logService.info("handleConfig - config.properties updated at " + configFile);
-            } catch (IOException e) {
-                logService.error("handleConfig - failed to write config.properties: "
-                        + e.getMessage(), e);
-                return 1;
-            }
+        gitFlags.forEach((k, v) -> {
+            properties.setProperty(k, v);
+            String logged = NomadProperties.Git.TOKEN.equals(k) ? "<hidden>" : v;
+            logService.info("handleConfig - set " + k + "=" + logged);
+        });
+        try (FileOutputStream out = new FileOutputStream(configFile.toFile())) {
+            properties.store(out, "NomadSync configuration - updated by 'NomadSync config'");
+            logService.info("handleConfig - config.properties updated at " + configFile);
+        } catch (IOException e) {
+            logService.error("handleConfig - failed to write config.properties: "
+                    + e.getMessage(), e);
+            return 1;
         }
+
         return 0;
     }
 
@@ -786,7 +742,7 @@ public class Main {
             case "push"     -> EventType.PUSH_LOGOFF;
             case "sync"     -> EventType.SYNCHRONIZE;
             case "commit"   -> EventType.COMMIT_MANUAL;
-            default         -> null;        // includes also "autosave", "status", "config", "vault"
+            default         -> null;        // includes also "autosave", "status", "config", "vault", "workspace"
         };
         logService.debug("operationToEventType: " + command + " → " + eventType);
         return eventType;

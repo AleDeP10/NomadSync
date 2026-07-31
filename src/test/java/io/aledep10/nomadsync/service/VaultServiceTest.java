@@ -858,7 +858,7 @@ class VaultServiceTest {
             List<Vault> result = vaultService.findAllByName("findall-single");
 
             assertThat(result.size()).isEqualTo(1);
-            assertThat(result.get(0).getOwner()).isEqualTo("Alice");
+            assertThat(result.getFirst().getOwner()).isEqualTo("Alice");
         }
 
         @Test

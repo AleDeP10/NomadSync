@@ -22,9 +22,9 @@ import java.util.Properties;
  * <h2>Lifecycle protocol</h2>
  * <pre>
  * {@literal @}BeforeAll  → testVault = TestUtil.getTestVault("MyTest")
- *             → logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG))
+ *             → logService = new LogService(TestUtil.forLogService(testVault, LogLevel#DEBUG))
  * {@literal @}BeforeEach → use testVault directly (no new getTestVault call)
- *             → properties = TestUtil.forOrchestrator(testVault)
+ *             → properties = TestUtil.forClient(testVault)
  * {@literal @}AfterEach  → TestUtil.cleanup(testVault)
  * </pre>
  *
@@ -185,28 +185,6 @@ public final class TestUtil {
         properties.setProperty("log.writers", "console,file");
         properties.setProperty("log.path",  vault.logFilePath().toString());
         properties.setProperty("log.level", level.name());
-        return properties;
-    }
-
-    /**
-     * Creates {@link Properties} configured for {@link io.aledep10.nomadsync.orchestrator.SyncOrchestrator}
-     * and Git service tests.
-     *
-     * <p>Uses the vault path from the provided {@link TestVault} — no additional
-     * directory is created. The vault directory exists but is not initialised as a
-     * Git repository; callers that require a real repo must run {@code git init}
-     * on {@link TestVault#vaultPath()}.</p>
-     *
-     * <p>Does not include log properties — set those up separately via
-     * {@link #forLogService(TestVault, LogLevel)} in {@code @BeforeAll}.</p>
-     *
-     * @param vault the test environment providing the vault path
-     * @return configured {@link Properties} ready for service and orchestrator construction
-     */
-    public static Properties forOrchestrator(TestVault vault) {
-        Properties properties = new Properties();
-        properties.setProperty("vault.path",     vault.vaultPath().toString());
-        properties.setProperty("git.executable", TestConstants.GIT_EXECUTABLE);
         return properties;
     }
 

@@ -7,6 +7,7 @@ import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.marker.VaultMarker;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.util.*;
+import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
 import java.io.File;
 import java.io.IOException;
@@ -518,7 +519,7 @@ public class VaultService {
      * @return a new list containing all registered vaults
      */
     public List<Vault> findAll() {
-        return new ArrayList<>(vaults.values());
+        return vaults.values().stream().map(Vault::copy).collect(Collectors.toList());
     }
 
     /**
@@ -531,7 +532,7 @@ public class VaultService {
      * @return an {@link Optional} containing the vault, or empty if not registered
      */
     public Optional<Vault> findById(String id) {
-        return Optional.ofNullable(vaults.get(id));
+        return Optional.ofNullable(vaults.get(id)).map(Vault::copy);
     }
 
     /**
@@ -549,7 +550,7 @@ public class VaultService {
     public Optional<Vault> findByRepoSlug(String repoSlug) {
         return vaults.values().stream()
                 .filter(v -> v.getRepoSlug().equals(repoSlug))
-                .findFirst();
+                .findFirst().map(Vault::copy);
     }
 
     /**
@@ -578,6 +579,7 @@ public class VaultService {
     public List<Vault> findAllByName(String name) {
         return vaults.values().stream()
                 .filter(v -> v.getName().equals(name))
+                .map(Vault::copy)
                 .collect(Collectors.toList());
     }
 

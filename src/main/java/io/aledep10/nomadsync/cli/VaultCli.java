@@ -1,6 +1,5 @@
 package io.aledep10.nomadsync.cli;
 
-import io.aledep10.nomadsync.Main;
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.marker.MarkerType;
@@ -18,6 +17,20 @@ import java.util.*;
 
 public class VaultCli extends AbstractCli {
 
+    public static final String COMMAND = "vault";
+    public static final String FLAG_VAULT = "vault";
+    public static final String FLAG_OWNER = "owner";
+    public static final String FLAG_NAME = "name";
+    public static final String FLAG_PATH = "path";
+    public static final String FLAG_DEFAULTS = "defaults";
+    public static final String GIT_FLAG_PREFIX = "git.";
+    public static final String FLAG_GIT_NAME = GIT_FLAG_PREFIX + "name";
+    public static final String FLAG_GIT_EMAIL = GIT_FLAG_PREFIX + "email";
+    public static final String FLAG_GIT_USERNAME = GIT_FLAG_PREFIX + "username";
+    public static final String FLAG_GIT_TOKEN = GIT_FLAG_PREFIX + "token";
+    public static final String FLAG_GIT_BRANCH = GIT_FLAG_PREFIX + "branch";
+    public static final String FLAG_GIT_REMOTE = GIT_FLAG_PREFIX + "remote";
+
     private final VaultService vaultService;
     private final MarkerService markerService;
     private final GitService gitService;
@@ -30,15 +43,9 @@ public class VaultCli extends AbstractCli {
         this.gitService = gitService;
     }
 
-
     @Override
     protected Map<String, String> syntaxHints() {
-        return Map.of("vault", "--vault=<name|owner/name>");
-    }
-
-    @Override
-    protected List<String> keysToCheck() {
-        return List.of("workspacePath");
+        return Map.of(FLAG_VAULT, "--" + FLAG_VAULT + "=<name|owner/name>");
     }
 
     /**
@@ -79,23 +86,23 @@ public class VaultCli extends AbstractCli {
     // Global flags (workspacePath, vault, daemon) are removed from the map before these
     // handlers are invoked, so they must not appear here.
     private static final Set<String> FLAGS_VAULT_ADD    =
-            Set.of("owner", "name", "path",
-                    "git.name", "git.email", "git.username",
-                    "git.token", "git.branch", "git.remote");
+            Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH,
+                    FLAG_GIT_NAME, FLAG_GIT_EMAIL, FLAG_GIT_USERNAME,
+                    FLAG_GIT_TOKEN, FLAG_GIT_BRANCH, FLAG_GIT_REMOTE);
     // Allowed flags — same set as FLAGS_VAULT_ADD (owner, name, path, git.*).
     // git.token is NOT mandatory here: it may come from config.properties defaults.
     private static final Set<String> FLAGS_VAULT_CREATE = FLAGS_VAULT_ADD;
     private static final Set<String> FLAGS_VAULT_UPDATE =
-            Set.of("vault", "owner", "name", "path",
-                    "git.name", "git.email", "git.username",
-                    "git.token", "git.branch", "git.remote");
-    private static final Set<String> FLAGS_VAULT_REMOVE = Set.of("vault", Main.FLAG_FORCE);
+            Set.of(FLAG_VAULT, FLAG_OWNER, FLAG_NAME, FLAG_PATH,
+                    FLAG_GIT_NAME, FLAG_GIT_EMAIL, FLAG_GIT_USERNAME,
+                    FLAG_GIT_TOKEN, FLAG_GIT_BRANCH, FLAG_GIT_REMOTE);
+    private static final Set<String> FLAGS_VAULT_REMOVE = Set.of(FLAG_VAULT, FLAG_FORCE);
     private static final Set<String> FLAGS_VAULT_RELOCATE =
-            Set.of("vault", "owner", "name", "path",
-                    "git.name", "git.email", "git.username",
-                    "git.token", "git.branch", "git.remote", Main.FLAG_FORCE);
+            Set.of(FLAG_VAULT, FLAG_OWNER, FLAG_NAME, FLAG_PATH,
+                    FLAG_GIT_NAME, FLAG_GIT_EMAIL, FLAG_GIT_USERNAME,
+                    FLAG_GIT_TOKEN, FLAG_GIT_BRANCH, FLAG_GIT_REMOTE, FLAG_FORCE);
     private static final Set<String> FLAGS_VAULT_LIST   = Set.of();
-    private static final Set<String> FLAGS_VAULT_SHOW   = Set.of("vault", "defaults");
+    private static final Set<String> FLAGS_VAULT_SHOW   = Set.of(FLAG_VAULT, FLAG_DEFAULTS);
 
     /**
      * Handles {@code vault create} — initialises a brand-new local Git repository
@@ -134,11 +141,11 @@ public class VaultCli extends AbstractCli {
      */
     int handleVaultCreate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_CREATE, "handleVaultCreate")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultCreate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultCreate")) return 1;
 
-        String owner    = flags.get("owner");
-        String name     = flags.get("name");
-        String path     = flags.get("path");
+        String owner    = flags.get(FLAG_OWNER);
+        String name     = flags.get(FLAG_NAME);
+        String path     = flags.get(FLAG_PATH);
         String repoSlug = owner + "/" + name;
 
         if (vaultService.findAll().stream().anyMatch(v -> v.getRepoSlug().equals(repoSlug))) {
@@ -193,11 +200,7 @@ public class VaultCli extends AbstractCli {
             return 1;
         }
 
-        Map<String, String> gitFlags = new LinkedHashMap<>();
-        flags.forEach((k, v) -> {
-            if (k.startsWith("git.")) gitFlags.put(k, v);
-        });
-        vaultService.applyGitFlagsToVault(gitFlags, vault);
+        vaultService.applyGitFlagsToVault(extractGitFlags(flags), vault);
 
         try {
             gitService.bootstrapVault(vault);
@@ -235,11 +238,11 @@ public class VaultCli extends AbstractCli {
      */
     int handleVaultAdd(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_ADD, "handleVaultAdd")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("owner", "name", "path"), "handleVaultAdd")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultAdd")) return 1;
 
-        String owner    = flags.get("owner");
-        String name     = flags.get("name");
-        String path     = flags.get("path");
+        String owner    = flags.get(FLAG_OWNER);
+        String name     = flags.get(FLAG_NAME);
+        String path     = flags.get(FLAG_PATH);
         String repoSlug = owner + "/" + name;
 
         if (vaultService.findAll().stream().anyMatch(v -> v.getRepoSlug().equals(repoSlug))) {
@@ -265,11 +268,7 @@ public class VaultCli extends AbstractCli {
             return 1;
         }
 
-        Map<String, String> gitFlags = new LinkedHashMap<>();
-        flags.forEach((k, v) -> {
-            if (k.startsWith("git.")) gitFlags.put(k, v);
-        });
-        vaultService.applyGitFlagsToVault(gitFlags, vault);
+        vaultService.applyGitFlagsToVault(extractGitFlags(flags), vault);
 
         try {
             gitService.bootstrapVault(vault);
@@ -304,23 +303,22 @@ public class VaultCli extends AbstractCli {
      */
     int handleVaultUpdate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_UPDATE, "handleVaultUpdate")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultUpdate")) return 1;
-        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultUpdate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_VAULT), "handleVaultUpdate")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultUpdate")) return 1;
 
         Vault vault;
         try {
-            vault = vaultService.resolveVaultFlag(flags.get("vault"));
+            vault = vaultService.resolveVaultFlag(flags.get(FLAG_VAULT));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultUpdate - " + e.getMessage());
             vaultService.listRegistered();
             return 1;
         }
 
-        Map<String, String> gitFlags = new LinkedHashMap<>();
-        flags.forEach((k, v) -> { if (k.startsWith("git.")) gitFlags.put(k, v); });
+        Map<String, String> gitFlags = extractGitFlags(flags);
 
-        boolean changed = flags.containsKey("owner") || flags.containsKey("name")
-                || flags.containsKey("path") || !gitFlags.isEmpty();
+        boolean changed = flags.containsKey(FLAG_OWNER) || flags.containsKey(FLAG_NAME)
+                || flags.containsKey(FLAG_PATH) || !gitFlags.isEmpty();
 
         if (!changed) {
             logService.info("handleVaultUpdate: no changes requested.");
@@ -333,15 +331,13 @@ public class VaultCli extends AbstractCli {
         // the PREVIOUS state for change detection. Mutating in place would make that
         // comparison always see "no change", silently skipping claim/release.
         Vault updated = new Vault(vault.getId(),
-                flags.getOrDefault("owner", vault.getOwner()),
-                flags.getOrDefault("name", vault.getName()),
-                flags.getOrDefault("path", vault.getPath()),
+                flags.getOrDefault(FLAG_OWNER, vault.getOwner()),
+                flags.getOrDefault(FLAG_NAME, vault.getName()),
+                flags.getOrDefault(FLAG_PATH, vault.getPath()),
                 vault.getGitName(), vault.getGitEmail(), vault.getGitUsername(),
                 vault.getGitToken(), vault.getGitBranch(), vault.getGitRemote());
 
-        if (!gitFlags.isEmpty()) {
-            vaultService.applyGitFlagsToVault(gitFlags, updated);
-        }
+        vaultService.applyGitFlagsToVault(gitFlags, updated);
 
         try {
             vaultService.update(updated);
@@ -385,19 +381,19 @@ public class VaultCli extends AbstractCli {
      */
     int handleVaultRemove(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_REMOVE, "handleVaultRemove")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRemove")) return 1;
-        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultRemove")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_VAULT), "handleVaultRemove")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultRemove")) return 1;
 
         Vault vault;
         try {
-            vault = vaultService.resolveVaultFlag(flags.get("vault"));
+            vault = vaultService.resolveVaultFlag(flags.get(FLAG_VAULT));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultRemove - " + e.getMessage());
             vaultService.listRegistered();
             return 1;
         }
 
-        if (!flags.containsKey(Main.FLAG_FORCE)) {
+        if (!flags.containsKey(FLAG_FORCE)) {
             System.out.print("Remove vault " + vault.getRepoSlug() + "? (y/N): ");
 
             int response;
@@ -496,52 +492,53 @@ public class VaultCli extends AbstractCli {
      *       {@code vault update} instead.</li>
      * </ul>
      *
+     * <h2>Cross-drive relocate</h2>
+     * <p>If {@code --path} differs and lives on a different filesystem/drive
+     * from the vault's current path ({@link #isCrossDrive}), the operation is
+     * rejected before the confirmation prompt — not supported in this version
+     * (see {@code AbstractCli#isCrossDrive}).</p>
+     *
      * @param flags         parsed CLI flags
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
      *         vault not resolved, credential-only request with no structural
-     *         change, snapshot/reset/copy/update/bootstrap failure); {@code 2}
-     *         if nothing was requested at all, or if the user declines the
-     *         confirmation prompt (both no-op)
+     *         change, cross-drive target, snapshot/reset/copy/update/bootstrap
+     *         failure); {@code 2} if nothing was requested at all, or if the
+     *         user declines the confirmation prompt (both no-op)
      */
     int handleVaultRelocate(Map<String, String> flags) {
 
         if (hasUnknownFlags(flags, FLAGS_VAULT_RELOCATE, "handleVaultRelocate")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultRelocate")) return 1;
-        if (hasBlankOptionalValue(flags, Set.of("owner", "name", "path"), "handleVaultRelocate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_VAULT), "handleVaultRelocate")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultRelocate")) return 1;
 
         Vault vault;
         try {
-            vault = vaultService.resolveVaultFlag(flags.get("vault"));
+            vault = vaultService.resolveVaultFlag(flags.get(FLAG_VAULT));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultRelocate - " + e.getMessage());
             vaultService.listRegistered();
             return 1;
         }
 
-        String newOwner = flags.getOrDefault("owner", vault.getOwner());
-        String newName  = flags.getOrDefault("name", vault.getName());
-        String newPath  = Path.of(flags.getOrDefault("path", vault.getPath()))
+        String newOwner = flags.getOrDefault(FLAG_OWNER, vault.getOwner());
+        String newName  = flags.getOrDefault(FLAG_NAME, vault.getName());
+        String newPath  = Path.of(flags.getOrDefault(FLAG_PATH, vault.getPath()))
                 .toAbsolutePath().normalize().toString();
+        Path target = Path.of(newPath);
 
         boolean structuralChange = !newOwner.equals(vault.getOwner())
                 || !newName.equals(vault.getName())
                 || !newPath.equals(vault.getPath());
 
-        Map<String, String> gitFlags = new LinkedHashMap<>();
-        flags.forEach((key, value) -> {
-            if (key.startsWith("git.")) gitFlags.put(key, value);
-        });
+        if (!extractGitFlags(flags).isEmpty()) {
+            logService.error("handleVaultRelocate: --git.* flags are not applied here - "
+                    + "use 'vault update' for credential changes (relocate first if a path/owner/name change is also needed)");
+            return 1;
+        }
 
         if (!structuralChange) {
-            if (gitFlags.isEmpty()) {
-                logService.info("handleVaultRelocate: no changes requested.");
-                return 2;
-            } else {
-                logService.error("handleVaultRelocate: no structural change requested "
-                        + "(owner/name/path unchanged) - use 'vault update' to rotate "
-                        + "credentials without resetting Git history");
-                return 1;
-            }
+            logService.info("handleVaultRelocate: no changes requested.");
+            return 2;
         }
 
         if (!newPath.equals(vault.getPath())) {
@@ -553,14 +550,7 @@ public class VaultCli extends AbstractCli {
             }
 
             try {
-                markerService.checkNoNestingConflict(newPath);
-            } catch (MarkerClaimException e) {
-                logService.error("handleVaultRelocate - " + e.getMessage());
-                return 1;
-            }
-
-            try {
-                if (isCrossDrive(Path.of(vault.getPath()), Path.of(newPath))) {
+                if (isCrossDrive(Path.of(vault.getPath()), target)) {
                     logService.error("handleVaultRelocate - relocating across a different drive/filesystem "
                             + "is not supported in this version - move the directory with a system tool, "
                             + "then use 'vault add' at the new location");
@@ -573,7 +563,7 @@ public class VaultCli extends AbstractCli {
             }
         }
 
-        if (!flags.containsKey(Main.FLAG_FORCE)) {
+        if (!flags.containsKey(FLAG_FORCE)) {
             System.out.print("This will PERMANENTLY discard local Git history for "
                     + vault.getRepoSlug() + ". Continue? (y/N): ");
 
@@ -609,7 +599,6 @@ public class VaultCli extends AbstractCli {
         }
 
         if (!newPath.equals(vault.getPath())) {
-            Path target = Path.of(newPath);
             try {
                 FileUtil.copyRecursively(Path.of(vault.getPath()), target);
             } catch (IOException e) {
@@ -644,7 +633,6 @@ public class VaultCli extends AbstractCli {
         Vault updated = new Vault(vault.getId(), newOwner, newName, newPath,
                 vault.getGitName(), vault.getGitEmail(), vault.getGitUsername(),
                 vault.getGitToken(), vault.getGitBranch(), vault.getGitRemote());
-        vaultService.applyGitFlagsToVault(gitFlags, updated);
 
         try {
             vaultService.update(updated);
@@ -718,19 +706,19 @@ public class VaultCli extends AbstractCli {
      */
     int handleVaultShow(Map<String, String> flags, int maxLines) {
         if (hasUnknownFlags(flags, FLAGS_VAULT_SHOW, "handleVaultShow")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of("vault"), "handleVaultShow")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_VAULT), "handleVaultShow")) return 1;
         if (hasBlankOptionalValue(flags, Set.of(), "handleVaultShow")) return 1;
 
         Vault vault;
         try {
-            vault = vaultService.resolveVaultFlag(flags.get("vault"));
+            vault = vaultService.resolveVaultFlag(flags.get(FLAG_VAULT));
         } catch (VaultNotFoundException | VaultAmbiguousException e) {
             logService.error("handleVaultShow - " + e.getMessage());
             vaultService.listRegistered();
             return 1;
         }
 
-        boolean showDefaults = flags.containsKey("defaults");
+        boolean showDefaults = flags.containsKey(FLAG_DEFAULTS);
 
         // -- mandatory fields (always shown)
         logService.info("Vault:  " + vault.getRepoSlug());
@@ -764,6 +752,14 @@ public class VaultCli extends AbstractCli {
         }
 
         return 0;
+    }
+
+    private Map<String, String> extractGitFlags(Map<String, String> flags) {
+        Map<String, String> gitFlags = new LinkedHashMap<>();
+        flags.forEach((k, v) -> {
+            if (k.startsWith(GIT_FLAG_PREFIX)) gitFlags.put(k, v);
+        });
+        return gitFlags;
     }
 
     private static String orDefault(String value) {

@@ -79,5 +79,5 @@ public class WorkspaceEntryDto {
 
     public String getWorkspaceName() { return workspaceName; }
     public String getPath()          { return path;          }
-    public Boolean getIsDefault()    { return isDefault;      }
+    public Boolean getIsDefault()    { return isDefault;     }
 }

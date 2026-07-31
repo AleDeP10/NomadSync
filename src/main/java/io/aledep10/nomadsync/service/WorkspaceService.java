@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Manages the lifecycle of registered {@link WorkspaceEntry} instances — load,
@@ -198,7 +199,7 @@ public class WorkspaceService {
      * Returns a defensive copy of every registered workspace entry.
      */
     public List<WorkspaceEntry> findAll() {
-        return workspaces.values().stream().map(WorkspaceEntry::copy).toList();
+        return workspaces.values().stream().map(WorkspaceEntry::copy).collect(Collectors.toList());
     }
 
     /**

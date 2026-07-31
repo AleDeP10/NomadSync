@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Optional;
 import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -132,7 +131,7 @@ class WorkspaceServiceTest {
             List<WorkspaceEntry> loaded = reloaded.load();
 
             assertThat(loaded).hasSize(1);
-            assertThat(loaded.get(0).getWorkspaceName()).isEqualTo("default");
+            assertThat(loaded.getFirst().getWorkspaceName()).isEqualTo("default");
         }
     }
 

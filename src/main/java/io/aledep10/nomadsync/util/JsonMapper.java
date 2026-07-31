@@ -140,41 +140,4 @@ public final class JsonMapper {
         SocketMessageDto dto = MAPPER.readValue(json, SocketMessageDto.class);
         return new SyncEvent(EventType.valueOf(dto.getEvent()), dto.getVaultId());
     }
-
-    /**
-     * Reads an {@link InputStream} and returns its content as a compact JSON string.
-     *
-     * <p>Uses Jackson's streaming API to parse without loading the full payload
-     * into a string first. The result is re-serialised as a compact JSON string
-     * suitable for passing to {@link #toSyncEvent(String)}.</p>
-     *
-     * @param stream the input stream to read — typically a socket input stream
-     * @return the JSON content as a compact string
-     * @throws IOException if the stream cannot be read or is not valid JSON
-     */
-    public static String extractJson(InputStream stream) throws IOException {
-        JsonFactory factory = MAPPER.getFactory();
-        try (JsonParser parser = factory.createParser(stream)) {
-            JsonNode node = MAPPER.readTree(parser);
-            return node.toString();
-        }
-    }
-
-    // ── Generic ───────────────────────────────────────────────────────────────
-
-    /**
-     * Serialises any object to a compact JSON string.
-     *
-     * <p>General-purpose fallback — use for socket transmission, logging, and any
-     * other context where a JSON string representation is needed. Covers all cases
-     * previously handled by the removed per-type overloads ({@code toJson(Vault)},
-     * {@code toJson(SocketMessage)}).</p>
-     *
-     * @param obj the object to serialise
-     * @return compact JSON string
-     * @throws JsonProcessingException if serialisation fails
-     */
-    public static String toJson(Object obj) throws JsonProcessingException {
-        return MAPPER.writeValueAsString(obj);
-    }
 }

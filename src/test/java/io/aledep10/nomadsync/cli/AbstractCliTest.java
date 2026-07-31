@@ -3,18 +3,15 @@ package io.aledep10.nomadsync.cli;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TempDirs;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.IOException;
+import java.nio.file.FileStore;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
+import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -61,12 +58,7 @@ class AbstractCliTest {
 
         @Override
         protected Map<String, String> syntaxHints() {
-            return Map.of("vault", "--vault=<name|owner/name>");
-        }
-
-        @Override
-        protected List<String> keysToCheck() {
-            return List.of("workspacePath");
+            return Map.of(VaultCli.FLAG_VAULT, "--vault=<name|owner/name>");
         }
 
         @Override
@@ -82,7 +74,7 @@ class AbstractCliTest {
         @Test
         @DisplayName("returns false when every key is known")
         void allKnown_returnsFalse() {
-            Map<String, String> flags = Map.of("owner", "Alice", "name", "vault", "path", "/tmp/vault");
+            Map<String, String> flags = Map.of("owner", "Alice", "name", VaultCli.FLAG_VAULT, "path", "/tmp/vault");
 
             assertThat(cli.hasUnknownFlags(flags, KNOWN_FLAGS, "stubHandler")).isFalse();
         }
@@ -90,7 +82,7 @@ class AbstractCliTest {
         @Test
         @DisplayName("'sub' is always permitted, never reported as unknown")
         void subKey_neverReported() {
-            Map<String, String> flags = Map.of("sub", "create", "owner", "Alice", "name", "vault", "path", "/tmp/vault");
+            Map<String, String> flags = Map.of("sub", "create", "owner", "Alice", "name", VaultCli.FLAG_VAULT, "path", "/tmp/vault");
 
             assertThat(cli.hasUnknownFlags(flags, KNOWN_FLAGS, "stubHandler")).isFalse();
         }
@@ -111,7 +103,7 @@ class AbstractCliTest {
         @Test
         @DisplayName("returns false when every required key is present and non-blank")
         void allPresent_returnsFalse() {
-            Map<String, String> flags = Map.of("owner", "Alice", "name", "vault");
+            Map<String, String> flags = Map.of("owner", "Alice", "name", VaultCli.FLAG_VAULT);
 
             assertThat(cli.hasBlankRequiredFlags(flags, Set.of("owner", "name"), "stubHandler")).isFalse();
         }
@@ -154,17 +146,6 @@ class AbstractCliTest {
         }
 
         @Test
-        @DisplayName("checks keysToCheck() even when not in the caller's structuralKeys")
-        void alwaysCheckedKey_blank_returnsTrueEvenIfNotPassedByCaller() {
-            Map<String, String> flags = new java.util.HashMap<>();
-            flags.put("workspacePath", "");
-
-            // structuralKeys deliberately does not include "workspacePath" —
-            // it comes only from StubCli.keysToCheck().
-            assertThat(cli.hasBlankOptionalValue(flags, Set.of(), "stubHandler")).isTrue();
-        }
-
-        @Test
         @DisplayName("returns false when nothing checked is present")
         void nothingPresent_returnsFalse() {
             assertThat(cli.hasBlankOptionalValue(Map.of(), Set.of(), "stubHandler")).isFalse();
@@ -185,6 +166,51 @@ class AbstractCliTest {
         @DisplayName("returns empty when no known flag is within threshold")
         void unrelatedFlag_returnsEmpty() {
             assertThat(cli.nearestKnownFlag("completelyUnrelatedFlagName", KNOWN_FLAGS)).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("isCrossDrive")
+    class IsCrossDriveTests {
+
+        @Test
+        @DisplayName("returns false when source and target share the same filesystem/drive")
+        void sameDrive_returnsFalse() throws IOException {
+            assertThat(cli.isCrossDrive(tempDir, tempDir.resolve("target"))).isFalse();
+        }
+
+        @Test
+        @DisplayName("returns true when source and target live on different filesystems/drives")
+        void differentDrive_returnsTrue() throws IOException {
+            Path secondRoot = findSecondFileStoreRoot();
+            Assumptions.assumeTrue(secondRoot != null,
+                    "no second drive/filesystem available on this machine - skipped here, covered by SMK/E2E instead");
+
+            Path target = secondRoot.resolve("nomadsync-cross-drive-test-" + UUID.randomUUID());
+
+            assertThat(cli.isCrossDrive(tempDir, target)).isTrue();
+        }
+
+        @Test
+        @DisplayName("walks up to the nearest existing ancestor when target does not exist yet")
+        void nonExistentTarget_walksUpToExistingAncestor() throws IOException {
+            Path target = tempDir.resolve("not-yet-created").resolve("nested");
+
+            assertThat(cli.isCrossDrive(tempDir, target)).isFalse();
+        }
+
+        private Path findSecondFileStoreRoot() throws IOException {
+            FileStore tempDirStore = Files.getFileStore(tempDir);
+            for (Path root : FileSystems.getDefault().getRootDirectories()) {
+                try {
+                    if (Files.isReadable(root) && !Files.getFileStore(root).equals(tempDirStore)) {
+                        return root;
+                    }
+                } catch (IOException ignored) {
+                    // root not accessible (e.g. an empty optical drive) - skip it
+                }
+            }
+            return null;
         }
     }
 }
