@@ -25,19 +25,23 @@ installer/
 # ------------------------------------------------------------
 # Application Runtime Configuration & Secrets
 # ------------------------------------------------------------
+
 # Ignore active local configuration files at the project root
 /src/main/resources/config.properties
 /src/main/resources/config.dev.properties
 /src/main/resources/config.prod.properties
 /src/main/resources/catalog.json
+/src/main/resources/workspaces.json
 
 # Editor backup files of the above
 /src/main/resources/*.properties.bak
-/src/main/resources/vaults.json.bak
+/src/main/resources/catalog.json.bak
+/src/main/resources/workspaces.json.bak
 
 # Explicitly ensure resource templates are ALWAYS tracked in Git
 !src/main/resources/config.template.properties
 !src/main/resources/catalog.template.json
+!src/main/resources/workspaces.template.json
 
 # ------------------------------------------------------------
 # Logs & JVM Diagnostics

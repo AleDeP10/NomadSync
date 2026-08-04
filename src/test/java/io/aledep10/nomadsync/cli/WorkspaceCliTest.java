@@ -300,7 +300,8 @@ class WorkspaceCliTest {
 
             assertThat(result).isEqualTo(0);
             assertThat(workspaceService.findByName("secondary")).isEmpty();
-            assertThat(Files.exists(Path.of(secondaryPath))).isFalse();
+            assertThat(Files.isDirectory(Path.of(secondaryPath).resolve(MarkerType.WORKSPACE.folderName()))).isFalse();
+            assertThat(Files.isDirectory(Path.of(secondaryPath))).isTrue();
         }
 
         @Test

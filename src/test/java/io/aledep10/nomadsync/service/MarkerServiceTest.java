@@ -15,6 +15,7 @@ import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatCode;
 
 /**
  * Unit tests for {@link MarkerService}.
@@ -139,9 +140,25 @@ class MarkerServiceTest {
         }
 
         @Test
-        @DisplayName("throws when an ancestor already carries a marker of a DIFFERENT type — cross-type protection")
-        void ancestorConflict_crossType_throws(TempDirs tempDirs) throws Exception {
-            Path parent = tempDirs.newDir("MarkerServiceTest", "claim-ancestor-cross-type");
+        @DisplayName("throws when claiming a path nested inside a marker folder of a DIFFERENT type")
+        void claimInsideDifferentTypeMarkerFolder_throws(TempDirs tempDirs) throws Exception {
+            Path parent = tempDirs.newDir("MarkerServiceTest", "claim-inside-marker-folder");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
+            markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
+
+            Path child = parent.resolve(MarkerType.WORKSPACE.folderName()).resolve("nested-vault");
+            Files.createDirectories(child);
+            VaultMarker vaultMarker = VaultMarker.create("id-1", "Alice/vault", "/some/catalog.json", "2026-01-01T00:00:00");
+
+            assertThatThrownBy(() -> markerService.claim(MarkerType.VAULT, child.toString(), vaultMarker))
+                    .isInstanceOf(MarkerClaimException.class)
+                    .hasMessageContaining("Alice");
+        }
+
+        @Test
+        @DisplayName("claiming a vault as sibling of an already-claimed workspace marker succeeds — the normal case")
+        void claimSiblingOfWorkspaceMarker_succeeds(TempDirs tempDirs) throws Exception {
+            Path parent = tempDirs.newDir("MarkerServiceTest", "claim-sibling-ok");
             WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
 
@@ -149,9 +166,9 @@ class MarkerServiceTest {
             Files.createDirectories(child);
             VaultMarker vaultMarker = VaultMarker.create("id-1", "Alice/vault", "/some/catalog.json", "2026-01-01T00:00:00");
 
-            assertThatThrownBy(() -> markerService.claim(MarkerType.VAULT, child.toString(), vaultMarker))
-                    .isInstanceOf(MarkerClaimException.class)
-                    .hasMessageContaining("Alice");
+            assertThatCode(() -> markerService.claim(MarkerType.VAULT, child.toString(), vaultMarker))
+                    .doesNotThrowAnyException();
+            assertThat(Files.isDirectory(child.resolve(MarkerType.VAULT.folderName()))).isTrue();
         }
 
         @Test
@@ -265,16 +282,32 @@ class MarkerServiceTest {
         }
 
         @Test
-        @DisplayName("throws when an ancestor carries a marker of a DIFFERENT type (cross-type)")
-        void ancestorHasDifferentTypeMarker_throws(TempDirs tempDirs) throws Exception {
-            Path parent = tempDirs.newDir("MarkerServiceTest", "nesting-ancestor-cross-type");
+        @DisplayName("throws when the candidate path is nested inside a reserved marker folder itself")
+        void candidateInsideMarkerFolder_throws(TempDirs tempDirs) throws Exception {
+            Path parent = tempDirs.newDir("MarkerServiceTest", "nesting-inside-marker-folder");
             WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
-            Path candidate = parent.resolve("child-vault");
+
+            // Degenerate: a candidate whose path runs THROUGH the reserved marker
+            // folder itself, not merely a sibling of it.
+            Path candidate = parent.resolve(MarkerType.WORKSPACE.folderName()).resolve("child-vault");
 
             assertThatThrownBy(() -> markerService.checkNoNestingConflict(candidate.toString()))
                     .isInstanceOf(MarkerClaimException.class)
                     .hasMessageContaining("Alice");
+        }
+
+        @Test
+        @DisplayName("does NOT throw for a vault sibling of an already-claimed workspace marker — the normal case")
+        void siblingOfWorkspaceMarker_noConflict(TempDirs tempDirs) throws Exception {
+            Path parent = tempDirs.newDir("MarkerServiceTest", "nesting-sibling-ok");
+            WorkspaceMarker workspaceMarker = WorkspaceMarker.create("ws-id", "Alice", "2026-01-01T00:00:00");
+            markerService.claim(MarkerType.WORKSPACE, parent.toString(), workspaceMarker);
+
+            Path candidate = parent.resolve("child-vault");
+
+            assertThatCode(() -> markerService.checkNoNestingConflict(candidate.toString()))
+                    .doesNotThrowAnyException();
         }
 
         @Test

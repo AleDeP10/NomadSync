@@ -438,27 +438,49 @@ public class WorkspaceService {
     }
 
     /**
-     * Removes a registered workspace entry and physically deletes its
-     * directory. No pre-destructive backup ({@code NomadSync-WSP-003}) —
-     * accepted risk, a workspace holds no versioned content of value.
+     * Removes a registered workspace entry and severs NomadSync's logical link
+     * to its directory — releases every contained vault's {@code .nomadsync-vault}
+     * marker, then the workspace's own {@code .nomadsync-workspace} marker.
+     * Everything else on disk (vault content, any non-marker file) is left
+     * untouched — {@code erase} un-claims, it does not delete user data.
+     *
+     * <p>No pre-destructive backup — none is needed: nothing user-facing is ever
+     * removed by this operation, only the marker folders that made the directory
+     * and its vaults recognizable to NomadSync in the first place.</p>
      *
      * @throws WorkspaceNotFoundException if {@code workspaceName} is not registered
      * @throws WorkspaceException         if {@code workspaceName} is the current
-     *                                    default, or if deletion/persistence fails
+     *                                    default, if the workspace's catalog cannot
+     *                                    be read, or if persistence fails
      */
     public void erase(String workspaceName) throws WorkspaceException {
         WorkspaceEntry workspace = findByName(workspaceName)
-                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceName));
+                 .orElseThrow(() -> new WorkspaceNotFoundException(workspaceName));
         if (workspace.isDefault())
-            throw new WorkspaceException("cannot erase the default workspace '" + workspaceName +
-                    "' - use 'workspace use' on another workspace first");
+            throw new WorkspaceException("cannot erase the default workspace '" + workspaceName
+                    + "' - use 'workspace use' on another workspace first");
 
-        markerService.release(MarkerType.WORKSPACE, workspace.getPath());
+        // Read the catalog BEFORE releasing the workspace marker — catalog.json
+        // lives inside .nomadsync-workspace/, about to be deleted.
+        File catalogFile = Path.of(workspace.getPath())
+                .resolve(MarkerType.WORKSPACE.folderName())
+                .resolve(VaultService.CATALOG_FILE_NAME)
+                .toFile();
+        List<Vault> vaults;
         try {
-            FileUtil.deleteRecursively(Path.of(workspace.getPath()));
+            vaults = JsonMapper.loadVaultsFromFile(catalogFile);   // empty list if no catalog yet
         } catch (IOException e) {
-            throw new WorkspaceException("Unable to remove workspace '" + workspaceName + "': " + e.getMessage(), e);
+            throw new WorkspaceException("Unable to read catalog for workspace '" + workspaceName
+                    + "': " + e.getMessage(), e);
         }
+
+        // Un-claim every contained vault before un-claiming the workspace itself —
+        // inside-out order, mirrors how the marker hierarchy is nested on disk.
+        for (Vault vault : vaults) {
+            markerService.release(MarkerType.VAULT, vault.getPath());
+        }
+        markerService.release(MarkerType.WORKSPACE, workspace.getPath());
+
         workspaces.remove(workspaceName);
         save();
     }

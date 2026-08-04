@@ -113,12 +113,14 @@ public class MarkerService {
         // ── Ancestor scan (unbounded, cross-type) ──
         Path ancestor = candidate.getParent();
         while (ancestor != null) {
-            for (MarkerType type : MarkerType.values()) {
-                Path folder = markerFolder(ancestor, type);
-                if (Files.isDirectory(folder)) {
-                    throw new MarkerClaimException("path '" + candidatePath
-                            + "' is nested inside a directory already claimed - "
-                            + describeConflictBestEffort(type, folder) + " (" + ancestor + ")");
+            Path name = ancestor.getFileName();
+            if (name != null) {
+                for (MarkerType type : MarkerType.values()) {
+                    if (name.toString().equals(type.folderName())) {
+                        throw new MarkerClaimException("path '" + candidatePath
+                                + "' is nested inside a reserved marker folder itself - "
+                                + describeConflictBestEffort(type, ancestor));
+                    }
                 }
             }
             ancestor = ancestor.getParent();

@@ -180,37 +180,11 @@ class AbstractCliTest {
         }
 
         @Test
-        @DisplayName("returns true when source and target live on different filesystems/drives")
-        void differentDrive_returnsTrue() throws IOException {
-            Path secondRoot = findSecondFileStoreRoot();
-            Assumptions.assumeTrue(secondRoot != null,
-                    "no second drive/filesystem available on this machine - skipped here, covered by SMK/E2E instead");
-
-            Path target = secondRoot.resolve("nomadsync-cross-drive-test-" + UUID.randomUUID());
-
-            assertThat(cli.isCrossDrive(tempDir, target)).isTrue();
-        }
-
-        @Test
         @DisplayName("walks up to the nearest existing ancestor when target does not exist yet")
         void nonExistentTarget_walksUpToExistingAncestor() throws IOException {
             Path target = tempDir.resolve("not-yet-created").resolve("nested");
 
             assertThat(cli.isCrossDrive(tempDir, target)).isFalse();
-        }
-
-        private Path findSecondFileStoreRoot() throws IOException {
-            FileStore tempDirStore = Files.getFileStore(tempDir);
-            for (Path root : FileSystems.getDefault().getRootDirectories()) {
-                try {
-                    if (Files.isReadable(root) && !Files.getFileStore(root).equals(tempDirStore)) {
-                        return root;
-                    }
-                } catch (IOException ignored) {
-                    // root not accessible (e.g. an empty optical drive) - skip it
-                }
-            }
-            return null;
         }
     }
 }

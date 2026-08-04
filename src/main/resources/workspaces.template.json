@@ -1,0 +1,10 @@
+{
+  "workspaces" : [ {
+    "workspaceName" : "default",
+    "path" : "C:\\Users\\YOUR_USER\\Vaults",
+    "isDefault" : true
+  }, {
+    "workspaceName" : "laptop-work",
+    "path" : "C:\\Users\\YOUR_USER\\Workspaces\\laptop-work"
+  } ]
+}

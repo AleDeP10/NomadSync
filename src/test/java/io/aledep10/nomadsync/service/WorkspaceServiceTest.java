@@ -4,9 +4,12 @@ import io.aledep10.nomadsync.exception.WorkspaceException;
 import io.aledep10.nomadsync.exception.WorkspaceIntegrityException;
 import io.aledep10.nomadsync.exception.WorkspaceNotFoundException;
 import io.aledep10.nomadsync.marker.MarkerType;
+import io.aledep10.nomadsync.marker.VaultMarker;
+import io.aledep10.nomadsync.util.DateFormats;
 import io.aledep10.nomadsync.util.JsonMapper;
 import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TempDirs;
+import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -305,16 +309,54 @@ class WorkspaceServiceTest {
     class EraseTests {
 
         @Test
-        @DisplayName("unregisters the entry and physically deletes the directory")
-        void erasesEntryAndDirectory() throws WorkspaceException {
+        @DisplayName("removes only the marker folders (.nomadsync-workspace and every contained .nomadsync-vault), preserves all other content")
+        void erasesOnlyMarkerFolders_preservesContent() throws Exception {
             workspaceService.create("default", installDir.resolve("ws-1").toString());
-            workspaceService.create("laptop-work", installDir.resolve("ws-2").toString());
-            String path = workspaceService.findByName("laptop-work").get().getPath();
+            String targetPath = installDir.resolve("ws-2").toString();
+            workspaceService.create("laptop-work", targetPath);
+
+            // A vault inside the target workspace, registered in its catalog.json,
+            // with a real .nomadsync-vault marker and a real content file — the
+            // exact thing this behavior must NOT touch.
+            Path targetDir = Path.of(targetPath);
+            Path vaultPath = targetDir.resolve("vault-1");
+            Files.createDirectories(vaultPath);
+            Files.writeString(vaultPath.resolve("note.md"), "irreplaceable content");
+
+            Vault vault = new Vault(UUID.randomUUID().toString(), "Alice", "notes", vaultPath.toString());
+            File catalogFile = targetDir.resolve(MarkerType.WORKSPACE.folderName())
+                    .resolve(VaultService.CATALOG_FILE_NAME).toFile();
+            JsonMapper.saveVaultsToFile(catalogFile, List.of(vault));
+            markerService.claim(MarkerType.VAULT, vaultPath.toString(),
+                    VaultMarker.create(vault.getId(), vault.getRepoSlug(), catalogFile.toString(), DateFormats.nowLog()));
+
+            workspaceService.erase("laptop-work");
+
+            // Registry entry gone
+            assertThat(workspaceService.findByName("laptop-work")).isEmpty();
+
+            // Both marker folders gone — workspace's own, and the contained vault's
+            assertThat(Files.isDirectory(targetDir.resolve(MarkerType.WORKSPACE.folderName()))).isFalse();
+            assertThat(Files.isDirectory(vaultPath.resolve(MarkerType.VAULT.folderName()))).isFalse();
+
+            // Everything else survives — the whole point of this behavior
+            assertThat(Files.isDirectory(targetDir)).isTrue();
+            assertThat(Files.exists(vaultPath.resolve("note.md"))).isTrue();
+            assertThat(Files.readString(vaultPath.resolve("note.md"))).isEqualTo("irreplaceable content");
+        }
+
+        @Test
+        @DisplayName("erases a workspace with no vaults inside — marker removed, directory preserved")
+        void erasesEmptyWorkspace() throws Exception {
+            workspaceService.create("default", installDir.resolve("ws-1").toString());
+            String targetPath = installDir.resolve("ws-2").toString();
+            workspaceService.create("laptop-work", targetPath);
 
             workspaceService.erase("laptop-work");
 
             assertThat(workspaceService.findByName("laptop-work")).isEmpty();
-            assertThat(Files.exists(Path.of(path))).isFalse();
+            assertThat(Files.isDirectory(Path.of(targetPath).resolve(MarkerType.WORKSPACE.folderName()))).isFalse();
+            assertThat(Files.isDirectory(Path.of(targetPath))).isTrue();
         }
 
         @Test
