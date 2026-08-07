@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.cli;
 
+import io.aledep10.nomadsync.config.PropertyValidatorRegistry;
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
 import io.aledep10.nomadsync.marker.MarkerType;
@@ -137,6 +138,13 @@ public class VaultCli extends AbstractCli {
         if (hasUnknownFlags(flags, FLAGS_VAULT_CREATE, "handleVaultCreate")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultCreate")) return 1;
 
+        Map<String, String> gitFlags = extractGitFlags(flags);
+        Optional<String> validationError = PropertyValidatorRegistry.validateAll(gitFlags);
+        if (validationError.isPresent()) {
+            logService.error("handleVaultCreate: " + validationError.get());
+            return 1;
+        }
+
         String owner    = flags.get(FLAG_OWNER);
         String name     = flags.get(FLAG_NAME);
         String path     = flags.get(FLAG_PATH);
@@ -195,7 +203,7 @@ public class VaultCli extends AbstractCli {
             return 1;
         }
 
-        if (!applyAndPersistGitFlags(vault, extractGitFlags(flags), "handleVaultCreate")) return 1;
+        if (!applyAndPersistGitFlags(vault, gitFlags, "handleVaultCreate")) return 1;
 
         try {
             gitService.bootstrapVault(vault);
@@ -235,6 +243,13 @@ public class VaultCli extends AbstractCli {
         if (hasUnknownFlags(flags, FLAGS_VAULT_ADD, "handleVaultAdd")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultAdd")) return 1;
 
+        Map<String, String> gitFlags = extractGitFlags(flags);
+        Optional<String> validationError = PropertyValidatorRegistry.validateAll(gitFlags);
+        if (validationError.isPresent()) {
+            logService.error("handleVaultAdd: " + validationError.get());
+            return 1;
+        }
+
         String owner    = flags.get(FLAG_OWNER);
         String name     = flags.get(FLAG_NAME);
         String path     = flags.get(FLAG_PATH);
@@ -263,7 +278,7 @@ public class VaultCli extends AbstractCli {
             return 1;
         }
 
-        if (!applyAndPersistGitFlags(vault, extractGitFlags(flags), "handleVaultAdd")) return 1;
+        if (!applyAndPersistGitFlags(vault, gitFlags, "handleVaultAdd")) return 1;
 
         try {
             gitService.bootstrapVault(vault);
@@ -310,6 +325,13 @@ public class VaultCli extends AbstractCli {
         if (hasBlankRequiredFlags(flags, Set.of(FLAG_VAULT), "handleVaultUpdate")) return 1;
         if (hasBlankOptionalValue(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultUpdate")) return 1;
 
+        Map<String, String> gitFlags = extractGitFlags(flags);
+        Optional<String> validationError = PropertyValidatorRegistry.validateAll(gitFlags);
+        if (validationError.isPresent()) {
+            logService.error("handleVaultUpdate: " + validationError.get());
+            return 1;
+        }
+
         Vault vault;
         try {
             vault = vaultService.resolveVaultFlag(flags.get(FLAG_VAULT));
@@ -318,8 +340,6 @@ public class VaultCli extends AbstractCli {
             vaultService.listRegistered();
             return 1;
         }
-
-        Map<String, String> gitFlags = extractGitFlags(flags);
 
         boolean changed = flags.containsKey(FLAG_OWNER) || flags.containsKey(FLAG_NAME)
                 || flags.containsKey(FLAG_PATH) || !gitFlags.isEmpty();

@@ -1,6 +1,7 @@
 package io.aledep10.nomadsync.cli;
 
 import io.aledep10.nomadsync.config.NomadPropertiesLoader;
+import io.aledep10.nomadsync.config.PropertyValidatorRegistry;
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.service.LogService;
@@ -142,14 +143,14 @@ public class WorkspaceCli extends AbstractCli {
         if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE_NAME, FLAG_PATH), "handleWorkspaceCreate")) return 1;
         if (hasBlankOptionalValue(flags, Set.of(FLAG_MAX_NESTING_DEPTH), "handleWorkspaceCreate")) return 1;
 
+        Map<String, String> initialValues = new LinkedHashMap<>(extractGitFlags(flags));
         if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
-            try {
-                Integer.parseInt(flags.get(FLAG_MAX_NESTING_DEPTH));
-            } catch (NumberFormatException e) {
-                logService.error("handleWorkspaceCreate: --" + FLAG_MAX_NESTING_DEPTH
-                        + " must be an integer, got '" + flags.get(FLAG_MAX_NESTING_DEPTH) + "'");
-                return 1;
-            }
+            initialValues.put(FLAG_MAX_NESTING_DEPTH, flags.get(FLAG_MAX_NESTING_DEPTH));
+        }
+        Optional<String> validationError = PropertyValidatorRegistry.validateAll(initialValues);
+        if (validationError.isPresent()) {
+            logService.error("handleWorkspaceCreate: " + validationError.get());
+            return 1;
         }
 
         String workspaceName = flags.get(FLAG_WORKSPACE_NAME);
@@ -161,11 +162,6 @@ public class WorkspaceCli extends AbstractCli {
         } catch (WorkspaceException e) {
             logService.error("handleWorkspaceCreate - " + e.getMessage(), e);
             return 1;
-        }
-
-        Map<String, String> initialValues = new LinkedHashMap<>(extractGitFlags(flags));
-        if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
-            initialValues.put(FLAG_MAX_NESTING_DEPTH, flags.get(FLAG_MAX_NESTING_DEPTH));
         }
 
         try {
@@ -264,20 +260,15 @@ public class WorkspaceCli extends AbstractCli {
         if (hasBlankOptionalValue(flags, Set.of(FLAG_WORKSPACE_NAME, FLAG_MAX_NESTING_DEPTH), "handleWorkspaceUpdate"))
             return 1;
 
-        if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
-            try {
-                Integer.parseInt(flags.get(FLAG_MAX_NESTING_DEPTH));
-            } catch (NumberFormatException e) {
-                logService.error("handleWorkspaceUpdate: --" + FLAG_MAX_NESTING_DEPTH
-                        + " must be an integer, got '" + flags.get(FLAG_MAX_NESTING_DEPTH) + "'");
-                return 1;
-            }
-        }
-
         String workspaceName = flags.get(FLAG_WORKSPACE);
         Map<String, String> configUpdates = new LinkedHashMap<>(extractGitFlags(flags));
         if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
             configUpdates.put(FLAG_MAX_NESTING_DEPTH, flags.get(FLAG_MAX_NESTING_DEPTH));
+        }
+        Optional<String> validationError = PropertyValidatorRegistry.validateAll(configUpdates);
+        if (validationError.isPresent()) {
+            logService.error("handleWorkspaceUpdate: " + validationError.get());
+            return 1;
         }
 
         boolean renaming = flags.containsKey(FLAG_WORKSPACE_NAME);

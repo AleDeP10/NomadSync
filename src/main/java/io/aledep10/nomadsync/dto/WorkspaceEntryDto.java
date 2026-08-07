@@ -1,6 +1,7 @@
 package io.aledep10.nomadsync.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
@@ -17,18 +18,18 @@ import io.aledep10.nomadsync.workspace.WorkspaceEntry;
  * <h2>{@code isDefault} — boxed {@link Boolean}, not primitive</h2>
  * <p>The first DTO in this codebase to model a genuinely optional property
  * (as opposed to {@code Vault}'s Git override fields, which are optional but
- * always {@code String}). No shared {@code MAPPER}-level inclusion policy
- * exists to lean on ({@code JsonMapper}'s {@code ObjectMapper} carries no
- * {@code @JsonInclude}/serialization-inclusion configuration at all) — so the
- * "absent means false" contract is encoded directly in the type: this field
- * is {@link Boolean#TRUE} for the one default entry, {@code null} for every
- * other entry, and an explicit {@code false} is never written. A primitive
- * {@code boolean} cannot represent that third state.</p>
+ * always {@code String}). The "absent means false" contract is enforced by
+ * {@link JsonInclude @JsonInclude(NON_NULL)} on the field — this value is
+ * {@link Boolean#TRUE} for the one default entry, {@code null} (and thus
+ * omitted from the serialised JSON) for every other entry; an explicit
+ * {@code false} is never written. A primitive {@code boolean} cannot
+ * represent that third state.</p>
  */
 public class WorkspaceEntryDto {
 
     private final String workspaceName;
     private final String path;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     private final Boolean isDefault;
 
     /**
