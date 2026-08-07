@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.tray;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.hook.NotificationHook;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.orchestrator.EventType;
@@ -65,10 +66,10 @@ class SocketServerTest {
         testVault  = TestUtil.getTestVault("SocketServerTest");
 
         // InMemoryLogWriter — nessun file aperto, nessun problema di cleanup
-        Properties props = new Properties();
-        props.setProperty("log.writers", "console");
-        props.setProperty("log.level", LogLevel.DEBUG.name());
-        logService = new LogService(props, testVault.rootPath());
+        Properties properties = new Properties();
+        properties.setProperty("log.writers", "console");
+        properties.setProperty("log.level", LogLevel.DEBUG.name());
+        logService = new LogService(NomadPropertiesLoader.forTesting(properties), testVault.rootPath());
 
         gitService = mock(GitService.class);
 

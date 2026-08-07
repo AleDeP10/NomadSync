@@ -1,7 +1,9 @@
 package io.aledep10.nomadsync;
 
 import io.aledep10.nomadsync.cli.VaultCli;
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.*;
+import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.service.MarkerService;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.vault.Vault;
@@ -83,8 +85,8 @@ class MainTest {
     @BeforeAll
     static void prepareSharedState() throws IOException {
         sharedVault = TestUtil.getTestVault("MainTest-shared");
-        logService  = new LogService(TestUtil.forLogService(sharedVault,
-                io.aledep10.nomadsync.logging.LogLevel.DEBUG), sharedVault.rootPath());
+        logService  = new LogService(NomadPropertiesLoader.forTesting(TestUtil.forLogService(
+                sharedVault, LogLevel.DEBUG)), sharedVault.rootPath());
     }
 
     @AfterAll
@@ -100,7 +102,7 @@ class MainTest {
         testVault = tempDirs.newVault("MainTest");
         properties = new Properties();
         GitignoreService gitignoreService = new GitignoreService(logService);
-        MarkerService markerService = new MarkerService(properties, logService);
+        MarkerService markerService = new MarkerService(NomadPropertiesLoader.forTesting(properties), logService);
         vaultService = new VaultService(testVault.vaultPath(), markerService, gitignoreService, logService);
 
         originalOut = System.out;

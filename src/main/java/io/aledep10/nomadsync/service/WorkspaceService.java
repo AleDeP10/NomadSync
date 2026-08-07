@@ -2,17 +2,16 @@ package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.marker.MarkerType;
+import io.aledep10.nomadsync.marker.VaultMarker;
 import io.aledep10.nomadsync.marker.WorkspaceMarker;
-import io.aledep10.nomadsync.util.DateFormats;
-import io.aledep10.nomadsync.util.FileUtil;
-import io.aledep10.nomadsync.util.JsonMapper;
-import io.aledep10.nomadsync.util.StringUtil;
+import io.aledep10.nomadsync.util.*;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -336,13 +335,22 @@ public class WorkspaceService {
         String absoluteNewPath = Path.of(newPath).toAbsolutePath().normalize().toString();
 
         try {
-            markerService.checkNoNestingConflict(absoluteNewPath);
+            markerService.checkNoNestingConflict(absoluteNewPath, MarkerType.WORKSPACE);
         } catch (MarkerClaimException e) {
             throw new WorkspaceException("Unable to relocate workspace: " + e.getMessage(), e);
         }
 
         try {
             Files.move(Path.of(oldPath), Path.of(absoluteNewPath));
+        } catch (FileSystemException e) {
+            String reason = e.getReason() != null ? e.getReason()
+                    : OsUtil.isWindows()
+                    ? "the folder or a file inside it may be open in another program "
+                    + "(Explorer, an editor, a terminal with that directory as working dir) - close it and retry"
+                    : "the move failed for a filesystem-level reason not reported by the JDK - "
+                    + "check permissions and that the target's parent directory exists";
+            throw new WorkspaceException("Unable to move workspace directory from '" + oldPath
+                    + "' to '" + absoluteNewPath + "': " + reason, e);
         } catch (IOException e) {
             throw new WorkspaceException("Unable to move workspace directory from '" + oldPath
                     + "' to '" + absoluteNewPath + "': " + e.getMessage(), e);
@@ -367,6 +375,14 @@ public class WorkspaceService {
         } catch (IOException e) {
             throw new WorkspaceException("Workspace directory moved to '" + absoluteNewPath
                     + "' but vault paths in catalog.json could not be rebased: " + e.getMessage(), e);
+        }
+
+        try {
+            updateVaultMarkerWorkspacePaths(absoluteNewPath);
+        } catch (IOException | MarkerClaimException e) {
+            throw new WorkspaceException("Workspace directory moved to '" + absoluteNewPath
+                    + "' and catalog.json rebased, but one or more vault markers could not be updated "
+                    + "with the new workspace path: " + e.getMessage(), e);
         }
 
         WorkspaceEntry relocated = new WorkspaceEntry(workspace.getWorkspaceName(), absoluteNewPath, workspace.isDefault());
@@ -415,6 +431,32 @@ public class WorkspaceService {
                     vault.getGitBranch(), vault.getGitRemote()));
         }
         JsonMapper.saveVaultsToFile(catalogFile, rebased);
+    }
+
+    /**
+     * After a relocate has moved the workspace tree and rebased every vault's
+     * {@code path} in {@code catalog.json}, updates each vault's own
+     * {@code .nomadsync-vault/descriptor.json} to carry the new workspace root —
+     * otherwise that field is left pointing at the pre-relocate location
+     * indefinitely, exactly the staleness this method exists to close.
+     *
+     * <p>Reads the freshly-rebased {@code catalog.json} at {@code newWorkspacePath}
+     * (not the in-memory {@code workspaces} map, which holds workspace entries,
+     * not vault ones) to know which vaults exist and their new paths.</p>
+     *
+     * @param newWorkspacePath the workspace's new root, already moved and rebased
+     * @throws IOException          if {@code catalog.json} cannot be read
+     * @throws MarkerClaimException if a vault's marker cannot be overwritten
+     */
+    private void updateVaultMarkerWorkspacePaths(String newWorkspacePath) throws IOException, MarkerClaimException {
+        File catalogFile = Path.of(newWorkspacePath).resolve(MarkerType.WORKSPACE.folderName())
+                .resolve(VaultService.CATALOG_FILE_NAME).toFile();
+        List<Vault> vaults = JsonMapper.loadVaultsFromFile(catalogFile);
+
+        for (Vault vault : vaults) {
+            markerService.overwrite(MarkerType.VAULT, vault.getPath(),
+                    VaultMarker.create(vault.getId(), vault.getRepoSlug(), newWorkspacePath, DateFormats.nowLog()));
+        }
     }
 
     /**

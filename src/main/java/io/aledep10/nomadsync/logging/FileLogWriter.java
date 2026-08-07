@@ -17,7 +17,7 @@ import java.util.List;
  * requiring an explicit flush call.</p>
  *
  * <p>The parent directory is created automatically if absent — this allows
- * {@code log.path=logs/nomadsync.log} to work without requiring the {@code logs/}
+ * {@code log.filePath=logs/nomadsync.log} to work without requiring the {@code logs/}
  * directory to be created manually.</p>
  *
  * <h2>Thread safety</h2>

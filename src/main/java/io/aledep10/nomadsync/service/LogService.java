@@ -1,6 +1,7 @@
 package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.config.NomadProperties;
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.logging.ConsoleLogWriter;
 import io.aledep10.nomadsync.logging.FileLogWriter;
 import io.aledep10.nomadsync.logging.LogLevel;
@@ -38,12 +39,11 @@ import java.util.stream.Collectors;
  * same underlying writers and only differ in the slug written to each line.</p>
  *
  * <h2>Configuration loading</h2>
- * <p>At boot, {@code Main} loads {@code config.properties} from the filesystem via
- * {@link java.io.FileInputStream} and passes the resulting {@link Properties} here.
- * Built-in defaults are available via {@link io.aledep10.nomadsync.config.NomadPropertiesLoader},
- * which reads from the classpath — the two sources are complementary.
- * All property keys are declared as constants in
- * {@link io.aledep10.nomadsync.config.NomadProperties.Log}.</p>
+ * <p>Configuration comes from an injected {@link NomadPropertiesLoader}, not a raw
+ * {@link Properties} instance — the loader's own install→workspace cascade
+ * ({@code NomadPropertiesLoader}'s class Javadoc) is already resolved by the time
+ * it reaches this constructor. All property keys are declared as constants in
+ * {@link NomadProperties.Log}.</p>
  *
  * <p>Thread safety is delegated to each {@link LogWriter} implementation:
  * {@link FileLogWriter} uses {@code synchronized}; {@link SeqHttpLogWriter}
@@ -56,78 +56,73 @@ import java.util.stream.Collectors;
  */
 public class LogService {
 
-    private final Properties     properties;
-    private final Path           configDir;
-    private final List<LogWriter> writers;
-    private final LogLevel       minLevel;
-    private final String         repoSlug;
+    private final NomadPropertiesLoader loader;
+    private final Path                  configDir;
+    private final List<LogWriter>       writers;
+    private final LogLevel              minLevel;
+    private final String                repoSlug;
 
     // ── Public constructors ───────────────────────────────────────────────────
 
     /**
      * Constructs a system-level {@code LogService} with {@code repoSlug = "SYSTEM"}.
      *
-     * <p>Writers are built from {@link NomadProperties.Log#WRITERS}. {@code log.path}
+     * <p>Writers are built from {@link NomadProperties.Log#WRITERS}. {@code log.filePath}
      * (when the {@code file} writer is active) is resolved via
      * {@link io.aledep10.nomadsync.util.PropertiesUtil#resolvePath} against
      * {@code configDir} — the directory containing the {@code config.properties}
      * file in use — not the process's working directory. An already-absolute value
      * is left untouched. Use this constructor at boot, before any vault is loaded.</p>
      *
-     * @param properties application properties — must contain at minimum
-     *                   {@link NomadProperties.Log#LEVEL} and
-     *                   {@link NomadProperties.Log#WRITERS}
-     * @param configDir  directory containing the {@code config.properties} file
-     *                   in use — base for resolving a relative or absent
-     *                   {@link NomadProperties.Log#PATH}
+     * @param loader    resolved configuration — must contain at minimum
+     *                  {@link NomadProperties.Log#LEVEL} and
+     *                  {@link NomadProperties.Log#WRITERS}
+     * @param configDir directory containing the {@code config.properties} file
+     *                  in use — base for resolving a relative or absent
+     *                  {@link NomadProperties.Log#PATH}
      */
-    public LogService(Properties properties, Path configDir) {
-        this(properties, configDir, buildWriters(properties, configDir), "SYSTEM");
+    public LogService(NomadPropertiesLoader loader, Path configDir) {
+        this(loader, configDir, "SYSTEM");
     }
 
     /**
      * Constructs a vault-scoped {@code LogService} with the given {@code repoSlug}.
      *
-     * <p>Writers are built fresh from properties — same {@code configDir}-relative
-     * resolution of {@code log.path} as the system-level constructor. Prefer
+     * <p>Writers are built fresh from the loader — same {@code configDir}-relative
+     * resolution of {@code log.filePath} as the system-level constructor. Prefer
      * {@link #withVault(String)} when deriving a per-vault instance from an
      * existing one — it reuses writers (and the already-resolved paths within
      * them) without reopening files or reconnecting to Seq.</p>
      *
-     * @param properties application properties
-     * @param configDir  directory containing the {@code config.properties} file
-     *                   in use — base for resolving a relative or absent
-     *                   {@link NomadProperties.Log#PATH}
-     * @param repoSlug   vault identifier in {@code <owner>/<name>} form,
-     *                   e.g. {@code Alice/public-vault}
+     * @param loader    resolved configuration
+     * @param configDir directory containing the {@code config.properties} file
+     *                  in use — base for resolving a relative or absent
+     *                  {@link NomadProperties.Log#PATH}
+     * @param repoSlug  vault identifier in {@code <owner>/<name>} form,
+     *                  e.g. {@code Alice/public-vault}
      */
-    public LogService(Properties properties, Path configDir, String repoSlug) {
-        this(properties, configDir, buildWriters(properties, configDir), repoSlug);
+    public LogService(NomadPropertiesLoader loader, Path configDir, String repoSlug) {
+        this.loader    = loader;
+        this.configDir = configDir;
+        this.minLevel  = loader.getEnum(NomadProperties.Log.LEVEL, LogLevel.class, LogLevel.INFO);
+        this.writers   = List.copyOf(buildWriters(loader.getProperties(), configDir, this.minLevel));
+        this.repoSlug  = repoSlug;
     }
 
-    // ── Private constructor — single construction point ───────────────────────
+    // ── Private constructor — shared by withVault() ─────────────────────────────
 
     /**
-     * Internal constructor — single construction point for all public constructors
-     * and {@link #withVault(String)}.
-     *
-     * <p>{@code configDir} is retained as an instance field solely so
-     * {@link #withVault(String)} can be extended in the future without changing
-     * its signature again — the writer list passed in has already been built
-     * (and any relative {@code log.path} already resolved) by the time this
-     * constructor runs, so {@code configDir} is not re-consulted here.</p>
-     *
-     * <p>{@link List#copyOf} is applied here for defensive immutability —
-     * the caller cannot modify the writer list after construction regardless
-     * of how the list was built.</p>
+     * Internal constructor used only by {@link #withVault(String)} — reuses an
+     * already-built writer list and already-resolved {@code minLevel} instead of
+     * rebuilding either.
      */
-    private LogService(Properties properties, Path configDir, List<LogWriter> writers, String repoSlug) {
-        this.properties = properties;
-        this.configDir  = configDir;
-        this.writers    = List.copyOf(writers);
-        this.minLevel   = LogLevel.valueOf(
-                properties.getProperty(NomadProperties.Log.LEVEL, LogLevel.INFO.name()));
-        this.repoSlug   = repoSlug;
+    private LogService(NomadPropertiesLoader loader, Path configDir, List<LogWriter> writers,
+                       LogLevel minLevel, String repoSlug) {
+        this.loader    = loader;
+        this.configDir = configDir;
+        this.writers   = writers;
+        this.minLevel  = minLevel;
+        this.repoSlug  = repoSlug;
     }
 
     // ── Factory ───────────────────────────────────────────────────────────────
@@ -144,7 +139,7 @@ public class LogService {
      * @return a new {@code LogService} instance scoped to the vault
      */
     public LogService withVault(String repoSlug) {
-        return new LogService(this.properties, configDir, this.writers, repoSlug);
+        return new LogService(this.loader, this.configDir, this.writers, this.minLevel, repoSlug);
     }
 
     // ── API ───────────────────────────────────────────────────────────────────
@@ -195,13 +190,16 @@ public class LogService {
      * user-configurable writer but an in-process tool instantiated directly by
      * code that needs to inspect log output at runtime (e.g. tray UI buffering).</p>
      *
-     * @param properties application properties
+     * @param properties merged properties (install cascade already resolved by
+     *                   the caller's {@link NomadPropertiesLoader#getProperties()})
+     * @param configDir  base directory for resolving a relative {@code log.filePath}
+     * @param minLevel   already-resolved minimum level — passed in rather than
+     *                   re-parsed here, single source of truth with the
+     *                   instance field of the same name
      * @return mutable list of initialised writers
      */
-    private static List<LogWriter> buildWriters(Properties properties, Path configDir) {
+    private static List<LogWriter> buildWriters(Properties properties, Path configDir, LogLevel minLevel) {
         List<LogWriter> result = new ArrayList<>();
-        LogLevel minLevel = LogLevel.valueOf(
-                properties.getProperty(NomadProperties.Log.LEVEL, LogLevel.INFO.name()));
         Set<String> tokens = Arrays.stream(
                         PropertiesUtil.get(properties, NomadProperties.Log.WRITERS, "console")
                                 .split(","))

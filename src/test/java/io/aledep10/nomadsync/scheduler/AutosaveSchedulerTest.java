@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.scheduler;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.orchestrator.SyncEventQueue;
 import io.aledep10.nomadsync.logging.LogLevel;
@@ -44,7 +45,8 @@ class AutosaveSchedulerTest {
     @BeforeAll
     static void prepareLogService() throws IOException {
         testVault  = TestUtil.getTestVault("AutosaveSchedulerTest");
-        logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
+        logService = new LogService(NomadPropertiesLoader.forTesting(
+                TestUtil.forLogService(testVault, LogLevel.DEBUG)), testVault.rootPath());
     }
 
     @AfterAll

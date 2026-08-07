@@ -7,6 +7,7 @@ import io.aledep10.nomadsync.service.GitService;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.service.MarkerService;
 import io.aledep10.nomadsync.service.VaultService;
+import io.aledep10.nomadsync.util.ConfirmationUtil;
 import io.aledep10.nomadsync.util.FileUtil;
 import io.aledep10.nomadsync.vault.Vault;
 
@@ -19,18 +20,10 @@ public class VaultCli extends AbstractCli {
 
     public static final String COMMAND = "vault";
     public static final String DEFAULT_SUBCOMMAND = "list";
+    public static final String FLAG_DEFAULTS = "defaults";
     public static final String FLAG_VAULT = "vault";
     public static final String FLAG_OWNER = "owner";
     public static final String FLAG_NAME = "name";
-    public static final String FLAG_PATH = "path";
-    public static final String FLAG_DEFAULTS = "defaults";
-    public static final String GIT_FLAG_PREFIX = "git.";
-    public static final String FLAG_GIT_NAME = GIT_FLAG_PREFIX + "name";
-    public static final String FLAG_GIT_EMAIL = GIT_FLAG_PREFIX + "email";
-    public static final String FLAG_GIT_USERNAME = GIT_FLAG_PREFIX + "username";
-    public static final String FLAG_GIT_TOKEN = GIT_FLAG_PREFIX + "token";
-    public static final String FLAG_GIT_BRANCH = GIT_FLAG_PREFIX + "branch";
-    public static final String FLAG_GIT_REMOTE = GIT_FLAG_PREFIX + "remote";
 
     private final VaultService vaultService;
     private final MarkerService markerService;
@@ -94,7 +87,7 @@ public class VaultCli extends AbstractCli {
     // git.token is NOT mandatory here: it may come from config.properties defaults.
     private static final Set<String> FLAGS_VAULT_CREATE = FLAGS_VAULT_ADD;
     private static final Set<String> FLAGS_VAULT_UPDATE =
-            Set.of(FLAG_VAULT, FLAG_OWNER, FLAG_NAME, FLAG_PATH,
+            Set.of(FLAG_VAULT, FLAG_OWNER, FLAG_NAME,
                     FLAG_GIT_NAME, FLAG_GIT_EMAIL, FLAG_GIT_USERNAME,
                     FLAG_GIT_TOKEN, FLAG_GIT_BRANCH, FLAG_GIT_REMOTE);
     private static final Set<String> FLAGS_VAULT_REMOVE = Set.of(FLAG_VAULT, FLAG_FORCE);
@@ -182,6 +175,7 @@ public class VaultCli extends AbstractCli {
         }
 
         Vault temp = new Vault(UUID.randomUUID().toString(), owner, name, path);
+        temp.setGitBranch(flags.get(FLAG_GIT_BRANCH));
         try {
             gitService.init(temp);
         } catch (GitException e) {
@@ -201,7 +195,7 @@ public class VaultCli extends AbstractCli {
             return 1;
         }
 
-        vaultService.applyGitFlagsToVault(extractGitFlags(flags), vault);
+        if (!applyAndPersistGitFlags(vault, extractGitFlags(flags), "handleVaultCreate")) return 1;
 
         try {
             gitService.bootstrapVault(vault);
@@ -269,7 +263,7 @@ public class VaultCli extends AbstractCli {
             return 1;
         }
 
-        vaultService.applyGitFlagsToVault(extractGitFlags(flags), vault);
+        if (!applyAndPersistGitFlags(vault, extractGitFlags(flags), "handleVaultAdd")) return 1;
 
         try {
             gitService.bootstrapVault(vault);
@@ -303,6 +297,15 @@ public class VaultCli extends AbstractCli {
      *         changes were requested (no-op)
      */
     int handleVaultUpdate(Map<String, String> flags) {
+        if (flags.containsKey(FLAG_PATH)) {
+            logService.error("handleVaultUpdate: --path changes are not supported here. "
+                    + "If the vault is still at its current registered location and you want NomadSync to "
+                    + "physically move it (resetting Git history), use 'vault relocate' instead. "
+                    + "If you already moved the files yourself and only need the registry realigned, "
+                    + "use 'vault remove --vault=" + flags.get(FLAG_VAULT) + " --force' "
+                    + "followed by 'vault add' at the new location.");
+            return 1;
+        }
         if (hasUnknownFlags(flags, FLAGS_VAULT_UPDATE, "handleVaultUpdate")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of(FLAG_VAULT), "handleVaultUpdate")) return 1;
         if (hasBlankOptionalValue(flags, Set.of(FLAG_OWNER, FLAG_NAME, FLAG_PATH), "handleVaultUpdate")) return 1;
@@ -338,7 +341,7 @@ public class VaultCli extends AbstractCli {
                 vault.getGitName(), vault.getGitEmail(), vault.getGitUsername(),
                 vault.getGitToken(), vault.getGitBranch(), vault.getGitRemote());
 
-        vaultService.applyGitFlagsToVault(gitFlags, updated);
+        applyGitFlagsToVault(gitFlags, updated);
 
         try {
             vaultService.update(updated);
@@ -394,21 +397,16 @@ public class VaultCli extends AbstractCli {
             return 1;
         }
 
-        if (!flags.containsKey(FLAG_FORCE)) {
-            System.out.print("Remove vault " + vault.getRepoSlug() + "? (y/N): ");
-
-            int response;
-            try {
-                response = System.in.read();
-            } catch (IOException e) {
-                logService.error("handleVaultRemove - failed to read user input: " + e.getMessage(), e);
-                return 1;
-            }
-
-            if (response != 'y' && response != 'Y') {
+        switch (ConfirmationUtil.confirm("Remove vault " + vault.getRepoSlug() + "? (y/N): ",
+                flags.containsKey(FLAG_FORCE), logService)) {
+            case DECLINED -> {
                 logService.info("Aborted.");
                 return 2;
             }
+            case INPUT_ERROR -> {
+                return 1;   // already logged by confirm()
+            }
+            case CONFIRMED -> { /* fall through, proceed */ }
         }
 
         try {
@@ -544,7 +542,7 @@ public class VaultCli extends AbstractCli {
 
         if (!newPath.equals(vault.getPath())) {
             try {
-                markerService.checkNoNestingConflict(newPath);
+                markerService.checkNoNestingConflict(newPath, MarkerType.VAULT);
             } catch (MarkerClaimException e) {
                 logService.error("handleVaultRelocate - " + e.getMessage());
                 return 1;
@@ -564,23 +562,17 @@ public class VaultCli extends AbstractCli {
             }
         }
 
-        if (!flags.containsKey(FLAG_FORCE)) {
-            System.out.print("This will PERMANENTLY discard local Git history for "
-                    + vault.getRepoSlug() + ". Continue? (y/N): ");
-
-            int response;
-            try {
-                response = System.in.read();
-            } catch (IOException e) {
-                logService.error("handleVaultRelocate - failed to read user input: " + e.getMessage(), e);
-                return 1;
-            }
-            if (response != 'y' && response != 'Y') {
+        switch (ConfirmationUtil.confirm("This will PERMANENTLY discard local Git history for "
+                        + vault.getRepoSlug() + ". Continue? (y/N): ", flags.containsKey(FLAG_FORCE), logService)) {
+            case DECLINED -> {
                 logService.info("Aborted.");
                 return 2;
             }
+            case INPUT_ERROR -> {
+                return 1;   // already logged by confirm()
+            }
+            case CONFIRMED -> { /* fall through, proceed */ }
         }
-
         try {
             vaultService.makeVaultSnapshot(vault);
         } catch (VaultException | GitignoreException e) {
@@ -755,12 +747,60 @@ public class VaultCli extends AbstractCli {
         return 0;
     }
 
-    private Map<String, String> extractGitFlags(Map<String, String> flags) {
-        Map<String, String> gitFlags = new LinkedHashMap<>();
-        flags.forEach((k, v) -> {
-            if (k.startsWith(GIT_FLAG_PREFIX)) gitFlags.put(k, v);
+    /**
+     * Applies {@code gitFlags} to {@code vault} and persists the result — the
+     * missing step in the bug found this morning: applying credentials in
+     * memory and calling {@code bootstrapVault} configures Git correctly, but
+     * without this, {@code catalog.json} never reflects the change.
+     *
+     * <p>No-op if {@code gitFlags} is empty — callers do not need to guard the
+     * call themselves.</p>
+     *
+     * @param vault    the vault to update — mutated by
+     *                 {@code applyGitFlagsToVault}, then passed to
+     *                 {@code VaultService.update}
+     * @param gitFlags the {@code git.*} flags to apply, as returned by
+     *                 {@link #extractGitFlags}
+     * @param handler  handler name used as log prefix on failure, e.g.
+     *                 {@code "handleVaultCreate"}
+     * @return {@code true} on success (or if {@code gitFlags} was empty),
+     *         {@code false} if persistence failed — already logged
+     */
+    private boolean applyAndPersistGitFlags(Vault vault, Map<String, String> gitFlags, String handler) {
+        if (gitFlags.isEmpty()) return true;
+        applyGitFlagsToVault(gitFlags, vault);
+        try {
+            vaultService.update(vault);
+            return true;
+        } catch (VaultException e) {
+            logService.error(handler + " - failed to persist git credentials: " + e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Applies {@code git.*} flags to {@code vault}'s corresponding fields —
+     * pure flag-to-setter translation, no persistence, no validation beyond
+     * what the setters themselves enforce. Moved here from {@code VaultService}
+     * (its only consumer was always this class) — translating CLI flags into
+     * domain fields is CLI-layer responsibility, not service-layer, the same
+     * reasoning already applied to {@code extractGitFlags}.
+     *
+     * @param gitFlags the {@code git.*} flags to apply
+     * @param vault    the vault to mutate
+     */
+    void applyGitFlagsToVault(Map<String, String> gitFlags, Vault vault) {
+        gitFlags.forEach((key, value) -> {
+            switch (key) {
+                case FLAG_GIT_NAME -> vault.setGitName(value);
+                case FLAG_GIT_EMAIL -> vault.setGitEmail(value);
+                case FLAG_GIT_USERNAME -> vault.setGitUsername(value);
+                case FLAG_GIT_TOKEN -> vault.setGitToken(value);
+                case FLAG_GIT_BRANCH -> vault.setGitBranch(value);
+                case FLAG_GIT_REMOTE -> vault.setGitRemote(value);
+                default -> { /* unreachable: extractGitFlags only returns git.* keys */ }
+            }
         });
-        return gitFlags;
     }
 
     private static String orDefault(String value) {

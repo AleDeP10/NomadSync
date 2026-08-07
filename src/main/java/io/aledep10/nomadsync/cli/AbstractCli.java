@@ -6,10 +6,7 @@ import io.aledep10.nomadsync.util.StringUtil;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Shared flag-validation machinery for every domain CLI ({@code VaultCli},
@@ -42,6 +39,15 @@ public abstract class AbstractCli {
 
     public static final String FLAG_FORCE = "force";
     public static final String FLAG_SUBCOMMAND = "sub";
+
+    public static final String FLAG_PATH = "path";
+    public static final String GIT_FLAG_PREFIX = "git.";
+    public static final String FLAG_GIT_NAME = GIT_FLAG_PREFIX + "name";
+    public static final String FLAG_GIT_EMAIL = GIT_FLAG_PREFIX + "email";
+    public static final String FLAG_GIT_USERNAME = GIT_FLAG_PREFIX + "username";
+    public static final String FLAG_GIT_TOKEN = GIT_FLAG_PREFIX + "token";
+    public static final String FLAG_GIT_BRANCH = GIT_FLAG_PREFIX + "branch";
+    public static final String FLAG_GIT_REMOTE = GIT_FLAG_PREFIX + "remote";
 
     protected final LogService logService;
 
@@ -187,6 +193,15 @@ public abstract class AbstractCli {
      * superclass knows.
      */
     protected abstract int flagSuggestionMaxDistance();
+
+
+    protected Map<String, String> extractGitFlags(Map<String, String> flags) {
+        Map<String, String> gitFlags = new LinkedHashMap<>();
+        flags.forEach((k, v) -> {
+            if (k.startsWith(GIT_FLAG_PREFIX)) gitFlags.put(k, v);
+        });
+        return gitFlags;
+    }
 
     /**
      * Returns {@code true} if {@code source} and {@code target} live on different

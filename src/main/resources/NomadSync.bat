@@ -34,4 +34,5 @@ rem   letting you keep a workspace's config.properties/vaults.json/log file
 rem   together, addressed relative to wherever that workspace lives.
 rem ===========================================================================
 
-java -jar "%~dp0NomadSync.jar" %*
+java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=localhost:5005 -jar "%~dp0NomadSync.jar" %*
+rem java -jar "%~dp0NomadSync.jar" %*

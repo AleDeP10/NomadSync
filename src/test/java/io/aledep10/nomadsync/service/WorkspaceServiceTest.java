@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.WorkspaceException;
 import io.aledep10.nomadsync.exception.WorkspaceIntegrityException;
 import io.aledep10.nomadsync.exception.WorkspaceNotFoundException;
@@ -46,9 +47,9 @@ class WorkspaceServiceTest {
         installDir = tempDirs.newDir("WorkspaceServiceTest", "install");
         registryFile = installDir.resolve("workspaces.json").toFile();
 
-        Properties properties = new Properties();
-        logService = new LogService(properties, installDir);
-        markerService = new MarkerService(properties, logService);
+        NomadPropertiesLoader loader = NomadPropertiesLoader.forTesting(new Properties());
+        logService = new LogService(loader, installDir);
+        markerService = new MarkerService(loader, logService);
         workspaceService = new WorkspaceService(installDir, markerService, logService);
     }
 

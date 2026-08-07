@@ -18,7 +18,7 @@ import java.util.Properties;
  * // replaces: properties.getProperty("git.executable", "git")
  * String exe = PropertiesUtil.get(properties, NomadProperties.Git.EXECUTABLE, "git");
  *
- * // replaces: Long.parseLong(properties.getProperty("autosave.interval.minutes", "15"))
+ * // replaces: Long.parseLong(properties.getProperty("autosave.intervalMinutes", "15"))
  * long interval = PropertiesUtil.getLong(properties, NomadProperties.Autosave.INTERVAL_MINUTES, 15L);
  *
  * // resolves a path.* / log.* property against the directory containing the
@@ -78,7 +78,7 @@ public final class PropertiesUtil {
      * a defaulted value, or an explicit value that was relative.
      *
      * @param properties      application properties
-     * @param key             the property key to resolve (e.g. {@code log.path})
+     * @param key             the property key to resolve (e.g. {@code log.filePath})
      * @param defaultRelative fallback value (relative to {@code configDir}) used
      *                        when {@code key} is absent or blank
      * @param configDir       directory containing the {@code config.properties}
@@ -106,7 +106,7 @@ public final class PropertiesUtil {
      * absent/blank) against {@code configDir}, without logging the outcome.
      *
      * <p>Intended for bootstrap contexts where no {@link LogService} instance
-     * exists yet — most notably resolving {@code log.path} itself while
+     * exists yet — most notably resolving {@code log.filePath} itself while
      * {@code LogService} is still constructing its own writers. Prefer the
      * {@link #resolvePath(Properties, String, String, Path, LogService)} overload
      * everywhere a {@code LogService} is already available, so the resolution is

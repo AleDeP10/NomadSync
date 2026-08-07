@@ -138,48 +138,4 @@ class JsonMapperTest {
         }
     }
 
-    @Nested
-    @DisplayName("loadDefaultWorkspacePath")
-    class DefaultWorkspacePathTests {
-
-        @Test
-        @DisplayName("returns null when the registry file does not exist")
-        void missingFile_returnsNull() throws IOException {
-            File registryFile = tempDir.resolve("workspaces.json").toFile();
-
-            assertThat(JsonMapper.loadDefaultWorkspacePath(registryFile)).isNull();
-        }
-
-        @Test
-        @DisplayName("returns null when no entry in the registry is marked as default")
-        void noDefaultEntry_returnsNull() throws IOException {
-            File registryFile = tempDir.resolve("workspaces.json").toFile();
-            JsonMapper.saveWorkspacesToFile(registryFile, List.of(
-                    new WorkspaceEntry("laptop-work", tempDir.resolve("laptop").toString(), false)));
-
-            assertThat(JsonMapper.loadDefaultWorkspacePath(registryFile)).isNull();
-        }
-
-        @Test
-        @DisplayName("returns the path of the entry marked as default, regardless of its position in the list")
-        void defaultEntryPresent_returnsItsPath() throws IOException {
-            File registryFile = tempDir.resolve("workspaces.json").toFile();
-            Path defaultPath = tempDir.resolve("default");
-            JsonMapper.saveWorkspacesToFile(registryFile, List.of(
-                    new WorkspaceEntry("laptop-work", tempDir.resolve("laptop").toString(), false),
-                    new WorkspaceEntry("default", defaultPath.toString(), true)));
-
-            assertThat(JsonMapper.loadDefaultWorkspacePath(registryFile)).isEqualTo(defaultPath);
-        }
-
-        @Test
-        @DisplayName("returns null when the default entry has a blank path")
-        void defaultEntryBlankPath_returnsNull() throws IOException {
-            File registryFile = tempDir.resolve("workspaces.json").toFile();
-            JsonMapper.saveWorkspacesToFile(registryFile, List.of(
-                    new WorkspaceEntry("default", "  ", true)));
-
-            assertThat(JsonMapper.loadDefaultWorkspacePath(registryFile)).isNull();
-        }
-    }
 }

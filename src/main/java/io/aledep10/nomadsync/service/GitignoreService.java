@@ -6,6 +6,7 @@ import io.aledep10.nomadsync.gitignore.PatternLevel;
 import io.aledep10.nomadsync.gitignore.SystemPattern;
 import io.aledep10.nomadsync.gitignore.VaultPatterns;
 import io.aledep10.nomadsync.gitignore.exception.GitignoreException;
+import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.util.ValidationUtil;
 
 import java.io.IOException;
@@ -77,10 +78,12 @@ public class GitignoreService {
     // ── Definitions ───────────────────────────────────────────────────────────
 
     static final List<SystemPattern> SYSTEM_PATTERN_DEFINITIONS = List.of(
-            new SystemPattern(".git",        PatternLevel.SYSTEM, null),
-            new SystemPattern(".DS_Store",   PatternLevel.SYSTEM, null),
-            new SystemPattern("Thumbs.db",   PatternLevel.SYSTEM, null),
-            new SystemPattern("desktop.ini", PatternLevel.SYSTEM, null)
+            new SystemPattern(MarkerType.WORKSPACE.folderName(), PatternLevel.SYSTEM, null),
+            new SystemPattern(MarkerType.VAULT.folderName(),     PatternLevel.SYSTEM, null),
+            new SystemPattern(".git",                     PatternLevel.SYSTEM, null),
+            new SystemPattern(".DS_Store",                PatternLevel.SYSTEM, null),
+            new SystemPattern("Thumbs.db",                PatternLevel.SYSTEM, null),
+            new SystemPattern("desktop.ini",              PatternLevel.SYSTEM, null)
     );
 
     static final List<AppPatterns> APP_PATTERN_DEFINITIONS = List.of(

@@ -1,12 +1,14 @@
 package io.aledep10.nomadsync.cli;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.service.*;
-import io.aledep10.nomadsync.util.FileUtil;
 import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TempDirs;
+import io.aledep10.nomadsync.util.TestUtil;
 import io.aledep10.nomadsync.vault.Vault;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -62,12 +64,12 @@ class VaultCliTest {
     @BeforeEach
     void setUp(TempDirs tempDirs) throws IOException {
         installDir = tempDirs.newDir("VaultCliTest", "install");
-        Properties properties = new Properties();
-        logService = new LogService(properties, installDir);
-        markerService = new MarkerService(properties, logService);
+        NomadPropertiesLoader loader = NomadPropertiesLoader.forTesting(new Properties());
+        logService = new LogService(loader, installDir);
+        markerService = new MarkerService(loader, logService);
         gitignoreService = new GitignoreService(logService);
         vaultService = new VaultService(installDir, markerService, gitignoreService, logService);
-        gitService = new GitService(properties, vaultService, gitignoreService, logService);
+        gitService = new GitService(loader, vaultService, gitignoreService, logService);
         vaultCli = new VaultCli(vaultService, markerService, gitService, logService);
     }
 
@@ -238,42 +240,22 @@ class VaultCliTest {
             assertThat(vaultService.findByRepoSlug("Alice/renamed")).isPresent();
         }
 
-        /**
-         * Regression test for the in-place mutation bug (NomadSync-VLT-013,
-         * reintroduced and fixed in this same session): a path change made via
-         * setters directly on the resolved (shared) instance would make
-         * {@code VaultService.update}'s change detection always see "no
-         * change", silently skipping marker claim/release at the new
-         * location. This test fails against that buggy version and passes
-         * against the corrected one — it is the one test in this file that
-         * exists specifically to catch that regression again if reintroduced.
-         */
         @Test
-        @DisplayName("a path change actually claims the marker at the new location")
-        void pathChange_claimsMarkerAtNewLocation() throws IOException {
-            String oldPath = installDir.resolve("vault-1").toString();
-            String newPath = installDir.resolve("vault-1-moved").toString();
+        @DisplayName("rejects --path, directs to 'vault relocate' - path-only realignment after a manual move "
+                + "is not update's job (candidate for a future 'doctor' repair, not a CRUD command)")
+        void pathFlag_rejected() {
+            String path = installDir.resolve("vault-1").toString();
             vaultCli.handleVaultCreate(
-                    flags(VaultCli.FLAG_OWNER, "Alice", VaultCli.FLAG_NAME, "portfolio", VaultCli.FLAG_PATH, oldPath));
-
-            // 'vault update --path' assumes the user already relocated the files
-            // themselves — unlike 'vault relocate', it never moves anything physically.
-            // Simulate that here, same as handleVaultRelocate does internally: the raw
-            // copy carries over the OLD marker folder, which must not occupy the new
-            // location's claim slot.
-            Path source = Path.of(oldPath);
-            Path target = Path.of(newPath);
-            FileUtil.copyRecursively(source, target);
-            FileUtil.deleteRecursively(target.resolve(MarkerType.VAULT.folderName()));
+                    flags(VaultCli.FLAG_OWNER, "Alice", VaultCli.FLAG_NAME, "portfolio", VaultCli.FLAG_PATH, path));
 
             int result = vaultCli.handleVaultUpdate(
-                    flags(VaultCli.FLAG_VAULT, "Alice/portfolio", VaultCli.FLAG_PATH, newPath));
+                    flags(VaultCli.FLAG_VAULT, "Alice/portfolio", VaultCli.FLAG_PATH,
+                            installDir.resolve("vault-1-moved").toString()));
 
-            assertThat(result).isEqualTo(0);
-            Vault updated = vaultService.findByRepoSlug("Alice/portfolio").orElseThrow();
-            assertThat(updated.getPath()).isEqualTo(target.toAbsolutePath().normalize().toString());
-            assertThat(Files.isDirectory(target.resolve(".nomadsync-vault"))).isTrue();
-            assertThat(Files.isDirectory(source.resolve(".nomadsync-vault"))).isFalse();
+            assertThat(result).isEqualTo(1);
+            // nothing touched — the rejection happens before resolution or any side effect
+            Vault unchanged = vaultService.findByRepoSlug("Alice/portfolio").orElseThrow();
+            assertThat(unchanged.getPath()).isEqualTo(Path.of(path).toAbsolutePath().normalize().toString());
         }
 
         @Test
@@ -482,4 +464,49 @@ class VaultCliTest {
             assertThat(result).isEqualTo(1);
         }
     }
+
+
+    // ── applyGitFlagsToVault ──────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("applyGitFlagsToVault")
+    class ApplyGitFlagsToVaultTests {
+
+        @Test
+        @DisplayName("applies all known git flags to vault")
+        void applyGitFlagsToVault_appliesGitFields() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
+            Map<String, String> gitFlags = new LinkedHashMap<>();
+            gitFlags.put("git.name",     "Alice");
+            gitFlags.put("git.email",    "alice@example.com");
+            gitFlags.put("git.username", "alice-gh");
+            gitFlags.put("git.token",    "token123");
+            gitFlags.put("git.branch",   "develop");
+            gitFlags.put("git.remote",   "upstream");
+
+            vaultCli.applyGitFlagsToVault(gitFlags, vault);
+
+            org.assertj.core.api.Assertions.assertThat(vault.getGitName()).isEqualTo("Alice");
+            org.assertj.core.api.Assertions.assertThat(vault.getGitEmail()).isEqualTo("alice@example.com");
+            org.assertj.core.api.Assertions.assertThat(vault.getGitUsername()).isEqualTo("alice-gh");
+            org.assertj.core.api.Assertions.assertThat(vault.getGitToken()).isEqualTo("token123");
+            org.assertj.core.api.Assertions.assertThat(vault.getGitBranch()).isEqualTo("develop");
+            org.assertj.core.api.Assertions.assertThat(vault.getGitRemote()).isEqualTo("upstream");
+        }
+
+        @Test
+        @DisplayName("ignores unknown git flags leaving vault fields unchanged")
+        void applyGitFlagsToVault_ignoresUnknownKeys() {
+            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
+            Map<String, String> gitFlags = new LinkedHashMap<>();
+            gitFlags.put("git.unknown", "value");
+
+            vaultCli.applyGitFlagsToVault(gitFlags, vault);
+
+            org.assertj.core.api.Assertions.assertThat(vault.getName()).isEqualTo("name");
+            org.assertj.core.api.Assertions.assertThat(vault.getGitName()).isNull();
+            Assertions.assertThat(vault.getGitRemote()).isNull();
+        }
+    }
+
 }

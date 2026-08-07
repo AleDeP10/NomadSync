@@ -4,6 +4,7 @@ import io.aledep10.nomadsync.cli.AbstractCli;
 import io.aledep10.nomadsync.cli.VaultCli;
 import io.aledep10.nomadsync.cli.WorkspaceCli;
 import io.aledep10.nomadsync.config.NomadProperties;
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.*;
 import io.aledep10.nomadsync.hook.LogNotificationHook;
 import io.aledep10.nomadsync.hook.NotificationHook;
@@ -16,6 +17,7 @@ import io.aledep10.nomadsync.service.*;
 import io.aledep10.nomadsync.util.*;
 import io.aledep10.nomadsync.vault.Vault;
 import io.aledep10.nomadsync.scheduler.AutosaveScheduler;
+import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -105,9 +107,9 @@ import java.util.*;
  */
 public class Main {
 
-    public static final String CONFIG_FILE_NAME = "config.properties";
     public static final String FLAG_WORKSPACE_PATH = "workspacePath";
     public static final String FLAG_DAEMON = "daemon";
+    public static final String FLAG_CONFIRM_FALLBACK = "confirmFallback";
 
     private static final String COMMAND_PULL = "pull";
     private static final String COMMAND_PUSH = "push";
@@ -117,6 +119,10 @@ public class Main {
     private static final String COMMAND_STATUS = "status";
     private static final String COMMAND_CONFIG = "config";
 
+    private static final Set<String> KNOWN_COMMANDS = Set.of(
+            VaultCli.COMMAND, WorkspaceCli.COMMAND,
+            COMMAND_PULL, COMMAND_PUSH, COMMAND_SYNC, COMMAND_COMMIT, COMMAND_AUTOSAVE,
+            COMMAND_STATUS, COMMAND_CONFIG);
 
     public static void main(String[] args) {
 
@@ -132,73 +138,132 @@ public class Main {
         String vaultFlag         = flags.get(VaultCli.FLAG_VAULT);
         String workspacePathArg  = flags.get(FLAG_WORKSPACE_PATH);
         boolean daemon           = flags.containsKey(FLAG_DAEMON);
+        boolean confirmFallback  = flags.containsKey(FLAG_CONFIRM_FALLBACK);
 
         flags.remove(FLAG_WORKSPACE_PATH);
         flags.remove(FLAG_DAEMON);
+        flags.remove(FLAG_CONFIRM_FALLBACK);
 
-        // ── 2. Resolve and validate the workspace ─────────────────────────────
-        Path workspacePath = resolveWorkspacePathOrExit(workspacePathArg);
+        // ── 1b. Validate the top-level command before any bootstrap work ───────
+        if (!KNOWN_COMMANDS.contains(command)) {
+            System.err.println("Unknown command: " + command);
+            printUsage();   // Sprint G, se già disponibile — altrimenti un messaggio minimo qui
+            System.exit(1);
+            return;
+        }
 
+        // [NOTA] Si genera ogni dipendenza solo quando immediatamente necessaria.
+        // ── 2a. Bootstrap — loader and logService ──────────────────────────────
+        Path installDir = resolveJarDirectory();
+        NomadPropertiesLoader loader;
+        try {
+            loader = new NomadPropertiesLoader(installDir);
+        } catch (ConfigException e) {
+            System.err.println(e.getMessage());
+            e.printStackTrace(System.err);
+            System.exit(1);
+            return;
+        }
+        LogService logService = new LogService(loader, installDir);
+
+        // ── 3. Aggiornamento configurazioni ────────────────────────────────────
+        if (COMMAND_CONFIG.equals(command)) {
+            exit(logService, handleConfig(flags, loader, logService));
+        }
+
+        // ── 2b. Bootstrap — markerService and workspaceService ─────────────────
+        MarkerService    markerService    = new MarkerService(loader, logService);
+        WorkspaceService workspaceService = new WorkspaceService(installDir, markerService, logService);
+        WorkspaceCli     workspaceCli     = new WorkspaceCli(loader, workspaceService, markerService, logService);
+
+        // ── 4. Caricamento registro workspace ──────────────────────────────────
+        try {
+            workspaceService.load();
+        } catch (WorkspaceException e) {
+            logService.error("Unable to load workspace registry: " + e.getMessage(), e);
+            exit(logService, 1);
+            return;
+        }
+
+        // ── 5. Operazioni sui Workspace ────────────────────────────────────────
+        if (WorkspaceCli.COMMAND.equals(command)) {
+            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, WorkspaceCli.DEFAULT_SUBCOMMAND);
+            int result = workspaceCli.execute(subcommand, flags);
+            exit(logService, result);
+        }
+
+        // ── 6. Load overrides from target or default workspace ─────────────────
+        Path workspacePath;
+        if (StringUtil.isBlank(workspacePathArg)) {
+            Optional<WorkspaceEntry> defaultWorkspace = workspaceService.findDefault();
+            if (defaultWorkspace.isEmpty()) {
+                logService.error("No default workspace found. If you have registered workspaces, promote one "
+                        + "with 'NomadSync workspace use --workspaceName=<name>'. If none are registered yet, "
+                        + "create one first with 'NomadSync workspace create --workspaceName=<name> --path=<path>'.");
+                exit(logService, 1);
+                return;
+            }
+            workspacePath = Path.of(defaultWorkspace.get().getPath());
+        } else {
+            workspacePath = Path.of(workspacePathArg).toAbsolutePath().normalize();
+        }
         if (!Files.isDirectory(workspacePath.resolve(MarkerType.WORKSPACE.folderName()))) {
-            System.err.println("Not a valid NomadSync workspace: " + workspacePath
+            logService.error("Not a valid NomadSync workspace: " + workspacePath
                     + " (missing " + MarkerType.WORKSPACE.folderName() + ")");
-            System.exit(1);
+            exit(logService, 1);
+            return;
+        }
+        Path markerDir = workspacePath.resolve(MarkerType.WORKSPACE.folderName());
+        try {
+            loader.loadWorkspaceOverrides(markerDir);
+        } catch (ConfigException e) {
+            logService.warn(e.getMessage(), e);
+        }
+        if (!loader.hasWorkspaceOverrides()) {
+            logService.warn("Workspace '" + workspacePath.getFileName()
+                    + "' has no config.properties of its own - falling back to install-level Git credentials "
+                    + "for every vault inside it.");
+
+            switch (ConfirmationUtil.confirm("This workspace has no config.properties of its own. Continuing will use "
+                    + "install-level credentials, which may belong to the wrong account for this "
+                    + "workspace's vaults. Continue? (y/N): ", confirmFallback, logService)) {
+                case DECLINED -> {
+                    logService.info("Aborted.");
+                    exit(logService, 2);
+                }
+                case INPUT_ERROR -> {
+                    exit(logService, 1);   // already logged by confirm()
+                }
+                case CONFIRMED -> { /* fall through, proceed */ }
+            }
         }
 
-        Path configDir  = workspacePath.resolve(MarkerType.WORKSPACE.folderName());
-        Path configFile = configDir.resolve(CONFIG_FILE_NAME);
-
-        Properties properties = new Properties();
-        try (FileInputStream in = new FileInputStream(configFile.toFile())) {
-            properties.load(in);
-        } catch (IOException e) {
-            System.err.println("Unable to load properties file: " + configFile);
-            System.exit(1);
-        }
-
-        // ── 3. Bootstrap shared dependencies ──────────────────────────────────
-        LogService       logService       = new LogService(properties, configDir);
+        // ── 2c. Bootstrap — altre dipendenze ───────────────────────────────────
         GitignoreService gitignoreService = new GitignoreService(logService);
-        MarkerService    markerService    = new MarkerService(properties, logService);
-        WorkspaceService workspaceService = new WorkspaceService(resolveJarDirectory(), markerService, logService);
-        VaultService     vaultService     = new VaultService(configDir, markerService, gitignoreService, logService);
-        GitService       gitService       = new GitService(properties, vaultService, gitignoreService, logService);
+        VaultService     vaultService     = new VaultService(markerDir, markerService, gitignoreService, logService);
+        GitService       gitService       = new GitService(loader, vaultService, gitignoreService, logService);
         VaultCli         vaultCli         = new VaultCli(vaultService, markerService, gitService, logService);
-        WorkspaceCli     workspaceCli     = new WorkspaceCli(workspaceService, markerService, logService);
         NotificationHook hook             = new LogNotificationHook(logService);
 
-        // ── 4. Load vaults ────────────────────────────────────────────────────
+        // ── 7. Load vaults ────────────────────────────────────────────────────
         final List<Vault> vaults = loadVaults(vaultService, logService);
 
-        // ── 5. Early-exit commands — no orchestrators needed ──────────────────
+        // ── 8. Operazioni sui Vault ───────────────────────────────────────────
         if (VaultCli.COMMAND.equals(command)) {
             // vault subcommands are allowed on an empty registry (e.g. vault add)
             String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, VaultCli.DEFAULT_SUBCOMMAND);
             int result = vaultCli.execute(subcommand, flags);
             exit(logService, result);
         }
-        if (WorkspaceCli.COMMAND.equals(command)) {
-            // workspace subcommands are allowed on an empty registry (e.g. workspace add)
-            String subcommand = flags.getOrDefault(AbstractCli.FLAG_SUBCOMMAND, WorkspaceCli.DEFAULT_SUBCOMMAND);
-            int result = workspaceCli.execute(subcommand, flags);
-            exit(logService, result);
-        }
 
+        // ── 9. Blocca l'esecuzione se non ci sono vault registrati ─────────────
         // For all other commands, an empty vault registry is a no-op.
         if (vaults.isEmpty()) {
             logService.warn("No vaults registered - nothing to do.");
             exit(logService, 0);
         }
 
-        if (COMMAND_STATUS.equals(command)) {
-            exit(logService, handleStatus(vaultFlag, vaults, vaultService, gitService, logService));
-        }
-
-        if (COMMAND_CONFIG.equals(command)) {
-            exit(logService, handleConfig(flags, configFile, properties, logService));
-        }
-
-        // ── 6. Resolve --vault flag ───────────────────────────────────────────
+        // ── 10. Resolve --vault flag ───────────────────────────────────────────
         Vault targetVault;
         try {
             targetVault = vaultService.resolveVaultFlag(vaultFlag);
@@ -209,7 +274,18 @@ public class Main {
             return;
         }
 
-        // Validate mandatory-vault constraint
+        // ── 11. Stampa lo status del targetVault ───────────────────────────────
+        if (COMMAND_STATUS.equals(command)) {
+            if (targetVault == null) {
+                logService.error("command 'status' requires --vault=<name|owner/name>");
+                vaultService.listRegistered();
+                exit(logService, 1);
+                return;
+            }
+            exit(logService, handleStatus(targetVault, gitService, logService));
+        }
+
+        // ── 12. Validate mandatory-vault constraint ────────────────────────────
         EventType eventType = operationToEventType(command, logService);
         if (eventType != null && eventType.isMandatoryVault() && targetVault == null) {
             logService.error("command '" + command + "' requires --vault=<name|owner/name>");
@@ -218,7 +294,7 @@ public class Main {
             return;
         }
 
-        // ── 7. Bootstrap per-vault Git credentials ────────────────────────────
+        // ── 13. Bootstrap per-vault Git credentials ────────────────────────────
         for (Vault vault : vaults) {
             try {
                 gitService.bootstrapVault(vault);
@@ -228,7 +304,7 @@ public class Main {
             }
         }
 
-        // ── 8. Wire one queue + orchestrator per vault ─────────────────────────
+        // ── 14. Wire one queue + orchestrator per vault ────────────────────────
         List<SyncEventQueue>   queues        = new ArrayList<>();
         List<SyncOrchestrator> orchestrators = new ArrayList<>();
 
@@ -240,7 +316,7 @@ public class Main {
             orchestrators.add(orchestrator);
         }
 
-        // ── 9. Broadcast queue + dispatcher thread ────────────────────────────
+        // ── 15. Broadcast queue + dispatcher thread ───────────────────────────
         SyncEventQueue broadcastQueue = new SyncEventQueue(logService);
         Thread broadcaster = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
@@ -271,13 +347,12 @@ public class Main {
             logService.info("Broadcaster: stopped.");
         }, "nomadsync-broadcaster");
 
-        // ── 10. AutosaveScheduler ─────────────────────────────────────────────
-        long intervalMinutes = PropertiesUtil.getLong(
-                properties, NomadProperties.Autosave.INTERVAL_MINUTES, 15L);
+        // ── 16. AutosaveScheduler ─────────────────────────────────────────────
+        long intervalMinutes = loader.getLong(NomadProperties.Autosave.INTERVAL_MINUTES, 15L);
         AutosaveScheduler scheduler = new AutosaveScheduler(
                 broadcastQueue, logService, intervalMinutes);
 
-        // ── 11. Shutdown hook ─────────────────────────────────────────────────
+        // ── 17. Shutdown hook ─────────────────────────────────────────────────
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             scheduler.stop();
             broadcaster.interrupt();
@@ -285,7 +360,7 @@ public class Main {
             logService.close();
         }, "nomadsync-shutdown"));
 
-        // ── 12. CLI → event ───────────────────────────────────────────────────
+        // ── 18. CLI → event ───────────────────────────────────────────────────
         switch (command) {
             case COMMAND_PULL -> {
                 SyncEvent event = new SyncEvent(EventType.PULL_LOGON,
@@ -304,7 +379,7 @@ public class Main {
             }
             case COMMAND_COMMIT -> {
                 // targetVault guaranteed non-null (mandatory-vault check above)
-                String message = openEditorForMessage(flags, properties, logService);
+                String message = openEditorForMessage(flags, loader.getProperties(), logService);
                 if (message == null || message.isBlank()) {
                     logService.info("Empty commit message - aborting, no commit created.");
                     exit(logService, 0);
@@ -321,7 +396,7 @@ public class Main {
             }
         }
 
-        // ── 13. Start ─────────────────────────────────────────────────────────
+        // ── 19. Start ─────────────────────────────────────────────────────────
         scheduler.start();
         broadcaster.start();
 
@@ -352,6 +427,10 @@ public class Main {
                 Thread.currentThread().interrupt();
             }
         });
+    }
+
+    private static void printUsage() {
+        // TODO
     }
 
     /**
@@ -453,23 +532,7 @@ public class Main {
      */
     private static final Set<String> DUPLICATE_CHECK_EXEMPT_FLAGS = Set.of(AbstractCli.FLAG_FORCE);
 
-    // ── Default workspace path resolution ─────────────────────────────────────
-
-    private static final String WORKSPACES_REGISTRY_FILE_NAME = "workspaces.json";
-
-    private static Path resolveWorkspacePathOrExit(String workspacePathArg) {
-        try {
-            return (StringUtil.isBlank(workspacePathArg))
-                    ? JsonMapper.loadDefaultWorkspacePath(
-                    resolveJarDirectory().resolve(WORKSPACES_REGISTRY_FILE_NAME).toFile())
-                    : Path.of(workspacePathArg).toAbsolutePath().normalize();
-        } catch (IOException e) {
-            System.err.println("Unable to resolve default workspace path: " + e.getMessage());
-            e.printStackTrace(System.err);
-            System.exit(1);
-            throw new AssertionError("unreachable — System.exit() above always terminates the JVM");
-        }
-    }
+    // ── Installation directory resolution ─────────────────────────────────────
 
     /**
      * Directory containing the running JAR — used to locate {@code workspaces.json}
@@ -639,94 +702,69 @@ public class Main {
      * consistent with the rule that a non-null {@code --vault} value which does
      * not resolve is always a fatal error, regardless of the command.</p>
      *
-     * @param vaultFlag  the raw {@code --vault} value, or {@code null} for broadcast
-     * @param vaults     the list of registered vaults
-     * @param vaultService vault operations service
      * @param gitService Git operations service
      * @param logService shared logging service
      * @return {@code 0} if the status was printed successfully for every target
      *         vault; {@code 1} if {@code --vault} could not be resolved, or if
      *         {@code git status} failed for at least one target vault
      */
-    private static int handleStatus(String vaultFlag, List<Vault> vaults,
-                                    VaultService vaultService, GitService gitService, LogService logService) {
-        List<Vault> targets;
-
+    private static int handleStatus(Vault vault, GitService gitService, LogService logService) {
         try {
-            targets = vaultFlag != null
-                    ? List.of(vaultService.resolveVaultFlag(vaultFlag))
-                    : vaults;
-        } catch (VaultNotFoundException | VaultAmbiguousException e) {
-            logService.error("handleStatus - " + e.getMessage());
-            vaultService.listRegistered();
+            logService.info(gitService.status(vault));
+            return 0;
+        } catch (GitException e) {
+            logService.error("handleStatus - failed for " + vault.getRepoSlug()
+                    + " - " + e.getMessage());
+            return 1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logService.error("handleStatus - interrupted while reading status for "
+                    + vault.getRepoSlug() + " - " + e.getMessage());
             return 1;
         }
-
-        boolean multiVault = targets.size() > 1;
-        boolean hadFailure = false;
-
-        for (Vault vault : targets) {
-            if (multiVault) logService.info("=== " + vault.getRepoSlug() + " ===");
-            try {
-                logService.info(gitService.status(vault));
-            } catch (GitException e) {
-                logService.error("handleStatus - failed for " + vault.getRepoSlug()
-                        + " - " + e.getMessage());
-                hadFailure = true;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                logService.error("handleStatus - interrupted while reading status for "
-                        + vault.getRepoSlug() + " - " + e.getMessage());
-                hadFailure = true;
-            }
-            if (multiVault) logService.info("");
-        }
-
-        return hadFailure ? 1 : 0;
     }
 
     // ── config command ────────────────────────────────────────────────────────
 
     /**
      * Handles the {@code config} command — updates matching {@code git.*} keys
-     * in {@code config.properties} (global configuration) and persists to disk.
-     * Note: {@link Properties#store} does not preserve comments from the
-     * original file.
+     * in install-level configuration and persists them via
+     * {@link NomadPropertiesLoader#saveInstallProperties()}.
      *
-     * <p>Scoped to global configuration only — per-vault credential updates go
-     * through {@code vault update --git.*=...}.</p>
+     * <p>Scoped to install-level configuration only — per-vault credential
+     * updates go through {@code vault update --git.*=...}; workspace-level
+     * overrides have no CLI surface yet (pending {@code workspace config}).</p>
      *
-     * @param flags        parsed CLI flags
-     * @param configFile   resolved path to the target workspace's {@code config.properties}
-     * @param properties   loaded application properties
-     * @param logService   shared logging service
+     * <p>{@link Properties#store} does not preserve comments from the original
+     * file.</p>
+     *
+     * @param flags      parsed CLI flags
+     * @param loader     resolved configuration — mutated and persisted in place
+     * @param logService shared logging service
      * @return {@code 0} on success, {@code 1} on a write failure, {@code 2} if
      *         no {@code --git.*} flag was provided (no-op)
      */
-    private static int handleConfig(Map<String, String> flags, Path configFile,
-                                    Properties properties, LogService logService) {
-
+    private static int handleConfig(Map<String, String> flags, NomadPropertiesLoader loader, LogService logService) {
         Map<String, String> gitFlags = new LinkedHashMap<>();
         flags.forEach((k, v) -> {
             if (k.startsWith(VaultCli.GIT_FLAG_PREFIX)) gitFlags.put(k, v);
         });
-
         if (gitFlags.isEmpty()) {
             logService.warn("handleConfig - no --git.* flags provided - nothing to update.");
             return 2;
         }
 
         gitFlags.forEach((k, v) -> {
-            properties.setProperty(k, v);
+            loader.setInstallProperty(k, v);
             String logged = NomadProperties.Git.TOKEN.equals(k) ? "<hidden>" : v;
             logService.info("handleConfig - set " + k + "=" + logged);
         });
-        try (FileOutputStream out = new FileOutputStream(configFile.toFile())) {
-            properties.store(out, "NomadSync configuration - updated by 'NomadSync config'");
-            logService.info("handleConfig - config.properties updated at " + configFile);
-        } catch (IOException e) {
-            logService.error("handleConfig - failed to write config.properties: "
-                    + e.getMessage(), e);
+
+        try {
+            loader.saveInstallProperties();
+            logService.info("handleConfig - installConfig.properties updated.");
+        } catch (ConfigException e) {
+            logService.error("handleConfig - " + e.getMessage(), e);
             return 1;
         }
         return 0;

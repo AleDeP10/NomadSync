@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.GitException;
 import io.aledep10.nomadsync.exception.NetworkException;
 import io.aledep10.nomadsync.logging.LogLevel;
@@ -67,6 +68,7 @@ import static org.mockito.Mockito.verify;
 @DisplayName("Unit tests for GitService")
 class GitServiceTest {
 
+    static  NomadPropertiesLoader loader;
     static TestVault sharedVault;
     static LogService logService;
 
@@ -79,7 +81,9 @@ class GitServiceTest {
     @BeforeAll
     static void prepareSharedState() throws IOException {
         sharedVault = TestUtil.getTestVault("GitServiceTest-shared");
-        logService  = new LogService(TestUtil.forLogService(sharedVault, LogLevel.DEBUG), sharedVault.rootPath());
+        loader = NomadPropertiesLoader.forTesting(
+                TestUtil.forLogService(sharedVault, LogLevel.DEBUG));
+        logService  = new LogService(loader, sharedVault.rootPath());
     }
 
     @AfterAll
@@ -108,8 +112,7 @@ class GitServiceTest {
         CommandUtil.runCommand(vaultPath, List.of(TestConstants.GIT_EXECUTABLE,
                 "config", "user.email", TestConstants.GIT_EMAIL));
 
-        gitService = new GitService(gitProperties(),
-                mock(VaultService.class), mock(GitignoreService.class), logService);
+        gitService = new GitService(loader, mock(VaultService.class), mock(GitignoreService.class), logService);
     }
 
     // No @AfterEach — testVault is registered with the injected TempDirs above
@@ -187,7 +190,7 @@ class GitServiceTest {
         @Test
         @DisplayName("returns exit code 0 and clears working tree when there are changes")
         void commitLocal_withChanges_returnsZeroAndClearsChanges()
-                throws GitException, NetworkException, IOException, InterruptedException {
+                throws GitException, IOException, InterruptedException {
             Files.writeString(testVault.vaultPath().resolve("tmp.txt"), "content");
 
             int exitCode = gitService.commitLocal(vault, "test commit");
@@ -199,7 +202,7 @@ class GitServiceTest {
         @Test
         @DisplayName("returns non-zero exit code when there is nothing to commit")
         void commitLocal_withNoChanges_returnsNonZero()
-                throws GitException, NetworkException, InterruptedException {
+                throws GitException, InterruptedException {
             int exitCode = gitService.commitLocal(vault, "empty commit");
 
             assertThat(exitCode).isNotEqualTo(0);
@@ -230,7 +233,7 @@ class GitServiceTest {
         @Test
         @DisplayName("stash on a clean working tree does not throw")
         void stash_onCleanTree_doesNotThrow()
-                throws GitException, NetworkException, InterruptedException {
+                throws GitException, InterruptedException {
             gitService.stash(vault);
         }
     }
@@ -247,8 +250,7 @@ class GitServiceTest {
         @BeforeEach
         void setUpRealGitignoreService() {
             realGitignoreService = new GitignoreService(logService);
-            gs = new GitService(gitProperties(), mock(VaultService.class),
-                    realGitignoreService, logService);
+            gs = new GitService(loader, mock(VaultService.class), realGitignoreService, logService);
         }
 
         @Test
@@ -335,7 +337,7 @@ class GitServiceTest {
         @Test
         @DisplayName("writes user.name to .git/config when per-vault gitName is set")
         void bootstrapVault_withVaultGitName_setsLocalUserName()
-                throws GitException, NetworkException, IOException, InterruptedException {
+                throws GitException, NetworkException, InterruptedException {
             Vault named = new Vault(UUID.randomUUID().toString(),
                     "owner", "named-vault", testVault.vaultPath().toString(),
                     "Vault User", null, null, null, null, null);
@@ -350,10 +352,9 @@ class GitServiceTest {
         @Test
         @DisplayName("falls back to global git.name property when per-vault gitName is null")
         void bootstrapVault_vaultNameNull_fallsBackToGlobalProperty()
-                throws GitException, NetworkException, IOException, InterruptedException {
-            Properties props = gitProperties();
-            props.setProperty("git.name", "Global User");
-            GitService gs = new GitService(props,
+                throws GitException, NetworkException, InterruptedException {
+            NomadPropertiesLoader localLoader = gitLoader("git.name", "Global User");
+            GitService gs = new GitService(localLoader,
                     mock(VaultService.class), mock(GitignoreService.class), logService);
 
             Vault noNameVault = new Vault(UUID.randomUUID().toString(),
@@ -369,10 +370,9 @@ class GitServiceTest {
         @Test
         @DisplayName("per-vault gitName takes precedence over global git.name property")
         void bootstrapVault_vaultNameOverridesGlobal()
-                throws GitException, NetworkException, IOException, InterruptedException {
-            Properties props = gitProperties();
-            props.setProperty("git.name", "Global User");
-            GitService gs = new GitService(props,
+                throws GitException, NetworkException, InterruptedException {
+            NomadPropertiesLoader localLoader = gitLoader("git.name", "Global User");
+            GitService gs = new GitService(localLoader,
                     mock(VaultService.class), mock(GitignoreService.class), logService);
 
             Vault overrideVault = new Vault(UUID.randomUUID().toString(),
@@ -384,6 +384,36 @@ class GitServiceTest {
             String result = CommandUtil.runCommandWithOutput(testVault.vaultPath().toString(),
                     List.of(TestConstants.GIT_EXECUTABLE, "config", "user.name"));
             assertThat(result.trim()).isEqualTo("Per-Vault User");
+        }
+
+        @Test
+        @DisplayName("warns (does not throw) when credentials disappear but a NomadSync-configured remote already exists")
+        void bootstrapVault_credentialsRemoved_existingRemoteLeftUntouched()
+                throws GitException, NetworkException, InterruptedException {
+            NomadPropertiesLoader withCreds = gitLoader("git.name", "User", "git.email", "u@x.com",
+                    "git.username", "user", "git.token", "ghp_initial");
+            GitService gsWithCreds = new GitService(withCreds,
+                    mock(VaultService.class), mock(GitignoreService.class), logService);
+            Vault vault = new Vault(UUID.randomUUID().toString(), "owner", "drift-vault", testVault.vaultPath().toString());
+            gsWithCreds.bootstrapVault(vault);   // establishes the remote with a token-embedded URL
+
+            NomadPropertiesLoader withoutCreds = gitLoader("git.name", "User", "git.email", "u@x.com");
+            GitService gsWithoutCreds = new GitService(withoutCreds,
+                    mock(VaultService.class), mock(GitignoreService.class), logService);
+
+            gsWithoutCreds.bootstrapVault(vault);   // must not throw
+
+            String result = CommandUtil.runCommandWithOutput(testVault.vaultPath().toString(),
+                    List.of(TestConstants.GIT_EXECUTABLE, "remote", "get-url", "origin"));
+            assertThat(result).contains("ghp_initial");   // stale URL left exactly as it was, not reset
+        }
+
+        static NomadPropertiesLoader gitLoader(String... extraKeyValues) {
+            Properties properties = TestUtil.forLogService(sharedVault, LogLevel.DEBUG);
+            for (int i = 0; i < extraKeyValues.length; i += 2) {
+                properties.setProperty(extraKeyValues[i], extraKeyValues[i + 1]);
+            }
+            return NomadPropertiesLoader.forTesting(properties);
         }
     }
 
@@ -527,7 +557,7 @@ class GitServiceTest {
 
             vaultServiceMock = mock(VaultService.class);
             gitignoreServiceMock = mock(GitignoreService.class);
-            gs = new GitService(gitProperties(), vaultServiceMock, gitignoreServiceMock, logService);
+            gs = new GitService(loader, vaultServiceMock, gitignoreServiceMock, logService);
         }
 
         // No @AfterEach — remoteBarePath is registered with the injected
@@ -589,21 +619,10 @@ class GitServiceTest {
 
     private void createAndCommitFile(String filename, String content)
             throws GitException, NetworkException, IOException, InterruptedException {
-        createAndCommitFile(filename, content, "test: initial commit");
-    }
-
-    private void createAndCommitFile(String filename, String content, String message)
-            throws GitException, NetworkException, IOException, InterruptedException {
         Files.writeString(testVault.vaultPath().resolve(filename), content);
         CommandUtil.runCommand(testVault.vaultPath().toString(),
                 List.of(TestConstants.GIT_EXECUTABLE, "add", "."));
         CommandUtil.runCommand(testVault.vaultPath().toString(),
-                List.of(TestConstants.GIT_EXECUTABLE, "commit", "-m", message));
-    }
-
-    private Properties gitProperties() {
-        Properties properties = new Properties();
-        properties.setProperty("git.executable", TestConstants.GIT_EXECUTABLE);
-        return properties;
+                List.of(TestConstants.GIT_EXECUTABLE, "commit", "-m", "test: initial commit"));
     }
 }

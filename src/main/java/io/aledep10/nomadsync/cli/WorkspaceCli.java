@@ -1,17 +1,18 @@
 package io.aledep10.nomadsync.cli;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.*;
+import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.service.MarkerService;
 import io.aledep10.nomadsync.service.WorkspaceService;
+import io.aledep10.nomadsync.util.ConfirmationUtil;
 import io.aledep10.nomadsync.workspace.WorkspaceEntry;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 
 /**
  * CLI handlers for the {@code workspace} subcommand family — twin of
@@ -44,13 +45,16 @@ public class WorkspaceCli extends AbstractCli {
     public static final String DEFAULT_SUBCOMMAND = "list";
     public static final String FLAG_WORKSPACE = "workspace";
     public static final String FLAG_WORKSPACE_NAME = "workspaceName";
-    public static final String FLAG_PATH = "path";
+    public static final String FLAG_MAX_NESTING_DEPTH = "marker.maxNestingDepth";
 
+    private final NomadPropertiesLoader loader;
     private final WorkspaceService workspaceService;
     private final MarkerService markerService;
 
-    public WorkspaceCli(WorkspaceService workspaceService, MarkerService markerService, LogService logService) {
+    public WorkspaceCli(NomadPropertiesLoader loader,
+            WorkspaceService workspaceService, MarkerService markerService, LogService logService) {
         super(logService);
+        this.loader = loader;
         this.workspaceService = workspaceService;
         this.markerService = markerService;
     }
@@ -75,12 +79,13 @@ public class WorkspaceCli extends AbstractCli {
         return switch (subcommand) {
             case "create"   -> handleWorkspaceCreate(flags);
             case "add"      -> handleWorkspaceAdd(flags);
-            case "rename"   -> handleWorkspaceRename(flags);
+            case "update"   -> handleWorkspaceUpdate(flags);
             case "relocate" -> handleWorkspaceRelocate(flags);
             case "remove"   -> handleWorkspaceRemove(flags);
             case "erase"    -> handleWorkspaceErase(flags);
             case "use"      -> handleWorkspaceUse(flags);
             case "list"     -> handleWorkspaceList(flags);
+            case "show" -> handleWorkspaceShow(flags);
             default -> {
                 logService.error("Unknown workspace subcommand: " + subcommand +
                         ". Use: create | add | rename | relocate | remove | erase | use | list");
@@ -95,61 +100,120 @@ public class WorkspaceCli extends AbstractCli {
     // "sub" is injected internally by the parser and is always implicitly allowed.
     // Global flags (workspacePath, vault, daemon) are removed from the map before
     // these handlers are invoked, so they must not appear here.
-    private static final Set<String> FLAGS_WORKSPACE_CREATE = Set.of(FLAG_WORKSPACE_NAME, FLAG_PATH);
+    private static final Set<String> FLAGS_WORKSPACE_CREATE = Set.of(
+            FLAG_WORKSPACE_NAME, FLAG_PATH,
+            FLAG_GIT_NAME, FLAG_GIT_EMAIL, FLAG_GIT_USERNAME, FLAG_GIT_TOKEN, FLAG_GIT_BRANCH, FLAG_GIT_REMOTE,
+            FLAG_MAX_NESTING_DEPTH);
     // Allowed flags — same set as FLAGS_WORKSPACE_CREATE (workspaceName, path).
     private static final Set<String> FLAGS_WORKSPACE_ADD      = FLAGS_WORKSPACE_CREATE;
-    private static final Set<String> FLAGS_WORKSPACE_RENAME   = Set.of(FLAG_WORKSPACE, FLAG_WORKSPACE_NAME);
+    private static final Set<String> FLAGS_WORKSPACE_UPDATE = Set.of(
+            FLAG_WORKSPACE, FLAG_WORKSPACE_NAME,
+            FLAG_GIT_NAME, FLAG_GIT_EMAIL, FLAG_GIT_USERNAME, FLAG_GIT_TOKEN, FLAG_GIT_BRANCH, FLAG_GIT_REMOTE,
+            FLAG_MAX_NESTING_DEPTH);
     private static final Set<String> FLAGS_WORKSPACE_RELOCATE = Set.of(FLAG_WORKSPACE, FLAG_PATH, FLAG_FORCE);
     private static final Set<String> FLAGS_WORKSPACE_REMOVE   = Set.of(FLAG_WORKSPACE, FLAG_FORCE);
     private static final Set<String> FLAGS_WORKSPACE_ERASE    = Set.of(FLAG_WORKSPACE, FLAG_FORCE);
     private static final Set<String> FLAGS_WORKSPACE_USE      = Set.of(FLAG_WORKSPACE, FLAG_PATH);
     private static final Set<String> FLAGS_WORKSPACE_LIST     = Set.of();
+    private static final Set<String> FLAGS_WORKSPACE_SHOW     = Set.of(FLAG_WORKSPACE);
 
     /**
      * Handles {@code workspace create} — bootstraps a brand-new workspace
-     * directory (and its {@code .nomadsync-workspace} marker) and registers it.
+     * directory (and its {@code .nomadsync-workspace} marker), registers it,
+     * and scaffolds {@code config.properties} with any {@code git.*}/
+     * {@code marker.maxNestingDepth} values provided at creation time — same
+     * one-shot composition already used by {@code vault create}
+     * ({@code create()} then apply-and-persist), not a two-step create-then-update.
      *
-     * <p>Required flags: {@code --workspaceName}, {@code --path}.</p>
+     * <p>Required flags: {@code --workspaceName}, {@code --path}. Optional:
+     * {@code --git.*} (name/email/username/token/branch/remote),
+     * {@code --marker.maxNestingDepth} (integer, {@code NomadSync-WSP-00X} —
+     * governs {@code checkNoNestingConflict}'s descendant scan for every vault
+     * created inside this workspace).</p>
      *
      * @param flags parsed CLI flags
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
-     *         duplicate name, directory/marker creation failure)
+     *         duplicate name, non-integer {@code --marker.maxNestingDepth},
+     *         directory/marker creation failure, or {@code config.properties}
+     *         scaffolding failure)
      */
     int handleWorkspaceCreate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_CREATE, "handleWorkspaceCreate")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE_NAME, FLAG_PATH), "handleWorkspaceCreate")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(FLAG_MAX_NESTING_DEPTH), "handleWorkspaceCreate")) return 1;
+
+        if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
+            try {
+                Integer.parseInt(flags.get(FLAG_MAX_NESTING_DEPTH));
+            } catch (NumberFormatException e) {
+                logService.error("handleWorkspaceCreate: --" + FLAG_MAX_NESTING_DEPTH
+                        + " must be an integer, got '" + flags.get(FLAG_MAX_NESTING_DEPTH) + "'");
+                return 1;
+            }
+        }
 
         String workspaceName = flags.get(FLAG_WORKSPACE_NAME);
         String path = flags.get(FLAG_PATH);
 
+        WorkspaceEntry created;
         try {
-            WorkspaceEntry created = workspaceService.create(workspaceName, path);
-            logService.info("Workspace created: " + created.getWorkspaceName());
-            return 0;
+            created = workspaceService.create(workspaceName, path);
         } catch (WorkspaceException e) {
             logService.error("handleWorkspaceCreate - " + e.getMessage(), e);
             return 1;
         }
+
+        Map<String, String> initialValues = new LinkedHashMap<>(extractGitFlags(flags));
+        if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
+            initialValues.put(FLAG_MAX_NESTING_DEPTH, flags.get(FLAG_MAX_NESTING_DEPTH));
+        }
+
+        try {
+            loader.createWorkspaceProperties(
+                    Path.of(created.getPath()).resolve(MarkerType.WORKSPACE.folderName()), initialValues);
+        } catch (ConfigException e) {
+            logService.error("handleWorkspaceCreate - workspace registered but config.properties "
+                    + "could not be scaffolded - " + e.getMessage(), e);
+            return 1;
+        }
+
+        logService.info("Workspace created: " + created.getWorkspaceName());
+        return 0;
     }
 
     /**
      * Handles {@code workspace add} — registers an already-existing workspace
      * directory (marker already present on disk, e.g. synced from another
-     * machine).
+     * machine). Deliberately does not write {@code config.properties} — unlike
+     * {@code workspace create}, the directory already exists and its
+     * configuration (if any) may already hold real values that must not be
+     * silently overwritten. {@code --git.*}/{@code --marker.maxNestingDepth} are
+     * rejected explicitly here, not merely unsupported by omission — use
+     * {@code workspace update} afterward to set them.
      *
      * <p>Required flags: {@code --workspaceName}, {@code --path}.</p>
      *
      * @param flags parsed CLI flags
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
-     *         duplicate name, missing/invalid marker at {@code --path})
+     *         a rejected config flag, duplicate name, missing/invalid marker at
+     *         {@code --path})
      */
     int handleWorkspaceAdd(Map<String, String> flags) {
+        Set<String> configFlags = new LinkedHashSet<>(extractGitFlags(flags).keySet());
+        if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) configFlags.add(FLAG_MAX_NESTING_DEPTH);
+        if (!configFlags.isEmpty()) {
+            logService.error("handleWorkspaceAdd: --" + String.join(", --", configFlags) + " not accepted here. "
+                    + "'workspace add' registers an existing workspace as-is - its config.properties (if any) "
+                    + "already reflects real values and must not be silently overwritten. "
+                    + "Use 'workspace update' after adding to change them.");
+            return 1;
+        }
+
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_ADD, "handleWorkspaceAdd")) return 1;
         if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE_NAME, FLAG_PATH), "handleWorkspaceAdd")) return 1;
 
         String workspaceName = flags.get(FLAG_WORKSPACE_NAME);
         String path = flags.get(FLAG_PATH);
-
         try {
             WorkspaceEntry added = workspaceService.add(workspaceName, path);
             logService.info("Workspace added: " + added.getWorkspaceName());
@@ -161,32 +225,96 @@ public class WorkspaceCli extends AbstractCli {
     }
 
     /**
-     * Handles {@code workspace rename} — changes a registered entry's
-     * {@code workspaceName} only, not its {@code path} (see
-     * {@link #handleWorkspaceRelocate} for that).
+     * Handles {@code workspace update} — renames a registered entry
+     * ({@code --workspaceName}) and/or updates its {@code config.properties}
+     * ({@code --git.*}, {@code --marker.maxNestingDepth}). Replaces
+     * {@code workspace rename}: renaming was the only editable field when that
+     * name was chosen, no longer true now that workspace-level configuration
+     * exists — same parity already established for {@code vault update}.
      *
-     * <p>Required flags: {@code --workspace} (the existing name),
-     * {@code --workspaceName} (the new name).</p>
+     * <p>Does not touch {@code path} — a workspace's physical location changes
+     * only through {@code workspace relocate}, same separation of concerns as
+     * {@code vault update} rejecting {@code --path} ({@code NomadSync-VLT-016}).</p>
+     *
+     * <p>At least one optional flag must be provided — with none, the command is
+     * a no-op and returns {@code 2}.</p>
+     *
+     * <p>Required flags: {@code --workspace}. Optional: {@code --workspaceName},
+     * {@code --git.*} (name/email/username/token/branch/remote),
+     * {@code --marker.maxNestingDepth} (integer).</p>
      *
      * @param flags parsed CLI flags
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
-     *         unresolved {@code --workspace}, collision with the new name)
+     *         non-integer {@code --marker.maxNestingDepth}, unresolved
+     *         {@code --workspace}, name collision, or {@code config.properties}
+     *         update failure); {@code 2} if no changes were requested (no-op)
      */
-    int handleWorkspaceRename(Map<String, String> flags) {
-        if (hasUnknownFlags(flags, FLAGS_WORKSPACE_RENAME, "handleWorkspaceRename")) return 1;
-        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE, FLAG_WORKSPACE_NAME), "handleWorkspaceRename")) return 1;
-
-        String workspaceName = flags.get(FLAG_WORKSPACE);
-        String newWorkspaceName = flags.get(FLAG_WORKSPACE_NAME);
-
-        try {
-            WorkspaceEntry renamed = workspaceService.rename(workspaceName, newWorkspaceName);
-            logService.info("Workspace renamed: " + workspaceName + " -> " + renamed.getWorkspaceName());
-            return 0;
-        } catch (WorkspaceException e) {
-            logService.error("handleWorkspaceRename - " + e.getMessage(), e);
+    int handleWorkspaceUpdate(Map<String, String> flags) {
+        if (flags.containsKey(FLAG_PATH)) {
+            logService.error("handleWorkspaceUpdate: --path changes are not supported here. "
+                    + "If the workspace is still at its current registered location and you want NomadSync to "
+                    + "physically move it, use 'workspace relocate' instead. "
+                    + "If you already moved the files yourself and only need the registry realigned, "
+                    + "use 'workspace remove --workspace=" + flags.get(FLAG_WORKSPACE) + " --force' "
+                    + "followed by 'workspace add' at the new location.");
             return 1;
         }
+        if (hasUnknownFlags(flags, FLAGS_WORKSPACE_UPDATE, "handleWorkspaceUpdate")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE), "handleWorkspaceUpdate")) return 1;
+        if (hasBlankOptionalValue(flags, Set.of(FLAG_WORKSPACE_NAME, FLAG_MAX_NESTING_DEPTH), "handleWorkspaceUpdate"))
+            return 1;
+
+        if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
+            try {
+                Integer.parseInt(flags.get(FLAG_MAX_NESTING_DEPTH));
+            } catch (NumberFormatException e) {
+                logService.error("handleWorkspaceUpdate: --" + FLAG_MAX_NESTING_DEPTH
+                        + " must be an integer, got '" + flags.get(FLAG_MAX_NESTING_DEPTH) + "'");
+                return 1;
+            }
+        }
+
+        String workspaceName = flags.get(FLAG_WORKSPACE);
+        Map<String, String> configUpdates = new LinkedHashMap<>(extractGitFlags(flags));
+        if (flags.containsKey(FLAG_MAX_NESTING_DEPTH)) {
+            configUpdates.put(FLAG_MAX_NESTING_DEPTH, flags.get(FLAG_MAX_NESTING_DEPTH));
+        }
+
+        boolean renaming = flags.containsKey(FLAG_WORKSPACE_NAME);
+        if (!renaming && configUpdates.isEmpty()) {
+            logService.info("handleWorkspaceUpdate: no changes requested.");
+            return 2;
+        }
+
+        WorkspaceEntry target;
+        if (renaming) {
+            try {
+                target = workspaceService.rename(workspaceName, flags.get(FLAG_WORKSPACE_NAME));
+            } catch (WorkspaceException e) {
+                logService.error("handleWorkspaceUpdate - " + e.getMessage(), e);
+                return 1;
+            }
+        } else {
+            target = workspaceService.findByName(workspaceName).orElse(null);
+            if (target == null) {
+                logService.error("handleWorkspaceUpdate - workspace '" + workspaceName + "' not found");
+                return 1;
+            }
+        }
+
+        if (!configUpdates.isEmpty()) {
+            try {
+                loader.updateWorkspaceProperties(
+                        Path.of(target.getPath()).resolve(MarkerType.WORKSPACE.folderName()), configUpdates);
+            } catch (ConfigException e) {
+                logService.error("handleWorkspaceUpdate - " + (renaming ? "renamed but " : "")
+                        + "config.properties could not be updated - " + e.getMessage(), e);
+                return 1;
+            }
+        }
+
+        logService.info("Workspace updated: " + target.getWorkspaceName());
+        return 0;
     }
 
     /**
@@ -204,8 +332,9 @@ public class WorkspaceCli extends AbstractCli {
      * @param flags parsed CLI flags
      * @return {@code 0} on success; {@code 1} on error (missing/unknown flags,
      *         unresolved {@code --workspace}, nesting conflict, cross-drive
-     *         target, move/rebase failure); {@code 2} if the user declines
-     *         the confirmation prompt (no-op)
+     *         target, move/rebase failure); {@code 2} if nothing was requested
+     *         at all (target path equals the current one), or if the user
+     *         declines the confirmation prompt (both no-op)
      */
     int handleWorkspaceRelocate(Map<String, String> flags) {
         if (hasUnknownFlags(flags, FLAGS_WORKSPACE_RELOCATE, "handleWorkspaceRelocate")) return 1;
@@ -220,8 +349,13 @@ public class WorkspaceCli extends AbstractCli {
             return 1;
         }
 
+        if (newPath.equals(existing.get().getPath())) {
+            logService.info("handleWorkspaceRelocate: no changes requested.");
+            return 2;
+        }
+
         try {
-            markerService.checkNoNestingConflict(newPath);
+            markerService.checkNoNestingConflict(newPath, MarkerType.WORKSPACE);
         } catch (MarkerClaimException e) {
             logService.error("handleWorkspaceRelocate - " + e.getMessage());
             return 1;
@@ -240,20 +374,16 @@ public class WorkspaceCli extends AbstractCli {
             return 1;
         }
 
-        if (!flags.containsKey(FLAG_FORCE)) {
-            System.out.print("This will move the workspace directory to '" + newPath + "'. Continue? (y/N): ");
-
-            int response;
-            try {
-                response = System.in.read();
-            } catch (IOException e) {
-                logService.error("handleWorkspaceRelocate - failed to read user input: " + e.getMessage(), e);
-                return 1;
-            }
-            if (response != 'y' && response != 'Y') {
+        switch (ConfirmationUtil.confirm("This will move the workspace directory to '" + newPath +
+                        "'. Continue? (y/N): ", flags.containsKey(FLAG_FORCE), logService)) {
+            case DECLINED -> {
                 logService.info("Aborted.");
                 return 2;
             }
+            case INPUT_ERROR -> {
+                return 1;   // already logged by confirm()
+            }
+            case CONFIRMED -> { /* fall through, proceed */ }
         }
 
         try {
@@ -289,20 +419,16 @@ public class WorkspaceCli extends AbstractCli {
 
         String workspaceName = flags.get(FLAG_WORKSPACE);
 
-        if (!flags.containsKey(FLAG_FORCE)) {
-            System.out.print("Remove workspace '" + workspaceName + "' from the registry? (y/N): ");
-
-            int response;
-            try {
-                response = System.in.read();
-            } catch (IOException e) {
-                logService.error("handleWorkspaceRemove - failed to read user input: " + e.getMessage(), e);
-                return 1;
-            }
-            if (response != 'y' && response != 'Y') {
+        switch (ConfirmationUtil.confirm("Remove workspace '" + workspaceName +
+                        "' from the registry? (y/N): ", flags.containsKey(FLAG_FORCE), logService)) {
+            case DECLINED -> {
                 logService.info("Aborted.");
                 return 2;
             }
+            case INPUT_ERROR -> {
+                return 1;   // already logged by confirm()
+            }
+            case CONFIRMED -> { /* fall through, proceed */ }
         }
 
         try {
@@ -338,21 +464,16 @@ public class WorkspaceCli extends AbstractCli {
 
         String workspaceName = flags.get(FLAG_WORKSPACE);
 
-        if (!flags.containsKey(FLAG_FORCE)) {
-            System.out.print("This will PERMANENTLY delete the workspace directory for '"
-                    + workspaceName + "'. Continue? (y/N): ");
-
-            int response;
-            try {
-                response = System.in.read();
-            } catch (IOException e) {
-                logService.error("handleWorkspaceErase - failed to read user input: " + e.getMessage(), e);
-                return 1;
-            }
-            if (response != 'y' && response != 'Y') {
+        switch (ConfirmationUtil.confirm("This will PERMANENTLY delete the workspace directory for '"
+                        + workspaceName + "'. Continue? (y/N): ", flags.containsKey(FLAG_FORCE), logService)) {
+            case DECLINED -> {
                 logService.info("Aborted.");
                 return 2;
             }
+            case INPUT_ERROR -> {
+                return 1;   // already logged by confirm()
+            }
+            case CONFIRMED -> { /* fall through, proceed */ }
         }
 
         try {
@@ -427,6 +548,58 @@ public class WorkspaceCli extends AbstractCli {
                     workspace.getWorkspaceName(), workspace.isDefault() ? "yes" : "", workspace.getPath()));
         }
         logService.info("-".repeat(60));
+        return 0;
+    }
+
+    /**
+     * Handles {@code workspace show} — prints registry fields and the resolved
+     * {@code config.properties} contents for a single workspace.
+     *
+     * <p>Unlike {@code vault show}, no {@code --defaults} flag — a workspace has
+     * no per-entity/global split to disambiguate, only "is this key set in this
+     * workspace's own file or not". Absent keys print {@code (not set)}, not
+     * silently omitted — makes clear the workspace falls through to
+     * {@code installConfig.properties} for that key.</p>
+     *
+     * <p>Required flags: {@code --workspace}.</p>
+     *
+     * @param flags parsed CLI flags
+     * @return {@code 0} on success, {@code 1} if the workspace cannot be resolved
+     */
+    int handleWorkspaceShow(Map<String, String> flags) {
+        if (hasUnknownFlags(flags, FLAGS_WORKSPACE_SHOW, "handleWorkspaceShow")) return 1;
+        if (hasBlankRequiredFlags(flags, Set.of(FLAG_WORKSPACE), "handleWorkspaceShow")) return 1;
+
+        String workspaceName = flags.get(FLAG_WORKSPACE);
+        WorkspaceEntry workspace = workspaceService.findByName(workspaceName).orElse(null);
+        if (workspace == null) {
+            logService.error("handleWorkspaceShow - workspace '" + workspaceName + "' not found");
+            return 1;
+        }
+
+        logService.info("Workspace:  " + workspace.getWorkspaceName());
+        logService.info("Path:       " + workspace.getPath());
+        logService.info("Default:    " + workspace.isDefault());
+
+        Properties config = new Properties();
+        Path configFile = Path.of(workspace.getPath()).resolve(MarkerType.WORKSPACE.folderName())
+                .resolve(NomadPropertiesLoader.WORKSPACE_CONFIG_FILE_NAME);
+        if (Files.exists(configFile)) {
+            try (var in = Files.newInputStream(configFile)) {
+                config.load(in);
+            } catch (IOException e) {
+                logService.warn("handleWorkspaceShow - unable to read config.properties: " + e.getMessage());
+            }
+        }
+
+        for (String key : List.of(FLAG_GIT_NAME, FLAG_GIT_EMAIL, FLAG_GIT_USERNAME,
+                FLAG_GIT_TOKEN, FLAG_GIT_BRANCH, FLAG_GIT_REMOTE, FLAG_MAX_NESTING_DEPTH)) {
+            String value = config.getProperty(key);
+            String printed = value == null ? "(not set)"
+                    : FLAG_GIT_TOKEN.equals(key) ? "<hidden>" : value;
+            logService.info(String.format("%-24s %s", key + ":", printed));
+        }
+
         return 0;
     }
 }

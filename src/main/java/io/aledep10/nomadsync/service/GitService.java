@@ -1,6 +1,7 @@
 package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.config.NomadProperties;
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.GitException;
 import io.aledep10.nomadsync.exception.NetworkException;
 import io.aledep10.nomadsync.exception.VaultException;
@@ -70,16 +71,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class GitService {
 
-    private final Properties       properties;
-    private final String           gitExecutable;
-    private final VaultService     vaultService;
-    private final GitignoreService gitignoreService;
-    private final LogService       logService;
+    private final NomadPropertiesLoader loader;
+    private final String                gitExecutable;
+    private final VaultService          vaultService;
+    private final GitignoreService      gitignoreService;
+    private final LogService            logService;
 
     /**
      * Constructs the service from the provided configuration.
      *
-     * @param properties   application properties — must contain
+     * @param loader   application properties — must contain
      *                     {@link NomadProperties.Git#EXECUTABLE};
      *                     may contain global Git credential defaults
      *                     ({@link NomadProperties.Git#NAME},
@@ -97,10 +98,10 @@ public class GitService {
      *                         let a secret slip into a commit
      * @param logService       shared logging service
      */
-    public GitService(Properties properties, VaultService vaultService,
+    public GitService(NomadPropertiesLoader loader, VaultService vaultService,
                       GitignoreService gitignoreService, LogService logService) {
-        this.properties       = properties;
-        this.gitExecutable    = PropertiesUtil.get(properties, NomadProperties.Git.EXECUTABLE, "git");
+        this.loader = loader;
+        this.gitExecutable    = loader.get(NomadProperties.Git.EXECUTABLE, "git");
         this.vaultService     = vaultService;
         this.gitignoreService = gitignoreService;
         this.logService       = logService;
@@ -144,12 +145,26 @@ public class GitService {
         logService.info("bootstrapVault - " + vault.getRepoSlug()
                 + " - configuring Git identity and remote");
 
-        String name = vault.getGitName() != null
+        String name     = vault.getGitName() != null
                 ? vault.getGitName()
-                : properties.getProperty(NomadProperties.Git.NAME);
-        String email = vault.getGitEmail() != null
+                : loader.get(NomadProperties.Git.NAME, null);
+        String email    = vault.getGitEmail() != null
                 ? vault.getGitEmail()
-                : properties.getProperty(NomadProperties.Git.EMAIL);
+                : loader.get(NomadProperties.Git.EMAIL, null);
+
+        try {
+            String branch = StringUtil.coalesce(
+                    vault.getGitBranch(), loader.get(NomadProperties.Git.BRANCH, "main"));
+            String currentBranch = CommandUtil.runCommandWithOutput(path,
+                    List.of(gitExecutable, "branch", "--show-current")).trim();
+            if (!currentBranch.isEmpty() && !currentBranch.equals(branch)) {
+                CommandUtil.runCommand(path, List.of(gitExecutable, "branch", "-M", branch));
+                logService.debug("bootstrapVault - " + vault.getRepoSlug()
+                        + " - local branch renamed from '" + currentBranch + "' to '" + branch + "'");
+            }
+        } catch (NetworkException e) {
+            throw new GitException("unexpected network error during vault bootstrap", e);
+        }
 
         try {
             if (name != null) {
@@ -161,15 +176,15 @@ public class GitService {
                         List.of(gitExecutable, "config", "user.email", email), logService);
             }
 
-            String token = vault.getGitToken() != null
-                    ? vault.getGitToken()
-                    : properties.getProperty(NomadProperties.Git.TOKEN);
             String username = vault.getGitUsername() != null
                     ? vault.getGitUsername()
-                    : properties.getProperty(NomadProperties.Git.USERNAME);
+                    : loader.get(NomadProperties.Git.USERNAME, null);
+            String token    = vault.getGitToken() != null
+                    ? vault.getGitToken()
+                    : loader.get(NomadProperties.Git.TOKEN, null);
             String remote = vault.getGitRemote() != null
                     ? vault.getGitRemote()
-                    : PropertiesUtil.get(properties, NomadProperties.Git.REMOTE, "origin");
+                    : loader.get(NomadProperties.Git.REMOTE, "origin");
 
             if (token != null && username != null) {
                 // Token embedded in URL — written to .git/config, never logged.
@@ -191,8 +206,14 @@ public class GitService {
                         logService);
                 logService.debug("bootstrapVault - " + vault.getRepoSlug()
                         + " - remote '" + remote + "' " + remoteSubCmd);
+            } else {
+                String existingRemotes = CommandUtil.runCommandWithOutput(path, List.of(gitExecutable, "remote"));
+                if (Arrays.asList(existingRemotes.split("\\n")).contains(remote)) {
+                    logService.warn("bootstrapVault - " + vault.getRepoSlug() + " - no git.token/git.username "
+                            + "resolved, but remote '" + remote + "' already exists - left untouched. If it was "
+                            + "previously configured by NomadSync with a token, that token may now be stale.");
+                }
             }
-
         } catch (NetworkException e) {
             throw new GitException("unexpected network error during vault bootstrap", e);
         }
@@ -207,17 +228,25 @@ public class GitService {
      * method is a no-op — {@code git init} on an existing repository is safe
      * but unnecessary.</p>
      *
+     * <p>After a real {@code git init}, the default branch is renamed to the
+     * resolved value ({@code vault.getGitBranch()}, falling back to
+     * {@link NomadProperties.Git#BRANCH}, same cascade as {@link #push}) —
+     * left otherwise to {@code init.defaultBranch}, a local Git setting that
+     * varies by machine and may not match what {@link #push} will later try to
+     * push to. Skipped on the no-op path: an existing repository's branch is
+     * not this method's concern to change.</p>
+     *
      * <p>Logging: a single {@code INFO} line announces the operation at the
      * start; whether the call turned out to be a no-op or an actual
-     * {@code git init} is logged at {@code DEBUG}.</p>
+     * {@code git init} (and the branch rename that follows it) is logged at
+     * {@code DEBUG}.</p>
      *
      * @param vault the vault whose path will be initialised as a Git repository
-     * @throws GitException         if {@code git init} fails
+     * @throws GitException         if {@code git init} or the branch rename fails
      * @throws InterruptedException if the thread is interrupted while waiting
      */
     public void init(Vault vault) throws GitException, InterruptedException {
         logService.info("init - " + vault.getRepoSlug() + " - initialising repository");
-
         Path gitFolder = Path.of(vault.getPath(), ".git");
         if (Files.exists(gitFolder)) {
             logService.debug("init - " + vault.getRepoSlug() + " - already exists, skipped");
@@ -225,10 +254,15 @@ public class GitService {
         }
         try {
             CommandUtil.runCommand(vault.getPath(), List.of(gitExecutable, "init"));
+            logService.debug("init - " + vault.getRepoSlug() + " - git init executed");
+
+            String branch = StringUtil.coalesce(vault.getGitBranch(),
+                    loader.get(NomadProperties.Git.BRANCH, "main"));
+            CommandUtil.runCommand(vault.getPath(), List.of(gitExecutable, "branch", "-M", branch));
+            logService.debug("init - " + vault.getRepoSlug() + " - default branch set to '" + branch + "'");
         } catch (NetworkException e) {
             throw new GitException("unexpected network error on local init operation", e);
         }
-        logService.debug("init - " + vault.getRepoSlug() + " - git init executed");
     }
 
     /**
@@ -278,9 +312,9 @@ public class GitService {
      */
     public void push(Vault vault) throws GitException, NetworkException, InterruptedException {
         String remote = StringUtil.coalesce(vault.getGitRemote(),
-                PropertiesUtil.get(properties, NomadProperties.Git.REMOTE, "origin"));
+                loader.get(NomadProperties.Git.REMOTE, "origin"));
         String branch = StringUtil.coalesce(vault.getGitBranch(),
-                PropertiesUtil.get(properties, NomadProperties.Git.BRANCH, "main"));
+                loader.get(NomadProperties.Git.BRANCH, "main"));
         logService.info("push - " + vault.getRepoSlug()
                 + " - pushing to " + remote + "/" + branch);
         CommandUtil.runCommand(vault.getPath(),

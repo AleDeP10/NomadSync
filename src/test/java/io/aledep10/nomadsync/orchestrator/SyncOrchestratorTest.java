@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.orchestrator;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.GitException;
 import io.aledep10.nomadsync.exception.NetworkException;
 import io.aledep10.nomadsync.exception.VaultException;
@@ -79,7 +80,8 @@ class SyncOrchestratorTest {
     @BeforeAll
     static void prepareLogService() throws IOException {
         testVault  = TestUtil.getTestVault("SyncOrchestratorTest");
-        logService = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
+        logService = new LogService(NomadPropertiesLoader.forTesting(
+                TestUtil.forLogService(testVault, LogLevel.DEBUG)), testVault.rootPath());
     }
 
     @AfterAll

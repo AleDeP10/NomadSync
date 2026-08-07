@@ -1,7 +1,9 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.gitignore.GitignorePattern;
 import io.aledep10.nomadsync.gitignore.PatternLevel;
+import io.aledep10.nomadsync.gitignore.SystemPattern;
 import io.aledep10.nomadsync.gitignore.VaultPatterns;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.util.ClassFailureTracker;
@@ -22,7 +24,7 @@ import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.util.List;
 
-import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Unit tests for {@link GitignoreService}.
@@ -65,7 +67,8 @@ class GitignoreServiceTest {
     @BeforeAll
     static void prepareSharedState() throws IOException {
         testVault        = TestUtil.getTestVault("GitignoreServiceTest");
-        logService       = new LogService(TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
+        logService       = new LogService(NomadPropertiesLoader.forTesting(
+                TestUtil.forLogService(testVault, LogLevel.DEBUG)), testVault.rootPath());
         gitignoreService = new GitignoreService(logService);
     }
 
@@ -269,13 +272,15 @@ class GitignoreServiceTest {
     @Test
     void load_emptyFile_returnsDefaultPatternsOnly() throws Exception {
         writeGitignore("");
-
         VaultPatterns result = gitignoreService.load(testVault.vaultPath());
 
         List<String> systemPatterns = result.getSystem().stream()
                 .map(GitignorePattern::getPattern).toList();
-        assertThat(systemPatterns).asList()
-                .containsExactlyInAnyOrder(".git", ".DS_Store", "Thumbs.db", "desktop.ini");
+        List<String> expectedPatterns = GitignoreService.SYSTEM_PATTERN_DEFINITIONS.stream()
+                .map(SystemPattern::getPattern)
+                .toList();
+
+        assertThat(systemPatterns).containsExactlyInAnyOrderElementsOf(expectedPatterns);
         assertThat(result.getApp().isEmpty()).isFalse();
         assertThat(result.getUser().isEmpty()).isTrue();
     }
@@ -290,7 +295,7 @@ class GitignoreServiceTest {
 
         VaultPatterns result = gitignoreService.load(testVault.vaultPath());
 
-        assertThat(result.getSystem().size()).isEqualTo(4);
+        assertThat(result.getSystem().size()).isEqualTo(GitignoreService.SYSTEM_PATTERN_DEFINITIONS.size());
         assertThat(result.getApp().isEmpty()).isFalse();
         assertThat(result.getUser().stream()
                 .map(GitignorePattern::getPattern).toList()).asList()

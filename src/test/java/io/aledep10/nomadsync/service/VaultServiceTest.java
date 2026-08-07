@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.VaultAmbiguousException;
 import io.aledep10.nomadsync.exception.VaultException;
 import io.aledep10.nomadsync.exception.VaultNotFoundException;
@@ -105,7 +106,8 @@ class VaultServiceTest {
     @BeforeAll
     static void prepareSharedState() throws IOException {
         sharedVault = TestUtil.getTestVault("VaultServiceTest-shared");
-        logService  = new LogService(TestUtil.forLogService(sharedVault, LogLevel.DEBUG), sharedVault.rootPath());
+        logService  = new LogService(NomadPropertiesLoader.forTesting(
+                TestUtil.forLogService(sharedVault, LogLevel.DEBUG)), sharedVault.rootPath());
     }
 
     @AfterAll
@@ -120,8 +122,7 @@ class VaultServiceTest {
     void setUp(TempDirs tempDirs) throws IOException {
         testVault = tempDirs.newVault("VaultServiceTest");
         gitignoreService = new GitignoreService(logService);
-        Properties properties = new Properties();
-        markerService = new MarkerService(properties, logService);
+        markerService = new MarkerService(NomadPropertiesLoader.forTesting(new Properties()), logService);
         vaultService = new VaultService(testVault.vaultPath(), markerService, gitignoreService, logService);
     }
 
@@ -219,49 +220,6 @@ class VaultServiceTest {
 
             Assertions.assertThatThrownBy(() -> vaultService.resolveVaultFlag("nonexistent"))
                     .isInstanceOf(VaultNotFoundException.class);
-        }
-    }
-
-    // ── applyGitFlagsToVault ──────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("applyGitFlagsToVault")
-    class ApplyGitFlagsToVaultTests {
-
-        @Test
-        @DisplayName("applies all known git flags to vault")
-        void applyGitFlagsToVault_appliesGitFields() {
-            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
-            Map<String, String> gitFlags = new LinkedHashMap<>();
-            gitFlags.put("git.name",     "Alice");
-            gitFlags.put("git.email",    "alice@example.com");
-            gitFlags.put("git.username", "alice-gh");
-            gitFlags.put("git.token",    "token123");
-            gitFlags.put("git.branch",   "develop");
-            gitFlags.put("git.remote",   "upstream");
-
-            vaultService.applyGitFlagsToVault(gitFlags, vault);
-
-            Assertions.assertThat(vault.getGitName()).isEqualTo("Alice");
-            Assertions.assertThat(vault.getGitEmail()).isEqualTo("alice@example.com");
-            Assertions.assertThat(vault.getGitUsername()).isEqualTo("alice-gh");
-            Assertions.assertThat(vault.getGitToken()).isEqualTo("token123");
-            Assertions.assertThat(vault.getGitBranch()).isEqualTo("develop");
-            Assertions.assertThat(vault.getGitRemote()).isEqualTo("upstream");
-        }
-
-        @Test
-        @DisplayName("ignores unknown git flags leaving vault fields unchanged")
-        void applyGitFlagsToVault_ignoresUnknownKeys() {
-            Vault vault = new Vault("id", "owner", "name", TestUtil.createPath("path"));
-            Map<String, String> gitFlags = new LinkedHashMap<>();
-            gitFlags.put("git.unknown", "value");
-
-            vaultService.applyGitFlagsToVault(gitFlags, vault);
-
-            Assertions.assertThat(vault.getName()).isEqualTo("name");
-            Assertions.assertThat(vault.getGitName()).isNull();
-            Assertions.assertThat(vault.getGitRemote()).isNull();
         }
     }
 

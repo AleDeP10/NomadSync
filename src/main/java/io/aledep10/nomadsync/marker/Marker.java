@@ -58,6 +58,25 @@ public abstract class Marker {
      */
     public abstract Marker withRefreshedTimestamp(String now);
 
+    /**
+     * Returns a copy of this marker with {@code createdAt} replaced — every
+     * other field, including {@code lastUpdate}, is preserved. The counterpart
+     * to {@link #withRefreshedTimestamp}: that one keeps {@code createdAt} and
+     * refreshes {@code lastUpdate}; this one does the opposite.
+     *
+     * <p>Exists specifically for {@code MarkerService#overwrite} — a caller
+     * building a replacement marker via {@code create(...)} necessarily sets
+     * both timestamps to "now" (a brand-new marker has no other {@code createdAt}
+     * to know about), but an overwrite of an <em>existing</em> claim (e.g. a
+     * relocate) is not a new marker — its true creation time lives in the
+     * descriptor already on disk. {@code overwrite} reads that existing value
+     * and reapplies it here before persisting, so a relocate never resets a
+     * marker's age to the moment of the move.</p>
+     *
+     * @param createdAt the original creation timestamp to restore
+     */
+    public abstract Marker withCreatedAt(String createdAt);
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

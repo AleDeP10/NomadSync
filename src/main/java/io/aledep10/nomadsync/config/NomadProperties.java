@@ -40,12 +40,12 @@ package io.aledep10.nomadsync.config;
  *
  * # ── Logging ──────────────────────────────────────────────────────────────────
  * log.writers=console,file,seq
- * log.path=logs/nomadsync.log
+ * log.filePath=logs/nomadsync.log
  * log.level=INFO
- * log.seq.url=http://localhost:5341
+ * log.seqUrl=http://localhost:5341
  *
  * # ── Autosave ─────────────────────────────────────────────────────────────────
- * autosave.interval.minutes=15
+ * autosave.intervalMinutes=15
  *
  * # ── Commit ───────────────────────────────────────────────────────────────────
  * commit.editor=notepad++
@@ -181,7 +181,7 @@ public final class NomadProperties {
          * <br>Required when {@code log.writers} includes {@code file}.
          * <br>The parent directory is created automatically if absent.
          */
-        public static final String PATH = "log.path";
+        public static final String PATH = "log.filePath";
 
         /**
          * Minimum log level. Events below this level are discarded.
@@ -196,7 +196,7 @@ public final class NomadProperties {
          * {@code http://host:port/api/events/raw} (full ingestion URL).
          * <br>Required when {@code log.writers} includes {@code seq}.
          */
-        public static final String SEQ_URL = "log.seq.url";
+        public static final String SEQ_URL = "log.seqUrl";
 
         /**
          * Seq API key for authenticated ingestion.
@@ -225,7 +225,7 @@ public final class NomadProperties {
          * <br>The first autosave is delayed by one full interval after startup —
          * the {@code PULL_LOGON} event already handles the initial state.
          */
-        public static final String INTERVAL_MINUTES = "autosave.interval.minutes";
+        public static final String INTERVAL_MINUTES = "autosave.intervalMinutes";
     }
 
 

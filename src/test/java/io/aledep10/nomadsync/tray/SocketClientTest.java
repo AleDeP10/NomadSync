@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.tray;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.NomadSyncException;
 import io.aledep10.nomadsync.orchestrator.EventType;
 import io.aledep10.nomadsync.logging.LogLevel;
@@ -62,7 +63,8 @@ class SocketClientTest {
     @BeforeAll
     static void prepareLogService() throws IOException {
         sharedVault = TestUtil.getTestVault("SocketClientTest");
-        logService  = new LogService(TestUtil.forLogService(sharedVault, LogLevel.DEBUG), sharedVault.rootPath());
+        logService  = new LogService(NomadPropertiesLoader.forTesting(TestUtil.forLogService(
+                sharedVault, LogLevel.DEBUG)), sharedVault.rootPath());
     }
 
     @AfterAll

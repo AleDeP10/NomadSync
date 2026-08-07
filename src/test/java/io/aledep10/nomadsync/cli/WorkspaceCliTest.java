@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.cli;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.marker.MarkerType;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.service.MarkerService;
@@ -39,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("Unit tests for WorkspaceCli")
 class WorkspaceCliTest {
 
+    NomadPropertiesLoader loader;
     Path installDir;
     LogService logService;
     MarkerService markerService;
@@ -48,11 +50,20 @@ class WorkspaceCliTest {
     @BeforeEach
     void setUp(TempDirs tempDirs) throws IOException {
         installDir = tempDirs.newDir("WorkspaceCliTest", "install");
-        Properties properties = new Properties();
-        logService = new LogService(properties, installDir);
-        markerService = new MarkerService(properties, logService);
+        loader = NomadPropertiesLoader.forTesting(new Properties());
+        logService = new LogService(loader, installDir);
+        markerService = new MarkerService(loader, logService);
         workspaceService = new WorkspaceService(installDir, markerService, logService);
-        workspaceCli = new WorkspaceCli(workspaceService, markerService, logService);
+        workspaceCli = new WorkspaceCli(loader, workspaceService, markerService, logService);
+    }
+
+    private Properties readWorkspaceConfig(String workspacePath) throws IOException {
+        Path file = Path.of(workspacePath).resolve(MarkerType.WORKSPACE.folderName()).resolve("config.properties");
+        Properties properties = new Properties();
+        try (var in = Files.newInputStream(file)) {
+            properties.load(in);
+        }
+        return properties;
     }
 
     private Map<String, String> flags(String... kv) {
@@ -109,14 +120,68 @@ class WorkspaceCliTest {
         @DisplayName("errors on a duplicate workspaceName")
         void duplicateName_errors() {
             String path = installDir.resolve("ws-1").toString();
-            workspaceCli.handleWorkspaceCreate(
-                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
+            workspaceCli.handleWorkspaceCreate(flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
             int result = workspaceCli.handleWorkspaceCreate(
-                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default",
-                            WorkspaceCli.FLAG_PATH, installDir.resolve("ws-2").toString()));
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH,
+                            installDir.resolve("ws-2").toString()));
 
             assertThat(result).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("scaffolds config.properties with provided --git.* values")
+        void scaffoldsGitFlags() throws IOException {
+            String path = installDir.resolve("ws-1").toString();
+
+            int result = workspaceCli.handleWorkspaceCreate(flags(
+                    WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path,
+                    WorkspaceCli.FLAG_GIT_USERNAME, "waypoint-one", WorkspaceCli.FLAG_GIT_TOKEN, "ghp_test"));
+
+            assertThat(result).isEqualTo(0);
+            Properties config = readWorkspaceConfig(path);
+            assertThat(config.getProperty(WorkspaceCli.FLAG_GIT_USERNAME)).isEqualTo("waypoint-one");
+            assertThat(config.getProperty(WorkspaceCli.FLAG_GIT_TOKEN)).isEqualTo("ghp_test");
+        }
+
+        @Test
+        @DisplayName("scaffolds config.properties with --marker.maxNestingDepth")
+        void scaffoldsMaxNestingDepth() throws IOException {
+            String path = installDir.resolve("ws-1").toString();
+
+            int result = workspaceCli.handleWorkspaceCreate(flags(
+                    WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path,
+                    WorkspaceCli.FLAG_MAX_NESTING_DEPTH, "12"));
+
+            assertThat(result).isEqualTo(0);
+            Properties config = readWorkspaceConfig(path);
+            assertThat(config.getProperty(WorkspaceCli.FLAG_MAX_NESTING_DEPTH)).isEqualTo("12");
+        }
+
+        @Test
+        @DisplayName("errors on a non-integer --marker.maxNestingDepth, nothing created")
+        void nonIntegerMaxNestingDepth_errors() {
+            String path = installDir.resolve("ws-1").toString();
+
+            int result = workspaceCli.handleWorkspaceCreate(flags(
+                    WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path,
+                    WorkspaceCli.FLAG_MAX_NESTING_DEPTH, "not-a-number"));
+
+            assertThat(result).isEqualTo(1);
+            assertThat(workspaceService.findByName("default")).isEmpty();
+        }
+
+        @Test
+        @DisplayName("with no optional flags, config.properties exists but has no overrides")
+        void noOptionalFlags_scaffoldsEmptyConfig() throws IOException {
+            String path = installDir.resolve("ws-1").toString();
+
+            int result = workspaceCli.handleWorkspaceCreate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
+
+            assertThat(result).isEqualTo(0);
+            assertThat(Files.exists(Path.of(path).resolve(MarkerType.WORKSPACE.folderName()).resolve("config.properties")))
+                    .isTrue();
         }
     }
 
@@ -150,22 +215,35 @@ class WorkspaceCliTest {
 
             assertThat(result).isEqualTo(1);
         }
-    }
-
-    // ── rename ────────────────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("handleWorkspaceRename")
-    class HandleWorkspaceRenameTests {
 
         @Test
-        @DisplayName("changes workspaceName, leaves path and isDefault untouched")
+        @DisplayName("rejects --git.*/--marker.maxNestingDepth, directs to 'workspace update' after adding")
+        void configFlags_rejected() throws IOException {
+            Path path = installDir.resolve("already-there");
+            Files.createDirectories(path.resolve(MarkerType.WORKSPACE.folderName()));
+
+            int result = workspaceCli.handleWorkspaceAdd(flags(
+                    WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path.toString(),
+                    WorkspaceCli.FLAG_GIT_TOKEN, "ghp_test"));
+
+            assertThat(result).isEqualTo(1);
+            assertThat(workspaceService.findByName("default")).isEmpty();
+        }
+    }
+
+    // ── update ────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("handleWorkspaceUpdate")
+    class HandleWorkspaceUpdateTests {
+
+        @Test
+        @DisplayName("renames the entry, leaves path and isDefault untouched")
         void renamesSuccessfully() {
             String path = installDir.resolve("ws-1").toString();
-            workspaceCli.handleWorkspaceCreate(
-                    flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
+            workspaceCli.handleWorkspaceCreate(flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
 
-            int result = workspaceCli.handleWorkspaceRename(
+            int result = workspaceCli.handleWorkspaceUpdate(
                     flags(WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_WORKSPACE_NAME, "primary"));
 
             assertThat(result).isEqualTo(0);
@@ -175,9 +253,82 @@ class WorkspaceCliTest {
         }
 
         @Test
+        @DisplayName("is a no-op (2) when nothing was requested")
+        void noChanges_isNoOp() {
+            String path = installDir.resolve("ws-1").toString();
+            workspaceCli.handleWorkspaceCreate(flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
+
+            int result = workspaceCli.handleWorkspaceUpdate(flags(WorkspaceCli.FLAG_WORKSPACE, "default"));
+
+            assertThat(result).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("updates git.* only, workspaceName unchanged")
+        void updatesGitFlagsOnly() throws IOException {
+            String path = installDir.resolve("ws-1").toString();
+            workspaceCli.handleWorkspaceCreate(flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
+
+            int result = workspaceCli.handleWorkspaceUpdate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_GIT_TOKEN, "ghp_updated"));
+
+            assertThat(result).isEqualTo(0);
+            assertThat(workspaceService.findByName("default")).isPresent();
+            Properties config = readWorkspaceConfig(path);
+            assertThat(config.getProperty(WorkspaceCli.FLAG_GIT_TOKEN)).isEqualTo("ghp_updated");
+        }
+
+        @Test
+        @DisplayName("config update preserves previously-set keys not part of this update")
+        void preservesUntouchedKeys() throws IOException {
+            String path = installDir.resolve("ws-1").toString();
+            workspaceCli.handleWorkspaceCreate(flags(
+                    WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path,
+                    WorkspaceCli.FLAG_GIT_USERNAME, "waypoint-one"));
+
+            workspaceCli.handleWorkspaceUpdate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_GIT_TOKEN, "ghp_new"));
+
+            Properties config = readWorkspaceConfig(path);
+            assertThat(config.getProperty(WorkspaceCli.FLAG_GIT_USERNAME)).isEqualTo("waypoint-one");
+            assertThat(config.getProperty(WorkspaceCli.FLAG_GIT_TOKEN)).isEqualTo("ghp_new");
+        }
+
+        @Test
+        @DisplayName("rename and config update together in one call")
+        void renameAndConfigTogether() throws IOException {
+            String path = installDir.resolve("ws-1").toString();
+            workspaceCli.handleWorkspaceCreate(flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
+
+            int result = workspaceCli.handleWorkspaceUpdate(flags(
+                    WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_WORKSPACE_NAME, "primary",
+                    WorkspaceCli.FLAG_MAX_NESTING_DEPTH, "10"));
+
+            assertThat(result).isEqualTo(0);
+            assertThat(workspaceService.findByName("primary")).isPresent();
+            Properties config = readWorkspaceConfig(path);
+            assertThat(config.getProperty(WorkspaceCli.FLAG_MAX_NESTING_DEPTH)).isEqualTo("10");
+        }
+
+        @Test
+        @DisplayName("rejects --path, directs to 'workspace relocate' or 'remove'+'add'")
+        void pathFlag_rejected() {
+            String path = installDir.resolve("ws-1").toString();
+            workspaceCli.handleWorkspaceCreate(flags(WorkspaceCli.FLAG_WORKSPACE_NAME, "default", WorkspaceCli.FLAG_PATH, path));
+
+            int result = workspaceCli.handleWorkspaceUpdate(
+                    flags(WorkspaceCli.FLAG_WORKSPACE, "default", WorkspaceCli.FLAG_PATH,
+                            installDir.resolve("ws-1-moved").toString()));
+
+            assertThat(result).isEqualTo(1);
+            WorkspaceEntry unchanged = workspaceService.findByName("default").orElseThrow();
+            assertThat(unchanged.getPath()).isEqualTo(Path.of(path).toAbsolutePath().normalize().toString());
+        }
+
+        @Test
         @DisplayName("errors when --workspace does not resolve to a registered entry")
         void unknownWorkspace_errors() {
-            int result = workspaceCli.handleWorkspaceRename(
+            int result = workspaceCli.handleWorkspaceUpdate(
                     flags(WorkspaceCli.FLAG_WORKSPACE, "ghost", WorkspaceCli.FLAG_WORKSPACE_NAME, "primary"));
 
             assertThat(result).isEqualTo(1);

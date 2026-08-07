@@ -1,11 +1,11 @@
 package io.aledep10.nomadsync.service;
 
 import io.aledep10.nomadsync.config.NomadProperties;
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.MarkerClaimException;
 import io.aledep10.nomadsync.exception.MarkerDeserializationException;
 import io.aledep10.nomadsync.marker.*;
 import io.aledep10.nomadsync.util.FileUtil;
-import io.aledep10.nomadsync.util.PropertiesUtil;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
@@ -33,37 +33,38 @@ import java.util.Properties;
  * (a {@code vault relocate} landing on a different workspace's config directory) —
  * a same-type-only scan would not have caught it.</p>
  *
- * <p><strong>Descendant scan</strong> (bounded by {@code maxDepth}) is
- * deliberately {@link MarkerType#VAULT}-only: it exists solely to protect
+ * <p><strong>Descendant scan</strong> (bounded by {@code marker.maxNestingDepth})
+ * is deliberately {@link MarkerType#VAULT}-only: it exists solely to protect
  * against a real Git operation (recursive {@code git add -A}) silently
  * absorbing a foreign vault nested underneath. The other marker types are
  * never subject to that risk (they are always excluded from Git by name,
  * regardless of position), so descending into their subtrees to look for
  * them would add cost without closing any real gap.</p>
  *
- * <h2>Constructor argument order</h2>
- * <p>Follows the project convention: {@link Properties} first, {@link LogService}
- * last — no dependencies in between, since the strategy map is built internally
- * (see the constructor's own Javadoc).</p>
- *
- * <p>Skeleton only — every method body is a placeholder pending the GREEN step.</p>
+ * <h2>{@code marker.maxNestingDepth} — read live, never cached</h2>
+ * <p>Resolved from the injected {@link NomadPropertiesLoader} on every
+ * {@link #checkNoNestingConflict(String, MarkerType)} call, not stored as a
+ * field at construction — a workspace-level override applied mid-bootstrap
+ * (e.g. a client's convention requiring a deeper scan than the install
+ * default) takes effect for every claim made afterward, without needing this
+ * service to be reconstructed.</p>
  */
 public class MarkerService {
 
+    private final NomadPropertiesLoader loader;
     private final LogService logService;
     private final Map<MarkerType, MarkerTypeStrategy> strategies;
-    private final int maxNestingDepth;
 
     /**
-     * @param properties  application properties — may contain
-     *                    {@code marker.maxNestingDepth} (default 6), used only by
-     *                    the no-argument {@link #checkNoNestingConflict(String)}
-     *                    overload's descendant scan
-     * @param logService  shared logging service
+     * @param loader     source of {@code marker.*} configuration
+     *                   ({@code marker.maxNestingDepth} today, any future
+     *                   marker-protocol property later) — read fresh on every
+     *                   call that needs it, never cached here at construction
+     * @param logService shared logging service
      */
-    public MarkerService(Properties properties, LogService logService) {
+    public MarkerService(NomadPropertiesLoader loader, LogService logService) {
+        this.loader = loader;
         this.logService = logService;
-        this.maxNestingDepth = PropertiesUtil.getInt(properties, NomadProperties.Marker.MAX_NESTING_DEPTH, 6);
         // Built internally, not received as a parameter — this map has exactly
         // one real assembly point in the whole codebase (here), so injecting it
         // from Main's dependency setup would only add ceremony without adding
@@ -76,58 +77,86 @@ public class MarkerService {
     }
 
     /**
-     * Convenience overload — uses the depth configured at construction time
-     * (from {@code marker.maxNestingDepth}). See {@link #checkNoNestingConflict(String, int)}
-     * for the full contract.
-     */
-    public void checkNoNestingConflict(String candidatePath) throws MarkerClaimException {
-        checkNoNestingConflict(candidatePath, this.maxNestingDepth);
-    }
-
-    /**
      * Verifies that no directory near {@code candidatePath} is already claimed by
-     * a marker of any type.
+     * a marker, using the descendant scan depth read fresh from the loader
+     * ({@code marker.maxNestingDepth}, re-read on every call — never cached at
+     * construction, so a workspace override applied mid-bootstrap takes effect
+     * immediately for every subsequent claim).
      *
      * <ol>
      *   <li>Ancestor scan (unbounded, cross-type) — for every ancestor directory,
      *       check every {@link MarkerType} for a claimed folder. On a hit, describe
      *       the conflict via that type's strategy (best-effort — an unreadable or
-     *       unregistered-type marker still blocks the claim, described generically).</li>
-     *   <li>Descendant scan (bounded by {@code maxDepth}, {@link MarkerType#VAULT}
-     *       only) — walk subdirectories up to {@code maxDepth} levels, skipping
-     *       (never descending into) any reserved marker folder name of any type.
-     *       Report a conflict only for a {@code VAULT} marker found at depth {@code > 1}
-     *       (depth 1 would be the candidate's own future claim slot, out of scope here).</li>
+     *       unregistered-type marker still blocks the claim, described generically).
+     *       Applies regardless of {@code type} — a candidate nested inside any
+     *       reserved marker folder is degenerate no matter what it is about to
+     *       become.</li>
+     *   <li>Descendant scan (bounded, only when {@code type} is
+     *       {@link MarkerType#VAULT}) — walk subdirectories up to the configured
+     *       depth, skipping (never descending into) any reserved marker folder name
+     *       of any type. Report a conflict only for a {@code VAULT} marker found at
+     *       depth {@code > 1} (depth 1 would be the candidate's own future claim
+     *       slot, out of scope here). Skipped entirely for {@code type == WORKSPACE}:
+     *       a workspace's own directory is never absorbed by a recursive
+     *       {@code git add -A} the way vault content is — the hazard this scan
+     *       protects against doesn't apply to it ({@code NomadSync-MRK-001}).</li>
      * </ol>
      *
      * <p>{@code candidatePath} itself is never checked — an existing marker exactly
      * there is {@link #claim}'s responsibility, enforced atomically at write time.</p>
      *
+     * @param candidatePath the path about to be claimed
+     * @param type          the marker type being claimed — governs whether the
+     *                      descendant scan runs at all
      * @throws MarkerClaimException if any ancestor (any type) or in-range VAULT
      *          descendant is already claimed, or if the descendant scan cannot
      *          complete due to an I/O error
      */
-    public void checkNoNestingConflict(String candidatePath, int maxDepth) throws MarkerClaimException {
+    public void checkNoNestingConflict(String candidatePath, MarkerType type) throws MarkerClaimException {
+        checkNoNestingConflict(candidatePath, type, loader.getInt(NomadProperties.Marker.MAX_NESTING_DEPTH, 6));
+    }
+
+    /**
+     * Same protocol as {@link #checkNoNestingConflict(String, MarkerType)} — ancestor
+     * scan cross-type and unbounded, descendant scan bounded and VAULT-only — but
+     * with an explicit {@code maxDepth} instead of reading it from the loader.
+     * Exists for tests that want to exercise the scanning algorithm itself at a
+     * chosen depth without needing a real {@code NomadPropertiesLoader}/workspace
+     * override in place.
+     *
+     * @param candidatePath the path about to be claimed
+     * @param type          the marker type being claimed
+     * @param maxDepth      descendant scan depth limit, ignored entirely when
+     *                      {@code type != MarkerType.VAULT}
+     * @throws MarkerClaimException same conditions as
+     *          {@link #checkNoNestingConflict(String, MarkerType)}
+     */
+    public void checkNoNestingConflict(String candidatePath, MarkerType type, int maxDepth)
+            throws MarkerClaimException {
         Path candidate = Path.of(candidatePath);
 
-        // ── Ancestor scan (unbounded, cross-type) ──
+        // ── Ancestor scan (unbounded, cross-type) — unchanged, still applies
+        //    to every claim type regardless of `type` ──
         Path ancestor = candidate.getParent();
         while (ancestor != null) {
             Path name = ancestor.getFileName();
             if (name != null) {
-                for (MarkerType type : MarkerType.values()) {
-                    if (name.toString().equals(type.folderName())) {
+                for (MarkerType t : MarkerType.values()) {
+                    if (name.toString().equals(t.folderName())) {
                         throw new MarkerClaimException("path '" + candidatePath
                                 + "' is nested inside a reserved marker folder itself - "
-                                + describeConflictBestEffort(type, ancestor));
+                                + describeConflictBestEffort(t, ancestor));
                     }
                 }
             }
             ancestor = ancestor.getParent();
         }
 
-        // ── Descendant scan (bounded, VAULT-only) ──
-        if (Files.isDirectory(candidate)) {
+        // ── Descendant scan (bounded, VAULT claims only) — a WORKSPACE claim
+        //    never triggers this: workspace content is excluded from Git by
+        //    folder name regardless of position, the hazard this scan protects
+        //    against (git add -A absorbing a nested vault) doesn't apply to it.
+        if (type == MarkerType.VAULT && Files.isDirectory(candidate)) {
             scanDescendantsForVaultMarker(candidate, /*depth=*/1, maxDepth);
         }
     }
@@ -157,10 +186,10 @@ public class MarkerService {
 
     /**
      * Atomically claims {@code path} for {@code marker} under {@code type} —
-     * first delegating to {@link #checkNoNestingConflict(String)}, then reserving
-     * the exact folder via {@code Files.createDirectory} (atomic, fails if the
-     * folder already exists — safe across concurrent processes), then writing
-     * the serialized marker (via {@code strategies.get(type).serialize(marker)})
+     * first delegating to {@link #checkNoNestingConflict(String, MarkerType)},
+     * then reserving the exact folder via {@code Files.createDirectory} (atomic,
+     * fails if the folder already exists — safe across concurrent processes), then
+     * writing the serialized marker (via {@code strategies.get(type).serialize(marker)})
      * into it. On a write failure after a successful folder creation, the
      * reserved-but-empty folder is removed rather than left behind.
      *
@@ -168,7 +197,7 @@ public class MarkerService {
      *          is already claimed, or if the marker cannot be written
      */
     public void claim(MarkerType type, String path, Marker marker) throws MarkerClaimException {
-        checkNoNestingConflict(path);
+        checkNoNestingConflict(path, type);
         Path dir = Path.of(path);
         Path folder = markerFolder(dir, type);
         try {
@@ -250,26 +279,45 @@ public class MarkerService {
     }
 
     /**
-     * Unconditionally (re)writes the marker descriptor for an already-existing
-     * marker folder, regardless of the current claimant on disk — unlike
-     * {@link #refresh}, never compares {@code sameClaimant}; unlike {@link #claim},
-     * never creates the folder (must already exist). Reserved for legitimate
-     * identity-transfer operations where the marker's own id is derived from its
-     * path and therefore must change together with it (e.g. a workspace relocate).
+     * Unconditionally rewrites the descriptor at {@code path} for {@code type} —
+     * for legitimate identity transfer (a relocate, where the marker folder
+     * itself already exists at the destination and neither {@link #claim} nor
+     * {@link #refresh} is the right tool: {@code claim} would fail on the
+     * already-existing folder, {@code refresh} would refuse on an id mismatch
+     * that is expected here, not a conflict).
      *
-     * @throws MarkerClaimException if no marker folder exists at {@code path}, or
-     *                               if the descriptor cannot be written
+     * <p>Preserves the existing descriptor's {@code createdAt} if one is found at
+     * {@code path} — {@code marker} is expected to come from a fresh
+     * {@code create(...)} call (both timestamps set to "now"), but an overwrite
+     * is not a new marker's birth; only {@code lastUpdate} should actually
+     * change here. If no existing descriptor is found (unexpected for a real
+     * overwrite, but not fatal), {@code marker} is written exactly as given.</p>
+     *
+     * @param type   the marker type
+     * @param path   the already-existing marker folder's parent directory
+     * @param marker the replacement marker — its {@code createdAt} is discarded
+     *               in favor of the existing descriptor's, if one is found
+     * @throws MarkerClaimException if the descriptor cannot be written
      */
     public void overwrite(MarkerType type, String path, Marker marker) throws MarkerClaimException {
-        Path folder = markerFolder(Path.of(path), type);
-        if (!Files.isDirectory(folder)) {
-            throw new MarkerClaimException("path '" + path + "' has no existing marker folder to overwrite");
+        Path descriptor = markerFolder(Path.of(path), type).resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+
+        Marker toWrite = marker;
+        if (Files.exists(descriptor)) {
+            try {
+                Marker existing = strategies.get(type).deserialize(Files.readString(descriptor));
+                toWrite = marker.withCreatedAt(existing.createdAt());
+            } catch (IOException e) {
+                logService.warn("overwrite - unable to read existing descriptor for createdAt preservation at "
+                        + descriptor + ": " + e.getMessage());
+            }
         }
-        Path descriptor = folder.resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+
         try {
-            Files.writeString(descriptor, strategies.get(type).serialize(marker));
+            Files.writeString(descriptor, strategies.get(type).serialize(toWrite));
         } catch (IOException e) {
-            throw new MarkerClaimException("Unable to overwrite marker descriptor at " + descriptor + ": " + e.getMessage(), e);
+            throw new MarkerClaimException("Unable to write marker descriptor at " + descriptor + ": "
+                    + e.getMessage(), e);
         }
         logService.info("overwrite - " + type + " - descriptor rewritten at " + path);
     }

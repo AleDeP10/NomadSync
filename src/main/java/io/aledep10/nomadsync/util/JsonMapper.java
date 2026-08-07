@@ -35,16 +35,6 @@ public final class JsonMapper {
 
     private JsonMapper() {}
 
-    public static Path loadDefaultWorkspacePath(File registryFile) throws IOException {
-        return loadWorkspacesFromFile(registryFile).stream()
-                .filter(WorkspaceEntry::isDefault)
-                .map(WorkspaceEntry::getPath)
-                .filter(path -> !StringUtil.isBlank(path))
-                .findFirst()
-                .map(Path::of)
-                .orElse(null);
-    }
-
     public static List<WorkspaceEntry> loadWorkspacesFromFile(File file) throws IOException {
         if (!file.exists()) return List.of();
         WorkspacesRegistryDto registry = MAPPER.readValue(file, WorkspacesRegistryDto.class);

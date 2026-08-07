@@ -66,6 +66,28 @@ public final class VaultMarker extends Marker {
         return new VaultMarker(id(), repoSlug, workspacePath, createdAt(), now);
     }
 
+    /**
+     * @see Marker#withCreatedAt(String)
+     */
+    @Override
+    public VaultMarker withCreatedAt(String createdAt) {
+        return new VaultMarker(id(), repoSlug, workspacePath, createdAt, lastUpdate());
+    }
+
+    /**
+     * Returns a copy with {@code workspacePath} replaced and {@code lastUpdate}
+     * refreshed — {@code id}, {@code repoSlug}, and {@code createdAt} are
+     * preserved. Used when a vault's containing workspace is relocated: the
+     * marker's identity transfers to the new location, but it is not a new
+     * marker — its {@code createdAt} must survive the transfer.
+     *
+     * @param newWorkspacePath the workspace's new root
+     * @param now              the current timestamp for {@code lastUpdate}
+     */
+    public VaultMarker withWorkspacePath(String newWorkspacePath, String now) {
+        return new VaultMarker(id(), repoSlug, newWorkspacePath, createdAt(), now);
+    }
+
     @Override
     protected String typeSpecificFieldsForDebug() {
         return "repoSlug=" + repoSlug + ", workspacePath=" + workspacePath;

@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.cli;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TempDirs;
@@ -40,7 +41,7 @@ class AbstractCliTest {
     @BeforeEach
     void setUp(TempDirs tempDirs) throws IOException {
         tempDir = tempDirs.newDir("AbstractCliTest", "root");
-        LogService logService = new LogService(new Properties(), tempDir);
+        LogService logService = new LogService(NomadPropertiesLoader.forTesting(new Properties()), tempDir);
         cli = new StubCli(logService);
     }
 

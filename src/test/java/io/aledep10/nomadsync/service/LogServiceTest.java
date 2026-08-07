@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.util.TempDirCleanupExtension;
 import io.aledep10.nomadsync.util.TempDirs;
@@ -24,11 +25,16 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
  * is deleted automatically; a failing test's is left on disk for inspection.</p>
  *
  * <p>{@link TestVault#rootPath()} is used as {@code configDir} throughout —
- * it is the base directory against which a relative {@code log.path} is
- * resolved; most tests supply an already-absolute {@code log.path}
+ * it is the base directory against which a relative {@code log.filePath} is
+ * resolved; most tests supply an already-absolute {@code log.filePath}
  * ({@link TestVault#logFilePath()}), so {@code configDir} is inert for them.
  * The {@code configDir}-specific tests below are the ones that actually
  * exercise resolution against it.</p>
+ *
+ * <p>{@link LogService} takes a {@link NomadPropertiesLoader}, not raw
+ * {@link Properties} — every test builds one via
+ * {@link NomadPropertiesLoader#forTesting(Properties)}, which bypasses
+ * filesystem I/O entirely and exposes the given values as {@code installProperties}.</p>
  */
 @ExtendWith(TempDirCleanupExtension.class)
 class LogServiceTest {
@@ -116,12 +122,12 @@ class LogServiceTest {
         assertThat(content).contains("second session");
     }
 
-    // ── constructor(Properties, Path configDir, String repoSlug) ──────────────
+    // ── constructor(NomadPropertiesLoader, Path configDir, String repoSlug) ───
 
     @Test
     void constructor_withRepoSlug_writesRepoSlugToLog() {
-        Properties properties = baseProperties(LogLevel.DEBUG);
-        LogService logService = new LogService(properties, testVault.rootPath(), "Alice/portfolio");
+        NomadPropertiesLoader loader = NomadPropertiesLoader.forTesting(baseProperties(LogLevel.DEBUG));
+        LogService logService = new LogService(loader, testVault.rootPath(), "Alice/portfolio");
 
         logService.info("vault message");
 
@@ -130,8 +136,8 @@ class LogServiceTest {
 
     @Test
     void constructor_withRepoSlug_respectsMinLevel() {
-        Properties properties = baseProperties(LogLevel.WARN);
-        LogService logService = new LogService(properties, testVault.rootPath(), "Alice/portfolio");
+        NomadPropertiesLoader loader = NomadPropertiesLoader.forTesting(baseProperties(LogLevel.WARN));
+        LogService logService = new LogService(loader, testVault.rootPath(), "Alice/portfolio");
 
         logService.info("below threshold");
 
@@ -182,7 +188,7 @@ class LogServiceTest {
         Properties properties = baseProperties(LogLevel.DEBUG);
         properties.setProperty("log.writers", "console,unknown-writer,file");
 
-        LogService logService = new LogService(properties, testVault.rootPath());
+        LogService logService = new LogService(NomadPropertiesLoader.forTesting(properties), testVault.rootPath());
         logService.info("still works");
 
         assertThat(readLogFile()).contains("still works");
@@ -193,14 +199,14 @@ class LogServiceTest {
         Properties properties = new Properties();
         properties.setProperty("log.level",   LogLevel.DEBUG.name());
         properties.setProperty("log.writers", "file");
-        // log.path intentionally absent
+        // log.filePath intentionally absent
 
         // must not throw
-        new LogService(properties, testVault.rootPath());
+        new LogService(NomadPropertiesLoader.forTesting(properties), testVault.rootPath());
     }
 
     /**
-     * Verifies that {@code log.path} present but blank is treated the same as
+     * Verifies that {@code log.filePath} present but blank is treated the same as
      * absent — the file writer is skipped, not pointed at a nonsense path
      * derived from an empty string.
      */
@@ -209,26 +215,26 @@ class LogServiceTest {
         Properties properties = new Properties();
         properties.setProperty("log.level",   LogLevel.DEBUG.name());
         properties.setProperty("log.writers", "file");
-        properties.setProperty("log.path",    "   ");
+        properties.setProperty("log.filePath",    "   ");
 
         // must not throw
-        new LogService(properties, testVault.rootPath());
+        new LogService(NomadPropertiesLoader.forTesting(properties), testVault.rootPath());
     }
 
     @Test
     void buildWriters_seqWriterMissingUrl_doesNotThrow() {
         Properties properties = baseProperties(LogLevel.DEBUG);
         properties.setProperty("log.writers", "console,seq");
-        // log.seq.url intentionally absent
+        // log.seqUrl intentionally absent
 
         // must not throw
-        new LogService(properties, testVault.rootPath());
+        new LogService(NomadPropertiesLoader.forTesting(properties), testVault.rootPath());
     }
 
     // ── buildWriters — configDir resolution ────────────────────────────────────
 
     /**
-     * Verifies that a relative {@code log.path} is resolved against
+     * Verifies that a relative {@code log.filePath} is resolved against
      * {@code configDir} — not the JVM's working directory — and that the
      * resulting file actually receives the log line.
      */
@@ -237,10 +243,10 @@ class LogServiceTest {
         Properties properties = new Properties();
         properties.setProperty("log.level",   LogLevel.DEBUG.name());
         properties.setProperty("log.writers", "file");
-        properties.setProperty("log.path",    "relative-test.log");
+        properties.setProperty("log.filePath",    "relative-test.log");
 
         Path expected = testVault.rootPath().resolve("relative-test.log");
-        LogService logService = new LogService(properties, testVault.rootPath());
+        LogService logService = new LogService(NomadPropertiesLoader.forTesting(properties), testVault.rootPath());
         logService.info("resolved against configDir");
 
         assertThat(Files.exists(expected)).isTrue();
@@ -250,16 +256,17 @@ class LogServiceTest {
     }
 
     /**
-     * Verifies that an already-absolute {@code log.path} is used exactly as
+     * Verifies that an already-absolute {@code log.filePath} is used exactly as
      * given, ignoring {@code configDir} entirely — even a deliberately
      * nonexistent {@code configDir} must not affect resolution.
      */
     @Test
     void buildWriters_absoluteLogPath_ignoresConfigDir() {
         Path bogusConfigDir = testVault.rootPath().resolve("nonexistent-config-dir");
-        Properties properties = baseProperties(LogLevel.DEBUG); // log.path is already absolute
+        NomadPropertiesLoader loader =
+                NomadPropertiesLoader.forTesting(baseProperties(LogLevel.DEBUG)); // log.filePath is already absolute
 
-        LogService logService = new LogService(properties, bogusConfigDir);
+        LogService logService = new LogService(loader, bogusConfigDir);
         logService.info("absolute path wins");
 
         assertThat(readLogFile()).contains("absolute path wins");
@@ -268,12 +275,12 @@ class LogServiceTest {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private LogService createLogService(LogLevel level) {
-        return new LogService(baseProperties(level), testVault.rootPath());
+        return new LogService(NomadPropertiesLoader.forTesting(baseProperties(level)), testVault.rootPath());
     }
 
     private Properties baseProperties(LogLevel level) {
         Properties properties = new Properties();
-        properties.setProperty("log.path",    testVault.logFilePath().toString());
+        properties.setProperty("log.filePath",    testVault.logFilePath().toString());
         properties.setProperty("log.level",   level.name());
         properties.setProperty("log.writers", "file");
         return properties;

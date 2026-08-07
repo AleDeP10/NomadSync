@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.service;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.exception.MarkerClaimException;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.marker.*;
@@ -45,7 +46,9 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatCode;
 @ExtendWith({TempDirCleanupExtension.class, ClassFailureTracker.class})
 class MarkerServiceTest {
 
+    static Properties properties;
     static TestVault sharedVault;
+    static NomadPropertiesLoader loader;
     static LogService logService;
 
     MarkerService markerService;
@@ -53,7 +56,10 @@ class MarkerServiceTest {
     @BeforeAll
     static void prepareSharedState() throws IOException {
         sharedVault = TestUtil.getTestVault("MarkerServiceTest-shared");
-        logService  = new LogService(TestUtil.forLogService(sharedVault, LogLevel.DEBUG), sharedVault.rootPath());
+        properties = TestUtil.forLogService(sharedVault, LogLevel.INFO);
+        properties.setProperty("marker.maxNestingDepth", "6");
+        loader = NomadPropertiesLoader.forTesting(TestUtil.forLogService(sharedVault, LogLevel.DEBUG));
+        logService  = new LogService(loader, sharedVault.rootPath());
     }
 
     @AfterAll
@@ -66,9 +72,10 @@ class MarkerServiceTest {
 
     @BeforeEach
     void setUp() {
-        Properties properties = new Properties();
-        properties.setProperty("marker.maxNestingDepth", "6");
-        markerService = new MarkerService(properties, logService);
+        // Logica superflua, fatta salire alla definizione delle properties in beforeAll
+        // Properties properties = new Properties();
+        // properties.setProperty("marker.maxNestingDepth", "6");
+        markerService = new MarkerService(loader, logService);
     }
 
     /**
@@ -86,9 +93,9 @@ class MarkerServiceTest {
      * it exists solely to test the constructor's own property-reading wiring.</p>
      */
     private MarkerService markerServiceConfiguredWithNonDefaultDepth(int maxNestingDepth) {
-        Properties properties = new Properties();
+        Properties properties = TestUtil.forLogService(sharedVault, LogLevel.INFO);
         properties.setProperty("marker.maxNestingDepth", String.valueOf(maxNestingDepth));
-        return new MarkerService(properties, logService);
+        return new MarkerService(NomadPropertiesLoader.forTesting(properties), logService);
     }
 
     // ── claim() ───────────────────────────────────────────────────────────────
@@ -266,6 +273,69 @@ class MarkerServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("overwrite")
+    class OverwriteTests {
+
+        @Test
+        @DisplayName("preserves the existing descriptor's createdAt, refreshes lastUpdate")
+        void preservesCreatedAt(TempDirs tempDirs) throws Exception {
+            Path dir = tempDirs.newDir("MarkerServiceTest", "overwrite-preserves-createdat");
+            markerService.claim(MarkerType.WORKSPACE, dir.toString(),
+                    WorkspaceMarker.create("ws-id", "smk-a", "2026-01-01T00:00:00"));
+
+            markerService.overwrite(MarkerType.WORKSPACE, dir.toString(),
+                    WorkspaceMarker.create("ws-id", "smk-a", "2026-06-15T12:00:00"));
+
+            Path descriptor = dir.resolve(MarkerType.WORKSPACE.folderName())
+                    .resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+            WorkspaceMarker rewritten = (WorkspaceMarker) new WorkspaceMarkerStrategy()
+                    .deserialize(Files.readString(descriptor));
+
+            assertThat(rewritten.createdAt()).isEqualTo("2026-01-01T00:00:00");
+            assertThat(rewritten.lastUpdate()).isEqualTo("2026-06-15T12:00:00");
+        }
+
+        @Test
+        @DisplayName("writes the given marker as-is when the marker folder exists but no descriptor is inside it yet")
+        void noExistingDescriptor_writesAsGiven(TempDirs tempDirs) throws Exception {
+            Path dir = tempDirs.newDir("MarkerServiceTest", "overwrite-no-existing");
+            Files.createDirectories(dir.resolve(MarkerType.WORKSPACE.folderName()));
+            WorkspaceMarker fresh = WorkspaceMarker.create("ws-id", "smk-a", "2026-06-15T12:00:00");
+
+            markerService.overwrite(MarkerType.WORKSPACE, dir.toString(), fresh);
+
+            Path descriptor = dir.resolve(MarkerType.WORKSPACE.folderName())
+                    .resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+            WorkspaceMarker written = (WorkspaceMarker) new WorkspaceMarkerStrategy()
+                    .deserialize(Files.readString(descriptor));
+
+            assertThat(written.createdAt()).isEqualTo("2026-06-15T12:00:00");
+            assertThat(written.lastUpdate()).isEqualTo("2026-06-15T12:00:00");
+        }
+
+        @Test
+        @DisplayName("overwrite is idempotent-safe: two consecutive calls both preserve the ORIGINAL createdAt")
+        void consecutiveOverwrites_preserveOriginalCreatedAt(TempDirs tempDirs) throws Exception {
+            Path dir = tempDirs.newDir("MarkerServiceTest", "overwrite-consecutive");
+            markerService.claim(MarkerType.WORKSPACE, dir.toString(),
+                    WorkspaceMarker.create("ws-id", "smk-a", "2026-01-01T00:00:00"));
+
+            markerService.overwrite(MarkerType.WORKSPACE, dir.toString(),
+                    WorkspaceMarker.create("ws-id", "smk-a", "2026-03-01T00:00:00"));
+            markerService.overwrite(MarkerType.WORKSPACE, dir.toString(),
+                    WorkspaceMarker.create("ws-id", "smk-a", "2026-06-15T12:00:00"));
+
+            Path descriptor = dir.resolve(MarkerType.WORKSPACE.folderName())
+                    .resolve(MarkerType.DESCRIPTOR_FILE_NAME);
+            WorkspaceMarker rewritten = (WorkspaceMarker) new WorkspaceMarkerStrategy()
+                    .deserialize(Files.readString(descriptor));
+
+            assertThat(rewritten.createdAt()).isEqualTo("2026-01-01T00:00:00");
+            assertThat(rewritten.lastUpdate()).isEqualTo("2026-06-15T12:00:00");
+        }
+    }
+
     // ── checkNoNestingConflict() ──────────────────────────────────────────────
 
     @Nested
@@ -277,7 +347,7 @@ class MarkerServiceTest {
         void noMarkersAnywhere_doesNotThrow(TempDirs tempDirs) throws Exception {
             Path candidate = tempDirs.newDir("MarkerServiceTest", "nesting-none").resolve("brand-new");
 
-            markerService.checkNoNestingConflict(candidate.toString());
+            markerService.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT);
             // no exception = pass
         }
 
@@ -292,7 +362,7 @@ class MarkerServiceTest {
             // folder itself, not merely a sibling of it.
             Path candidate = parent.resolve(MarkerType.WORKSPACE.folderName()).resolve("child-vault");
 
-            assertThatThrownBy(() -> markerService.checkNoNestingConflict(candidate.toString()))
+            assertThatThrownBy(() -> markerService.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT))
                     .isInstanceOf(MarkerClaimException.class)
                     .hasMessageContaining("Alice");
         }
@@ -306,7 +376,7 @@ class MarkerServiceTest {
 
             Path candidate = parent.resolve("child-vault");
 
-            assertThatCode(() -> markerService.checkNoNestingConflict(candidate.toString()))
+            assertThatCode(() -> markerService.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT))
                     .doesNotThrowAnyException();
         }
 
@@ -317,7 +387,7 @@ class MarkerServiceTest {
             VaultMarker marker = VaultMarker.create("id-1", "Alice/vault", "/some/catalog.json", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.VAULT, candidate.toString(), marker);
 
-            markerService.checkNoNestingConflict(candidate.toString());
+            markerService.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT);
             // no exception = pass — the candidate's own marker is out of scope here
         }
 
@@ -330,7 +400,7 @@ class MarkerServiceTest {
             VaultMarker marker = VaultMarker.create("id-1", "Bob/nested", "/some/catalog.json", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.VAULT, deepChild.toString(), marker);
 
-            assertThatThrownBy(() -> markerService.checkNoNestingConflict(candidate.toString(), 3))
+            assertThatThrownBy(() -> markerService.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT, 3))
                     .isInstanceOf(MarkerClaimException.class);
         }
 
@@ -344,7 +414,7 @@ class MarkerServiceTest {
             WorkspaceMarker marker = WorkspaceMarker.create("ws-id", "NestedWorkspace", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.WORKSPACE, nested.toString(), marker);
 
-            markerService.checkNoNestingConflict(candidate.toString(), 3);
+            markerService.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT, 3);
             // no exception = pass — only VAULT markers are reported by descendant scan
         }
 
@@ -357,7 +427,7 @@ class MarkerServiceTest {
             VaultMarker marker = VaultMarker.create("id-1", "Bob/toodeep", "/some/catalog.json", "2026-01-01T00:00:00");
             markerService.claim(MarkerType.VAULT, tooDeep.toString(), marker);
 
-            markerService.checkNoNestingConflict(candidate.toString(), 2);
+            markerService.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT, 2);
             // no exception = pass — level3 marker is outside a depth-2 scan
         }
 
@@ -371,7 +441,7 @@ class MarkerServiceTest {
             VaultMarker marker = VaultMarker.create("id-1", "Bob/toodeep", "/some/catalog.json", "2026-01-01T00:00:00");
             shallow.claim(MarkerType.VAULT, tooDeep.toString(), marker);
 
-            shallow.checkNoNestingConflict(candidate.toString());
+            shallow.checkNoNestingConflict(candidate.toString(), MarkerType.VAULT);
             // no exception = pass — same as passing maxDepth=2 explicitly
         }
     }

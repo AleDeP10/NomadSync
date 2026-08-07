@@ -1,5 +1,6 @@
 package io.aledep10.nomadsync.orchestrator;
 
+import io.aledep10.nomadsync.config.NomadPropertiesLoader;
 import io.aledep10.nomadsync.logging.LogLevel;
 import io.aledep10.nomadsync.service.LogService;
 import io.aledep10.nomadsync.util.ClassFailureTracker;
@@ -52,8 +53,8 @@ class SyncEventQueueTest {
     @BeforeAll
     static void prepareLogService() throws IOException {
         testVault = TestUtil.getTestVault("SyncEventQueueTest");
-        logService = new LogService(
-                TestUtil.forLogService(testVault, LogLevel.DEBUG), testVault.rootPath());
+        logService = new LogService(NomadPropertiesLoader.forTesting(
+                TestUtil.forLogService(testVault, LogLevel.DEBUG)), testVault.rootPath());
     }
 
     @AfterAll
